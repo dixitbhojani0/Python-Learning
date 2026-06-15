@@ -1,0 +1,490 @@
+
+// DBML script for dbdiagram.io
+// All tables from antlog-standard-db.sql
+
+
+Table tbDocuments {
+  Id int [pk, increment]
+  Location nvarchar(255)
+  Item nvarchar(255)
+  Attribute nvarchar(255)
+  Remark nvarchar(255)
+  MemberOf int
+  ValNumber int
+  ValChar nvarchar(255)
+  Usr nvarchar(255)
+  CreateDate smalldatetime
+  ChangeDate smalldatetime
+  CloseDate smalldatetime
+  Locked bit
+  Idx nvarchar(255)
+  ukey char(20)
+  MemberPrj int
+  SaveDate datetime
+  LastSyncDate datetime
+}
+
+
+Table tbDocumentsData {
+  ID int [pk, increment]
+  IDF int
+  Plugin nvarchar(255)
+  Item nvarchar(255)
+  Allocation nvarchar(255)
+  ValChar nvarchar(255)
+  ValNumber int
+  ValBoolean bit
+  ValDate smalldatetime
+  ValMemo ntext
+  ValOLE image
+  ValHyperlink ntext
+  ukey char(20)
+  SaveDate datetime
+  LastSyncDate datetime
+}
+
+
+Table tbDocumentsNotes {
+  Id int [pk, increment]
+  IDF int
+  CreateDate smalldatetime
+  ChangeDate smalldatetime
+  CreateUsr nvarchar(255)
+  ChangeUsr nvarchar(255)
+  NoteMemo ntext
+  NoteType int
+  Deadline smalldatetime
+  Title nvarchar(255)
+  NoteTxt ntext
+  Contact nvarchar(255)
+  Idx nvarchar(255)
+  ukey char(20)
+  SaveDate datetime
+  LastSyncDate datetime
+}
+
+
+Table tbFavorites {
+  Id int [pk, increment]
+  Location nvarchar(255)
+  Usr nvarchar(255)
+  SaveDate smalldatetime
+  Title nvarchar(255)
+  Icon int
+}
+
+
+Table tbFileinfo {
+  ID int [pk, increment]
+  IdNo int
+  Title nvarchar(255)
+}
+
+
+Table tbFileInfoAllocation {
+  ID int [pk, increment]
+  FileIDF int
+  FileInfoIDF int
+}
+
+
+Table tbFileInfoConfig {
+  ID int [pk, increment]
+  FileExt nvarchar(255)
+  FileDescr nvarchar(255)
+  TemplateExt nvarchar(255)
+}
+
+
+Table tbFileInfoContent {
+  ID int [pk, increment]
+  FileIDF int
+  FileInfoIDF int
+  ValueTxt nvarchar(255)
+}
+
+
+Table tbFiles {
+  Id int [pk, increment]
+  Location nvarchar(255)
+  Item nvarchar(255)
+  Attribute nvarchar(12)
+  Remark nvarchar(255)
+  MemberOf int
+  Usr nvarchar(255)
+  CreateDate smalldatetime
+  ChangeDate smalldatetime
+  CloseDate smalldatetime
+  Locked bit
+  aProfile nvarchar(255)
+  ukey char(20)
+  SaveDate datetime
+  LastSyncDate datetime
+}
+
+
+Table tbFilesData {
+  ID int [pk, increment]
+  IDF int
+  Plugin nvarchar(255)
+  Item nvarchar(255)
+  Allocation nvarchar(255)
+  ValChar nvarchar(255)
+  ValNumber int
+  ValBoolean bit
+  ValDate smalldatetime
+  ValMemo ntext
+  ValOLE image
+  ValHyperlink ntext
+  ukey char(20)
+  SaveDate datetime
+  LastSyncDate datetime
+}
+
+
+Table tbFilesNotes {
+  Id int [pk, increment]
+  IDF int
+  CreateDate smalldatetime
+  ChangeDate smalldatetime
+  CreateUsr nvarchar(255)
+  ChangeUsr nvarchar(255)
+  NoteMemo ntext
+  NoteType int
+  Deadline smalldatetime
+  Title nvarchar(255)
+  NoteTxt ntext
+  Contact nvarchar(255)
+  Idx nvarchar(255)
+  ukey char(20)
+  SaveDate datetime
+  LastSyncDate datetime
+}
+
+
+Table tbFolders {
+  Id int [pk, increment]
+  Location nvarchar(255)
+  Item nvarchar(255)
+  Num nvarchar(255)
+  Attribute nvarchar(12)
+  Remark nvarchar(255)
+  Function smallint
+  MemberOf smallint
+  Usr nvarchar(255)
+  CreateDate smalldatetime
+  ChangeDate smalldatetime
+  CloseDate smalldatetime
+  Locked bit
+  InheritParent bit
+  StatusQuo nvarchar(255)
+  LocalComp nvarchar(255)
+  Template nchar(250)
+  ukey char(20)
+  SaveDate datetime
+  LastSyncDate datetime
+}
+
+
+Table tbFoldersAddrAllocation {
+  Id int [pk, increment]
+  AddrIDF int
+  FolderIDF int
+  VisibleName nvarchar(255)
+  AllocId int
+  AllocName nvarchar(255)
+  Addr2ID int
+  EmployeeName nvarchar(255)
+  ukey char(20)
+  SaveDate datetime
+  LastSyncDate datetime
+}
+
+
+Table tbFoldersData {
+  ID int [pk, increment]
+  IDF int
+  Plugin nvarchar(255)
+  Item nvarchar(255)
+  Allocation nvarchar(255)
+  ValChar nvarchar(255)
+  ValNumber int
+  ValBoolean bit
+  ValDate smalldatetime
+  ValMemo ntext
+  ValOLE image
+  ValHyperlink ntext
+  ukey char(20)
+  SaveDate datetime
+  LastSyncDate datetime
+}
+
+
+Table tbFoldersFilter {
+  Id int [pk, increment]
+  IDF int
+  Usr nvarchar(255)
+  Filter nvarchar(255)
+  Location nvarchar(255)
+}
+
+
+Table tbFoldersNotes {
+  Id int [pk, increment]
+  IDF int
+  CreateDate smalldatetime
+  ChangeDate smalldatetime
+  CreateUsr nvarchar(255)
+  ChangeUsr nvarchar(255)
+  NoteMemo ntext
+  NoteType int
+  Deadline smalldatetime
+  Title nvarchar(255)
+  NoteTxt ntext
+  Contact nvarchar(255)
+  Idx nvarchar(255)
+  ukey char(20)
+  SaveDate datetime
+  LastSyncDate datetime
+}
+
+
+Table tbFunctions {
+  Id int [pk, increment]
+  Priority smallint
+  Item nvarchar(255)
+  Translated nvarchar(255)
+  Remark nvarchar(255)
+  AllowFiles bit
+  Template nchar(250)
+  ukey char(20)
+  SaveDate datetime
+  LastSyncDate datetime
+}
+
+
+Table tbNoteType {
+  Id int [pk, increment]
+  Item nvarchar(10)
+  Descr nvarchar(255)
+  OnlyOne bit
+  AutoIndex bit
+  HasDeadline bit
+  IsChangeNote bit
+  HasPerson bit
+  IsContent bit
+}
+
+
+Table tbPermitAllocation {
+  Id int [pk, increment]
+  GroupIDF int
+  UsrName nchar(50)
+}
+
+
+Table tbPermitGroups {
+  Id int [pk, increment]
+  GrpName nchar(50)
+}
+
+
+Table tbPermits {
+  Id int [pk, increment]
+  IDF int
+  Descr nchar(50)
+  GroupIDF int
+  GroupPermit int
+}
+
+
+Table tbPermitUsers {
+  Id int [pk, increment]
+  IDF int
+  Descr nchar(50)
+  GroupIDF int
+  GroupPermit int
+}
+
+
+Table tbPluginData {
+  ID int [pk, increment]
+  IDF int
+  Plugin nvarchar(255)
+  Item nvarchar(255)
+  Allocation nvarchar(255)
+  ValChar nvarchar(255)
+  ValNumber int
+  ValBoolean bit
+  ValDate smalldatetime
+  ValMemo ntext
+  ValOLE image
+  ValHyperlink ntext
+  ukey char(20)
+  SaveDate datetime
+  LastSyncDate datetime
+}
+
+
+Table tbTemplates {
+  ID int [pk, increment]
+  FileExt nvarchar(255)
+  Descr nvarchar(255)
+  FilePath nvarchar(255)
+  AppProfile nvarchar(255)
+  Usr nvarchar(255)
+  ChangeDate smalldatetime
+}
+
+
+Table tbUsage {
+  Id int [pk, increment]
+  Content nvarchar(255)
+  CreateDate smalldatetime
+  Usr nvarchar(255)
+  Version nvarchar(255)
+}
+
+
+// ant_address Database Schema (separate database)
+
+
+Table ant_address.tbAddress {
+  Id int [pk]
+  AddrNo int
+  AddrType int
+  CompanyName nvarchar(255)
+  SurName nvarchar(255)
+  Addr1 nvarchar(255)
+  Addr2 nvarchar(255)
+  Addr3 nvarchar(255)
+  Addr4 nvarchar(255)
+  Addr5 nvarchar(255)
+  Street nvarchar(255)
+  ZIP nvarchar(255)
+  City nvarchar(255)
+  Country nvarchar(255)
+  Region nvarchar(255)
+  aLanguage nvarchar(255)
+  PoBox nvarchar(255)
+  Remarks nvarchar(255)
+  Deleted bit [not null]
+  LastChange datetime
+  UsrName nvarchar(255)
+  BirthDate datetime
+  Salutation nvarchar(255)
+  Pref nvarchar(255)
+}
+
+
+Table ant_address.tbAddressAllocation {
+  ID int [pk]
+  AddrID1 int
+  AddrID2 int
+  AllocType int
+}
+
+
+Table ant_address.tbAddressAllocationType {
+  ID int [pk]
+  Descr nvarchar(255)
+  DescrTranslated nvarchar(255)
+}
+
+
+Table ant_address.tbAddressCommunication {
+  ID int [pk]
+  ComIDF int
+  AddrIDF int
+  ComValue nvarchar(255)
+  ComDescr nvarchar(255)
+}
+
+
+Table ant_address.tbAddressComType {
+  ID int [pk]
+  Ctype nvarchar(255)
+  Translated nvarchar(255)
+}
+
+
+Table ant_address.tbAddressGroupAllocation {
+  Id int [pk]
+  AdrIDF int
+  GrpIDF int
+}
+
+
+Table ant_address.tbAddressGroups {
+  Id int [pk]
+  Shortname nvarchar(10)
+  Description nvarchar(255)
+}
+
+
+Table ant_address.tbAddressPrefix {
+  ID int [pk]
+  Prefix nvarchar(255)
+  Translated nvarchar(255)
+}
+
+
+Table ant_address.tbAddressSalutation {
+  ID int [pk]
+  Salutation nvarchar(255)
+  Translated nvarchar(255)
+}
+
+
+Table ant_address.tbAddressZIP {
+  ID int [pk]
+  State nvarchar(255)
+  ZIP nvarchar(255)
+  City nvarchar(255)
+  Region nvarchar(255)
+  Field5 nvarchar(255)
+  Field6 nvarchar(255)
+}
+
+
+// Relationships - Main Database
+Ref: tbDocuments.MemberOf > tbFiles.Id
+Ref: tbDocumentsData.IDF > tbDocuments.Id
+Ref: tbDocumentsNotes.IDF > tbDocuments.Id
+Ref: tbFileInfoContent.FileIDF > tbFiles.Id
+Ref: tbFiles.MemberOf > tbFolders.Id
+Ref: tbFilesData.IDF > tbFiles.Id
+Ref: tbFilesNotes.IDF > tbFiles.Id
+Ref: tbFoldersAddrAllocation.FolderIDF > tbFolders.Id
+Ref: tbFoldersData.IDF > tbFolders.Id
+Ref: tbFoldersNotes.IDF > tbFolders.Id
+
+// Permission System Relationships
+Ref: tbPermitAllocation.GroupIDF > tbPermitGroups.Id
+Ref: tbPermits.GroupIDF > tbPermitGroups.Id
+Ref: tbPermitUsers.GroupIDF > tbPermitGroups.Id
+
+
+// Relationships - Address Database
+Ref: ant_address.tbAddressAllocation.AddrID1 > ant_address.tbAddress.Id
+Ref: ant_address.tbAddressAllocation.AddrID2 > ant_address.tbAddress.Id
+Ref: ant_address.tbAddressAllocation.AllocType > ant_address.tbAddressAllocationType.ID
+Ref: ant_address.tbAddressCommunication.ComIDF > ant_address.tbAddressComType.ID
+Ref: ant_address.tbAddressCommunication.AddrIDF > ant_address.tbAddress.Id
+Ref: ant_address.tbAddressGroupAllocation.AdrIDF > ant_address.tbAddress.Id
+Ref: ant_address.tbAddressGroupAllocation.GrpIDF > ant_address.tbAddressGroups.Id
+
+
+// Cross-Database Relationship (Main DB to Address DB)
+Ref: tbFoldersAddrAllocation.AddrIDF > ant_address.tbAddress.Id
+Ref: tbFoldersAddrAllocation.Addr2ID > ant_address.tbAddress.Id
+
+
+Ref: "public"."tbFolders"."Id" < "public"."tbFoldersFilter"."IDF"
+
+Ref: "public"."tbFiles"."Id" < "public"."tbFileInfoAllocation"."FileIDF"
+
+Ref: "public"."tbFileinfo"."ID" < "public"."tbFileInfoAllocation"."FileInfoIDF"
+
+Ref: "public"."tbFileinfo"."ID" < "public"."tbFileInfoContent"."FileInfoIDF"
+

@@ -1,0 +1,19 @@
+Python is a high-level, interpreted programming language known for its simplicity and readability. Created by Guido van Rossum in 1991, Python emphasizes code readability and allows programmers to express concepts in fewer lines of code compared to other languages.
+
+Python supports multiple programming paradigms including procedural, object-oriented, and functional programming. Its dynamic typing system means you don't need to declare variable types explicitly — Python infers them at runtime.
+
+Key features of Python include list comprehensions, generators, decorators, and context managers. List comprehensions provide a concise way to create lists: [x*2 for x in range(10)] creates a list of doubled numbers from 0 to 9.
+
+Python's standard library is extensive, covering areas like file I/O, networking, databases, and web services. The pip package manager allows easy installation of third-party libraries from PyPI, the Python Package Index.
+
+Virtual environments in Python let you create isolated spaces for project dependencies. Tools like venv, virtualenv, and conda help manage these environments, preventing conflicts between different projects.
+
+Python is widely used in web development (Django, Flask, FastAPI), data science (NumPy, Pandas, Matplotlib), machine learning (TensorFlow, PyTorch, scikit-learn), automation scripting, and API development.
+
+Python 3 introduced significant improvements over Python 2, including better Unicode support, improved integer division, and enhanced standard library modules. Python 2 reached end-of-life in January 2020.
+
+Type hints were introduced in Python 3.5 via PEP 484. They allow developers to annotate function signatures and variables with expected types, enabling better IDE support and static analysis tools like mypy.
+
+The Python GIL (Global Interpreter Lock) is a mutex that protects access to Python objects, preventing multiple threads from executing Python bytecodes simultaneously. This is relevant for CPU-bound multithreaded applications.
+
+Asynchronous programming in Python uses async/await syntax introduced in Python 3.5. The asyncio library enables writing concurrent code that handles many I/O operations efficiently without using threads.

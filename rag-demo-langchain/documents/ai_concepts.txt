@@ -1,0 +1,19 @@
+Artificial Intelligence (AI) refers to the simulation of human intelligence in machines programmed to think and learn. Modern AI primarily focuses on machine learning, where systems learn from data rather than being explicitly programmed with rules.
+
+Machine Learning (ML) is a subset of AI that uses statistical techniques to enable computers to learn from data. The three main types are supervised learning (labeled training data), unsupervised learning (finding patterns in unlabeled data), and reinforcement learning (learning through reward and punishment).
+
+Deep Learning uses neural networks with many layers (hence "deep") to learn representations of data with multiple levels of abstraction. Convolutional Neural Networks (CNNs) excel at image recognition. Recurrent Neural Networks (RNNs) and Transformers handle sequential data like text.
+
+Large Language Models (LLMs) are a type of deep learning model trained on vast amounts of text data. Models like GPT-4, Claude, and LLaMA can understand and generate human-like text, answer questions, write code, and perform reasoning tasks.
+
+RAG (Retrieval-Augmented Generation) is a technique that combines retrieval systems with generative AI. Instead of relying solely on knowledge encoded during training, RAG systems retrieve relevant documents from an external knowledge base and use them as context when generating responses. This reduces hallucinations and keeps information current.
+
+Embeddings are dense vector representations of data (text, images, etc.) in a high-dimensional space. Similar items are placed close together in this space. Text embeddings capture semantic meaning — words with similar meanings have similar vector representations.
+
+Vector databases are specialized storage systems optimized for storing and searching high-dimensional vectors. They use approximate nearest neighbor (ANN) algorithms like HNSW, IVF, or LSH to perform fast similarity searches across millions of vectors.
+
+Prompt engineering is the practice of designing and optimizing input prompts to get the best outputs from language models. Techniques include few-shot prompting, chain-of-thought prompting, role assignment, and structured output formatting.
+
+Fine-tuning adapts a pre-trained model to specific tasks or domains by training it on a smaller, task-specific dataset. LoRA (Low-Rank Adaptation) is a popular parameter-efficient fine-tuning technique that reduces memory requirements significantly.
+
+AI Agents are systems that use LLMs as their reasoning engine to autonomously perform multi-step tasks. They can use tools (web search, code execution, API calls), maintain memory, and break complex goals into subtasks. Examples include coding assistants and research agents.

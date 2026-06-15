@@ -1,0 +1,19 @@
+Web development encompasses building and maintaining websites and web applications. It's divided into frontend (client-side) development dealing with what users see, and backend (server-side) development handling data, logic, and APIs.
+
+HTML (HyperText Markup Language) is the foundation of web pages, defining structure and content. CSS (Cascading Style Sheets) handles visual presentation — colors, layouts, fonts, animations. JavaScript adds interactivity and dynamic behavior to web pages.
+
+Modern frontend development uses frameworks and libraries. React, developed by Meta, uses a component-based architecture and virtual DOM for efficient updates. Vue.js is a progressive framework known for gentle learning curve. Angular is a full-featured framework by Google using TypeScript.
+
+REST (Representational State Transfer) APIs are the most common way web services communicate. RESTful APIs use HTTP methods: GET (retrieve), POST (create), PUT/PATCH (update), DELETE (remove). Data is typically exchanged in JSON format.
+
+GraphQL is an alternative API query language developed by Facebook. Unlike REST, clients can request exactly the data they need, reducing over-fetching and under-fetching. It uses a single endpoint and a strongly typed schema.
+
+Databases in web development include relational databases (PostgreSQL, MySQL) using SQL for structured data, and NoSQL databases (MongoDB, Redis) for flexible schemas or caching. ORMs like SQLAlchemy (Python) and Prisma (JavaScript) abstract database interactions.
+
+FastAPI is a modern Python web framework for building APIs quickly. It uses Python type hints for automatic data validation and generates OpenAPI documentation automatically. It's built on Starlette and Pydantic and supports async operations natively.
+
+Authentication in web apps commonly uses JWT (JSON Web Tokens) for stateless auth, OAuth 2.0 for third-party login (Google, GitHub), and session-based auth for traditional applications. Security best practices include HTTPS, CSRF protection, and proper password hashing with bcrypt.
+
+DevOps practices for web development include containerization with Docker, orchestration with Kubernetes, CI/CD pipelines with GitHub Actions or Jenkins, and cloud deployment on AWS, Azure, or GCP.
+
+Progressive Web Apps (PWAs) combine the best of web and mobile apps. They work offline using Service Workers, can be installed on home screens, and send push notifications. PWAs bridge the gap between web and native mobile applications.
