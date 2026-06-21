@@ -1,0 +1,25 @@
+# ─────────────────────────────────────────────────────────────────────
+#  config/redis.yaml
+#
+#  Redis configuration for cache, HITL state, and session storage.
+# ─────────────────────────────────────────────────────────────────────
+
+connection:
+  url_env: REDIS_URL                # reads redis://localhost:6379 from .env
+  max_connections: 10
+  decode_responses: true            # return strings, not bytes
+
+# ── TTL (Time To Live) for each key type — in seconds
+ttl:
+  semantic_cache: 3600              # 1 hour — cached query answers
+  hitl_state: 7200                  # 2 hours — pending HITL approvals survive restarts
+  session_summary: 86400            # 24 hours — active session summaries
+  embedding_cache: 604800           # 7 days — don't re-embed identical text
+
+# ── Key prefixes (prevents collision between key types)
+key_prefixes:
+  semantic_cache: "cache:query:"
+  hitl_state: "hitl:pending:"
+  session: "session:active:"
+  embedding: "embed:cache:"
+  stream: "stream:response:"       # SSE token stream buffer

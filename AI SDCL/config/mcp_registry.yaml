@@ -1,0 +1,67 @@
+# ─────────────────────────────────────────────────────────────────────
+#  config/mcp_registry.yaml
+#
+#  All MCP (Model Context Protocol) connectors are registered here.
+#  Agents never import connectors directly — they call by name via
+#  the MCPRegistry class.
+#
+#  Adding a new tool = add a block here. Zero Python changes needed.
+# ─────────────────────────────────────────────────────────────────────
+
+connectors:
+
+  # ── GitHub MCP Connector
+  # Used by: pr_agent, cross_source_agent
+  # API docs: https://docs.github.com/en/rest
+  github:
+    enabled: true
+    type: github                    # maps to backend/mcp/github_connector.py
+    description: "GitHub REST API — PRs, issues, repos, webhooks"
+    base_url: "https://api.github.com"
+    token_env: GITHUB_TOKEN         # reads from .env — never hardcoded
+    available_tools:
+      - search_prs
+      - get_pr_details
+      - list_open_prs
+      - assign_reviewer
+      - get_repo_info
+    timeout_seconds: 10
+    max_retries: 3
+
+  # ── Jira MCP Connector
+  # Used by: ticket_agent, risk_agent, cross_source_agent
+  # API docs: https://developer.atlassian.com/cloud/jira/platform/rest/v3/
+  jira:
+    enabled: true
+    type: jira                      # maps to backend/mcp/jira_connector.py
+    description: "Jira Cloud REST API — tickets, sprints, boards"
+    base_url_env: JIRA_BASE_URL     # reads from .env
+    email_env: JIRA_EMAIL
+    token_env: JIRA_TOKEN
+    project_key_env: JIRA_PROJECT_KEY
+    available_tools:
+      - search_tickets
+      - get_ticket_details
+      - create_ticket
+      - get_sprint_board
+      - get_blocked_tickets
+      - update_ticket_status
+    timeout_seconds: 15
+    max_retries: 3
+
+  # ── Slack MCP Connector
+  # Used by: cross_source_agent, notify_agent, risk_agent
+  # Set use_mock: true to use local JSON files instead of real Slack API
+  slack:
+    enabled: true
+    type: slack                     # maps to backend/mcp/slack_connector.py
+    description: "Slack API — channel messages, notifications"
+    use_mock: true                  # DEMO MODE: reads from data/mock_slack/ folder
+    mock_data_path: "data/mock_slack"
+    token_env: SLACK_BOT_TOKEN      # only used when use_mock: false
+    available_tools:
+      - search_messages
+      - get_channel_history
+      - send_message
+    timeout_seconds: 10
+    max_retries: 2

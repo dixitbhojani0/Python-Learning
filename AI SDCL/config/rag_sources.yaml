@@ -1,0 +1,56 @@
+# ─────────────────────────────────────────────────────────────────────
+#  config/rag_sources.yaml
+#
+#  RAG pipeline configuration — chunking strategy, retrieval thresholds.
+#  Tune these values without touching Python code.
+# ─────────────────────────────────────────────────────────────────────
+
+# ── Chunking Strategy
+chunking:
+  parent:
+    size_tokens: 1500               # Parent chunk size (full context window)
+    overlap_tokens: 0               # Parents don't overlap — clean boundaries
+  child:
+    size_tokens: 350                # Child chunk size (what gets embedded)
+    overlap_tokens: 40              # ~10% overlap between child chunks
+  contextual_prefix: true           # Prepend LLM-generated context to each child before embedding
+
+# ── Retrieval Settings
+retrieval:
+  initial_candidates: 30            # BM25 + vector each fetch this many → merged → reranked
+  top_k_after_rerank: 7             # Final chunks passed to context builder
+
+  # Confidence tiers (from solution doc Section 4.7)
+  # These control the system's behaviour at runtime
+  confidence:
+    high_threshold: 0.75            # ≥ 0.75 → answer confidently, full RAG context
+    medium_threshold: 0.45          # 0.45–0.74 → answer with "Based on available data..." caveat
+    low_threshold: 0.45             # < 0.45 → trigger corrective RAG (reformulate + retry)
+    no_evidence_threshold: 0.20     # < 0.20 → graceful degradation, no hallucination
+
+  # Semantic cache threshold (Redis)
+  cache_similarity_threshold: 0.92  # cosine similarity — reuse cached answer if similar enough
+
+# ── Embedding Model (local, free — downloads ~90MB on first run)
+embeddings:
+  model: all-MiniLM-L6-v2           # sentence-transformers model
+  dimension: 384                    # vector dimensions (must match Qdrant collection)
+  normalize: true                   # L2 normalize vectors before storage
+
+# ── Qdrant Collection Settings
+vector_store:
+  collection_name: sdlc_knowledge
+  distance_metric: Cosine           # Cosine similarity for semantic search
+
+# ── Document Types and their chunking approach
+document_types:
+  doc:                              # Sprint plans, ADRs, policies
+    splitter: semantic              # Paragraph-aware splitting
+  adr:                              # Architecture Decision Records
+    splitter: semantic
+  chat:                             # Slack/Teams message history
+    splitter: message               # Thread = parent, message = child
+  ticket:                           # Jira tickets
+    splitter: field                 # title+desc = one chunk, each comment = child
+  code:                             # PR diffs, source files
+    splitter: function              # Function/class level boundaries

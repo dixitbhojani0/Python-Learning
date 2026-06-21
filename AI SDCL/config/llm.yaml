@@ -1,0 +1,38 @@
+# ─────────────────────────────────────────────────────────────────────
+#  config/llm.yaml
+#
+#  LLM provider configuration. Switch models without changing code.
+#  The LLM provider class reads this file at startup.
+# ─────────────────────────────────────────────────────────────────────
+
+primary:
+  provider: groq                      # groq | openai | gemini
+  model: llama-3.3-70b-versatile      # Groq free tier — fast + capable
+  api_key_env: GROQ_API_KEY           # reads from .env
+
+  # Temperature profiles per task type
+  # Lower = more deterministic, Higher = more creative
+  temperatures:
+    agent_reasoning: 0.1              # Agents making decisions — stay grounded
+    response_generation: 0.4          # Final answer — some natural language variety
+    chunk_contextualization: 0.0      # Prepend context to chunk — fully deterministic
+    persona_rewriting: 0.3            # Rewrite per persona — slight variation OK
+    summarization: 0.0                # Compress conversation — fully deterministic
+
+  max_tokens:
+    response: 1024                    # Max tokens in final answer
+    chunk_context: 100                # Max tokens for chunk context prefix
+    summary: 300                      # Max tokens for conversation summary
+
+fallback:
+  provider: groq
+  model: llama-3.1-8b-instant        # Faster, smaller fallback on rate limit
+  api_key_env: GROQ_API_KEY
+  # Triggered automatically when primary hits rate limit or errors
+
+# ─────────────────────────────────────────────────────────────────────
+#  config/rag_sources.yaml
+#
+#  RAG pipeline configuration — chunking strategy, retrieval settings.
+#  Change thresholds here without modifying Python code.
+# ─────────────────────────────────────────────────────────────────────

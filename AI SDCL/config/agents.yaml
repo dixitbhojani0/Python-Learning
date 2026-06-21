@@ -1,0 +1,127 @@
+# ─────────────────────────────────────────────────────────────────────
+#  config/agents.yaml
+#
+#  Agent routing configuration.
+#  The orchestrator reads this file to decide which agent handles
+#  which query — without any hardcoded routing logic in Python.
+#
+#  Adding a new agent = add a block here. Zero Python changes.
+# ─────────────────────────────────────────────────────────────────────
+
+agents:
+
+  # ── Cross-Source Correlation Agent
+  # Triggered when user asks about feature status, what's happening, etc.
+  # Queries: Slack + Teams + Jira + GitHub + Drive simultaneously
+  cross_source_agent:
+    enabled: true
+    description: "Unified answer from all connected tools about a feature or incident"
+    trigger_keywords:
+      - "status of"
+      - "what is happening"
+      - "what happened"
+      - "feature status"
+      - "dashboard"
+      - "payment"
+      - "update on"
+      - "progress"
+      - "how is"
+    mcp_tools:
+      - jira
+      - github
+      - slack
+    requires_hitl: false
+
+  # ── Sprint Risk Detection Agent
+  # Triggered by status queries OR automatically at 5pm daily via scheduler
+  risk_agent:
+    enabled: true
+    description: "Analyzes sprint health, blockers, and delivery risk proactively"
+    trigger_keywords:
+      - "sprint status"
+      - "delivery risk"
+      - "at risk"
+      - "blocked"
+      - "deadline"
+      - "will we make"
+      - "on track"
+      - "sprint health"
+      - "velocity"
+    mcp_tools:
+      - jira
+      - slack
+    requires_hitl: false
+    scheduled:
+      enabled: true
+      cron: "0 17 * * 1-5"         # 5pm every weekday
+      output_channel: "slack:#engineering-manager"
+
+  # ── Ticket Creation Agent (with HITL)
+  # Triggered when developer reports a technical issue/error
+  ticket_agent:
+    enabled: true
+    description: "Proposes Jira ticket creation for reported issues — requires human approval"
+    trigger_keywords:
+      - "error"
+      - "issue"
+      - "bug"
+      - "failing"
+      - "not working"
+      - "broken"
+      - "cors"
+      - "500"
+      - "404"
+      - "timeout"
+      - "exception"
+      - "crash"
+      - "blocked"
+    mcp_tools:
+      - jira
+    requires_hitl: true             # ALWAYS requires human approval before creating ticket
+
+  # ── PR Review Agent (with HITL)
+  # Triggered by user query OR automatically by GitHub webhook on PR open
+  pr_agent:
+    enabled: true
+    description: "Reviews PRs against coding standards, suggests reviewer — requires approval"
+    trigger_keywords:
+      - "pr"
+      - "pull request"
+      - "review"
+      - "merge"
+      - "code review"
+      - "reviewer"
+      - "diff"
+    mcp_tools:
+      - github
+    requires_hitl: true             # Reviewer assignment requires human approval
+    webhook_trigger:
+      event: "pull_request"
+      action: "opened"
+
+  # ── Release Readiness Agent (with HITL — releasing is high-stakes)
+  release_readiness_agent:
+    enabled: true
+    description: "Go/no-go release assessment against open tickets, PRs, and version policy"
+    trigger_keywords:
+      - "ready to release"
+      - "release check"
+      - "go live"
+      - "go/no-go"
+      - "can we release"
+      - "release readiness"
+      - "ship"
+    mcp_tools:
+      - jira
+      - github
+    requires_hitl: true             # Release is always a high-stakes action
+
+  # ── Notification Agent
+  # Used internally by other agents — not triggered directly by user
+  notify_agent:
+    enabled: true
+    description: "Sends notifications via Slack/Teams after HITL-approved actions"
+    trigger_keywords: []            # Not user-triggered directly
+    mcp_tools:
+      - slack
+    requires_hitl: false
