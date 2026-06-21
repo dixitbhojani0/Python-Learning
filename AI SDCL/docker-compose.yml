@@ -1,0 +1,66 @@
+# ─────────────────────────────────────────────
+#  AI SDLC Assistant — Docker Compose
+#
+#  Infrastructure only (Qdrant + Redis)
+#  Run: docker compose up -d
+#  Verify: docker compose ps
+# ─────────────────────────────────────────────
+#
+#  Why these services in Docker?
+#  - Qdrant: vector database (no local install needed)
+#  - Redis: cache + HITL state persistence
+#
+#  The Python app runs locally (not in Docker during dev)
+#  so you get fast hot-reload without rebuilding images.
+#  For full Docker run: use docker-compose.prod.yml
+# ─────────────────────────────────────────────
+
+services:
+
+  # ── Qdrant Vector Database
+  # Official image: https://hub.docker.com/r/qdrant/qdrant
+  # Dashboard UI available at: http://localhost:6333/dashboard
+  qdrant:
+    image: qdrant/qdrant:v1.14.0      # pinned version for reproducibility
+    container_name: sdlc-qdrant
+    ports:
+      - "6333:6333"                   # REST API
+      - "6334:6334"                   # gRPC (optional)
+    volumes:
+      - ./data/qdrant_storage:/qdrant/storage    # persist data between restarts
+    environment:
+      QDRANT__SERVICE__HTTP_PORT: 6333
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ── Redis Cache
+  # Official image: https://hub.docker.com/_/redis
+  # Used for: HITL state, semantic cache, session fast cache
+  redis:
+    image: redis:7.4-alpine            # Alpine = small image, production-grade
+    container_name: sdlc-redis
+    ports:
+      - "6379:6379"
+    command: >
+      redis-server
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lfu
+      --save ""
+      --loglevel warning
+    volumes:
+      - ./data/redis_data:/data        # persist data between restarts
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+# Named volumes ensure data persists even if containers are recreated
+volumes:
+  qdrant_storage:
+  redis_data:

@@ -1,0 +1,83 @@
+# ─────────────────────────────────────────────
+#  AI SDLC Assistant — Python Dependencies
+#  Install: pip install -r requirements.txt
+# ─────────────────────────────────────────────
+
+# ── LangChain Core (official: https://python.langchain.com/docs/get_started/installation)
+langchain==0.3.25
+langchain-core==0.3.60
+langchain-community==0.3.24
+
+# ── LangGraph (official: https://langchain-ai.github.io/langgraph/tutorials/introduction/)
+langgraph==0.4.5
+langgraph-checkpoint==2.0.26
+# langgraph-checkpoint-redis         # Added back in Phase 7a (HITL) — version pinned then
+
+# ── LLM Providers
+langchain-groq==0.3.2               # Groq: https://console.groq.com (free tier)
+tenacity==9.0.0                     # Retry logic for MCP connectors (Phase 6+)
+
+# ── Embeddings (local, free — no API key needed)
+sentence-transformers==3.4.1        # all-MiniLM-L6-v2 for embeddings
+# NOTE: Will auto-download model on first run (~90MB)
+
+# ── Vector Database (official Qdrant client: https://python-client.qdrant.tech/)
+qdrant-client==1.14.2
+langchain-qdrant==0.2.0
+
+# ── Hybrid Search — BM25 sparse retrieval
+rank-bm25==0.2.2
+
+# ── Reranker (local cross-encoder, free)
+# Uses cross-encoder/ms-marco-MiniLM-L-6-v2 via sentence-transformers above
+
+# ── FastAPI (official: https://fastapi.tiangolo.com/)
+fastapi==0.115.12
+uvicorn[standard]==0.34.2           # ASGI server with WebSocket + SSE support
+python-multipart==0.0.18            # For file upload in admin panel (chainlit 2.5.5 requires <0.0.19)
+
+# ── Chainlit — Chat UI (official: https://docs.chainlit.io/get-started/installation)
+chainlit==2.5.5
+
+# ── Streamlit — Admin panel (official: https://docs.streamlit.io/)
+streamlit==1.45.1
+
+# ── Redis (official: https://redis-py.readthedocs.io/)
+redis==6.2.0
+
+# ── Database
+sqlalchemy==2.0.41                  # ORM for SQLite (demo) / PostgreSQL (prod)
+aiosqlite==0.21.0                   # Async SQLite driver
+
+# ── Auth & Security
+python-jose[cryptography]==3.3.0    # JWT handling
+passlib[bcrypt]==1.7.4              # Password hashing
+
+# ── Config & Environment
+pydantic==2.11.5
+pydantic-settings==2.9.1
+pyyaml==6.0.2
+python-dotenv==1.1.0
+watchdog==6.0.0                     # Hot-reload YAML config on file change
+
+# ── HTTP Client (for MCP connectors)
+httpx==0.28.1                       # Async HTTP — used by all MCP connectors
+
+# ── Token Counting (official: https://github.com/openai/tiktoken)
+tiktoken==0.9.0                     # Count tokens before sending to LLM
+
+# ── Scheduler (official: https://apscheduler.readthedocs.io/)
+apscheduler==3.11.0                 # Proactive risk scan at 5pm daily
+
+# ── Document Parsing
+unstructured==0.17.2                # Parse PDF, DOCX, HTML, MD
+python-docx==1.1.2
+markdown==3.8
+
+# ── Observability (official: https://docs.smith.langchain.com/)
+langsmith==0.2.11                   # Traces every LLM call, agent decision, retrieval step
+
+# ── Utilities
+numpy==2.2.6
+python-dateutil==2.9.0
+# uuid — built into Python stdlib since 2.5, no install needed
