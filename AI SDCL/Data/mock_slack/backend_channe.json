@@ -1,0 +1,62 @@
+[
+  {
+    "user": "alice",
+    "message": "Getting 500 errors on /api/v2/users endpoint. Started after the nginx config update this morning. Anyone else seeing this?",
+    "timestamp": "2026-05-28T10:00:00Z",
+    "channel": "backend"
+  },
+  {
+    "user": "charlie",
+    "message": "Yes! I see it too. Looks like DB connection pool is exhausted. Seeing 'QueuePool limit reached' in auth-service logs.",
+    "timestamp": "2026-05-28T10:15:00Z",
+    "channel": "backend"
+  },
+  {
+    "user": "alice",
+    "message": "Also getting CORS error on /api/v2/auth after the nginx change. The Access-Control-Allow-Origin header is missing.",
+    "timestamp": "2026-05-28T10:30:00Z",
+    "channel": "backend"
+  },
+  {
+    "user": "charlie",
+    "message": "CORS issue is related to the nginx reload. I'll run nginx -s reload and verify headers. Give me 5 minutes.",
+    "timestamp": "2026-05-28T10:32:00Z",
+    "channel": "backend"
+  },
+  {
+    "user": "charlie",
+    "message": "Done. CORS headers are back on /api/v2/auth. The reload fixed it. Checking the connection pool now.",
+    "timestamp": "2026-05-28T10:40:00Z",
+    "channel": "backend"
+  },
+  {
+    "user": "bob",
+    "message": "Payment gateway is still blocked. Stripe sandbox still unreachable. SSL cert renewal from the vendor is taking too long - it has been 8 days.",
+    "timestamp": "2026-05-28T11:00:00Z",
+    "channel": "backend"
+  },
+  {
+    "user": "alice",
+    "message": "The dashboard feature is at risk. If the /api/v2/users 500 error is not fixed today, we cannot complete integration tests before sprint deadline.",
+    "timestamp": "2026-05-28T11:30:00Z",
+    "channel": "backend"
+  },
+  {
+    "user": "charlie",
+    "message": "I increased the DB pool size to 50 in db.yaml and restarted auth-service. Connection pool exhaustion should be resolved now.",
+    "timestamp": "2026-05-28T12:00:00Z",
+    "channel": "backend"
+  },
+  {
+    "user": "alice",
+    "message": "Confirmed. /api/v2/users is returning 200 now. Pool fix worked. Still no ticket created for the CORS issue that happened this morning.",
+    "timestamp": "2026-05-28T12:15:00Z",
+    "channel": "backend"
+  },
+  {
+    "user": "diana",
+    "message": "Sprint deadline is June 5. Dashboard and payment are both at risk. Should we flag this in the standup?",
+    "timestamp": "2026-05-28T14:00:00Z",
+    "channel": "backend"
+  }
+]
