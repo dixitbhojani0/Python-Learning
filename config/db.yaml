@@ -1,0 +1,4 @@
+database:
+  pool_size: 50
+  max_overflow: 10
+  pool_timeout: 30
