@@ -1,0 +1,31 @@
+<mat-sidenav-container class="admin-container">
+  <mat-sidenav mode="side" opened class="admin-sidenav">
+    <p class="sidenav-title">Admin Panel</p>
+    <mat-nav-list>
+      <a mat-list-item routerLink="stats"    routerLinkActive="active-nav">
+        <mat-icon matListItemIcon>dashboard</mat-icon>
+        <span matListItemTitle>Stats</span>
+      </a>
+      <a mat-list-item routerLink="rag"      routerLinkActive="active-nav">
+        <mat-icon matListItemIcon>storage</mat-icon>
+        <span matListItemTitle>RAG Manager</span>
+      </a>
+      <a mat-list-item routerLink="config"   routerLinkActive="active-nav">
+        <mat-icon matListItemIcon>settings</mat-icon>
+        <span matListItemTitle>Config</span>
+      </a>
+      <a mat-list-item routerLink="memory"   routerLinkActive="active-nav">
+        <mat-icon matListItemIcon>psychology</mat-icon>
+        <span matListItemTitle>Memory</span>
+      </a>
+      <a mat-list-item routerLink="sessions" routerLinkActive="active-nav">
+        <mat-icon matListItemIcon>chat</mat-icon>
+        <span matListItemTitle>Sessions</span>
+      </a>
+    </mat-nav-list>
+  </mat-sidenav>
+
+  <mat-sidenav-content class="admin-content">
+    <router-outlet />
+  </mat-sidenav-content>
+</mat-sidenav-container>

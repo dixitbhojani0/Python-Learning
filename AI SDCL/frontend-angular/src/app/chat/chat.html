@@ -1,0 +1,85 @@
+<div class="chat-container">
+  <!-- Message list -->
+  <div class="messages" #messageList>
+
+    @if (messages().length === 0) {
+      <div class="empty-state">
+        <p>Hi <strong>{{ auth.getSession()?.name }}</strong>! Ask me anything about your sprint.</p>
+        <p class="hint">Try: "What is blocking the dashboard?" or "Are we on track for the release?"</p>
+      </div>
+    }
+
+    @for (msg of messages(); track $index) {
+      <div class="bubble" [class.user]="msg.role === 'user'" [class.assistant]="msg.role === 'assistant'">
+
+        <!-- User bubbles: plain text. Assistant bubbles: render markdown as HTML -->
+        @if (msg.role === 'user') {
+          <div class="bubble-text">{{ msg.text }}</div>
+        } @else {
+          <div class="bubble-text markdown" [innerHTML]="msg.text | markdown"></div>
+        }
+
+        <!-- Meta footer: sources + confidence + cache badge (assistant only) -->
+        @if (msg.role === 'assistant' && ((msg.sources && msg.sources.length > 0) || msg.cached)) {
+          <div class="bubble-meta">
+            @for (src of msg.sources ?? []; track src) {
+              <span class="source-chip">{{ src }}</span>
+            }
+            @if (msg.confidence && msg.confidence > 0) {
+              <span class="confidence" [matTooltip]="'RAG confidence'">
+                {{ formatConfidence(msg.confidence) }}
+              </span>
+            }
+            @if (msg.cached) {
+              <span class="cached-badge" matTooltip="Served from semantic cache">⚡ cached</span>
+            }
+          </div>
+        }
+
+        <!-- HITL approve/reject card -->
+        @if (msg.hitlRequired && !msg.hitlResolved && msg.hitlActionId) {
+          <app-hitl-card
+            [hitlId]="msg.hitlActionId"
+            (resolved)="onHitlResolved(msg, $event)"
+          />
+        }
+      </div>
+    }
+
+    <!-- Typing indicator -->
+    @if (loading()) {
+      <div class="bubble assistant">
+        <mat-spinner diameter="24" />
+      </div>
+    }
+  </div>
+
+  <!-- HITL pending banner -->
+  @if (pendingHitl()) {
+    <div class="hitl-banner">
+      ⚠️ Please <strong>Approve</strong> or <strong>Reject</strong> the action above before continuing.
+    </div>
+  }
+
+  <!-- Input bar -->
+  <div class="input-bar" [class.input-blocked]="pendingHitl()">
+    <mat-form-field appearance="outline" class="input-field">
+      <mat-label>{{ pendingHitl() ? 'Resolve the pending action above first…' : 'Ask about your sprint…' }}</mat-label>
+      <textarea
+        matInput
+        [ngModel]="inputText()"
+        (ngModelChange)="inputText.set($event)"
+        (keydown)="onEnter($event)"
+        rows="2"
+        [disabled]="loading() || pendingHitl()"
+      ></textarea>
+    </mat-form-field>
+    <button
+      mat-fab
+      color="primary"
+      (click)="send()"
+      [disabled]="loading() || !inputText().trim() || pendingHitl()"
+      aria-label="Send"
+    >➤</button>
+  </div>
+</div>

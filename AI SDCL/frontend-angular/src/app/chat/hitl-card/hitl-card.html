@@ -1,0 +1,18 @@
+<mat-card class="hitl-card">
+  <mat-card-content>
+    <p><strong>⚠️ This action requires your approval before it executes.</strong></p>
+    <div class="hitl-actions">
+      @if (busy()) {
+        <mat-spinner diameter="28" />
+      } @else {
+        <button mat-raised-button color="primary" (click)="approve()">✅ Approve</button>
+        <button mat-stroked-button color="warn" (click)="reject()">❌ Reject</button>
+      }
+    </div>
+  </mat-card-content>
+</mat-card>
+
+<style>
+  .hitl-card { background: #fff8e1; margin-top: 8px; }
+  .hitl-actions { display: flex; gap: 12px; align-items: center; margin-top: 8px; }
+</style>

@@ -1,0 +1,91 @@
+<h2>RAG Manager</h2>
+
+<div class="toolbar">
+  <mat-form-field appearance="outline">
+    <mat-label>Project</mat-label>
+    <input matInput [(ngModel)]="project" />
+  </mat-form-field>
+
+  <mat-form-field appearance="outline">
+    <mat-label>Doc Type</mat-label>
+    <mat-select [(ngModel)]="docType">
+      <mat-option value="">All</mat-option>
+      <mat-option value="doc">doc</mat-option>
+      <mat-option value="adr">adr</mat-option>
+      <mat-option value="chat">chat</mat-option>
+    </mat-select>
+  </mat-form-field>
+
+  <button mat-stroked-button (click)="loadChunks()">
+    <mat-icon>search</mat-icon> Filter
+  </button>
+
+  <button mat-raised-button color="accent" (click)="triggerIngest()" [disabled]="ingesting()">
+    @if (ingesting()) {
+      <mat-spinner diameter="18" style="display:inline-block" />
+    } @else {
+      <mat-icon>upload</mat-icon>
+    }
+    Re-Ingest
+  </button>
+
+  <button mat-raised-button color="primary" (click)="ingestFromConfluence()" [disabled]="ingestingConfluence()">
+    @if (ingestingConfluence()) {
+      <mat-spinner diameter="18" style="display:inline-block" />
+    } @else {
+      <mat-icon>article</mat-icon>
+    }
+    Ingest from Confluence
+  </button>
+
+  <button mat-raised-button color="primary" (click)="ingestFromJira()" [disabled]="ingestingJira()">
+    @if (ingestingJira()) {
+      <mat-spinner diameter="18" style="display:inline-block" />
+    } @else {
+      <mat-icon>bug_report</mat-icon>
+    }
+    Ingest from Jira
+  </button>
+
+  <button mat-raised-button color="warn" (click)="clearAll()" [disabled]="clearing()">
+    @if (clearing()) {
+      <mat-spinner diameter="18" style="display:inline-block" />
+    } @else {
+      <mat-icon>delete_sweep</mat-icon>
+    }
+    Clear All Data
+  </button>
+</div>
+
+@if (loading()) {
+  <mat-spinner />
+} @else {
+  <p class="chunk-count">{{ chunks().length }} chunks</p>
+  <table mat-table [dataSource]="chunks()" class="chunk-table">
+    <ng-container matColumnDef="source">
+      <th mat-header-cell *matHeaderCellDef>Source</th>
+      <td mat-cell *matCellDef="let c"><mat-chip>{{ c.source }}</mat-chip></td>
+    </ng-container>
+    <ng-container matColumnDef="type">
+      <th mat-header-cell *matHeaderCellDef>Type</th>
+      <td mat-cell *matCellDef="let c">{{ c.type }}</td>
+    </ng-container>
+    <ng-container matColumnDef="doc_title">
+      <th mat-header-cell *matHeaderCellDef>Document</th>
+      <td mat-cell *matCellDef="let c">{{ c.doc_title }}</td>
+    </ng-container>
+    <ng-container matColumnDef="text_preview">
+      <th mat-header-cell *matHeaderCellDef>Preview</th>
+      <td mat-cell *matCellDef="let c" class="preview-cell">{{ c.text_preview }}</td>
+    </ng-container>
+    <tr mat-header-row *matHeaderRowDef="displayedColumns"></tr>
+    <tr mat-row *matRowDef="let row; columns: displayedColumns;"></tr>
+  </table>
+}
+
+<style>
+  .toolbar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
+  .chunk-count { color: #666; font-size: 0.9rem; margin-bottom: 8px; }
+  .chunk-table { width: 100%; background: #fff; }
+  .preview-cell { max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.8rem; color: #555; }
+</style>
