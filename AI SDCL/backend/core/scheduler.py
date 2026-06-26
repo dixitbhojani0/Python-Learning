@@ -49,7 +49,8 @@ async def _run_risk_scan():
     risk summary to #engineering-manager channel.
     """
     from backend.agents.risk_agent import RiskAgent
-    from backend.orchestrator.graph import _get_retriever, _get_provider, _get_registry
+    from backend.mcp.registry import MCPRegistry
+    from backend.orchestrator.nodes import get_retriever, get_provider
     from backend.core.settings import settings
 
     project = settings.DEFAULT_PROJECT
@@ -85,27 +86,55 @@ async def _run_risk_scan():
     }
 
     try:
-        agent   = RiskAgent(
-            retriever=_get_retriever(),
-            llm=_get_provider(),
-            mcp_registry=_get_registry(),
+        registry = MCPRegistry()
+        agent    = RiskAgent(
+            retriever=get_retriever(),
+            llm=get_provider(),
+            mcp_registry=registry,
         )
         payload = await agent.run(synthetic_state)
         risk    = payload.structured.get("risk_data", {})
 
+        risk_level = risk.get("risk_level", "UNKNOWN")
+        risk_score = risk.get("risk_score", "N/A")
+        blocked    = risk.get("blocked_count", "?")
+        total      = risk.get("total_tickets", "?")
+
         logger.info(
             "Scheduler: risk scan complete — score=%s level=%s blocked=%s/%s",
-            risk.get("risk_score", "N/A"),
-            risk.get("risk_level", "UNKNOWN"),
-            risk.get("blocked_count", "?"),
-            risk.get("total_tickets", "?"),
+            risk_score, risk_level, blocked, total,
         )
 
-        # Phase 11: post to Slack
-        # await mcp.get("slack").post_message(
-        #     channel="#engineering-manager",
-        #     text=payload.structured["final_response"],
-        # )
+        # ── Post to Slack ─────────────────────────────────────────────────────
+        # Channel is read from agents.yaml → risk_agent.scheduled.output_channel
+        # Default: "engineering-manager"
+        risk_cfg    = config.get_agent("risk_agent").get("scheduled", {})
+        raw_channel = risk_cfg.get("output_channel", "slack:#engineering-manager")
+        channel     = raw_channel.split(":")[-1].lstrip("#")  # "slack:#foo" → "foo"
+
+        emoji = "🔴" if risk_level == "HIGH" else "🟡" if risk_level == "MEDIUM" else "🟢"
+        slack_text = (
+            f"{emoji} *Daily Sprint Risk Report — {project}*\n\n"
+            f"*Risk Level:* {risk_level}  |  *Score:* {risk_score}\n"
+            f"*Blocked:* {blocked}/{total} tickets\n\n"
+            f"{payload.response[:800]}"   # truncate to avoid hitting Slack's 4000-char limit
+        )
+
+        try:
+            slack_conn  = registry.get("slack")
+            if slack_conn and slack_conn.is_available():
+                posted = await slack_conn.post_message(channel=channel, text=slack_text)
+                if posted:
+                    logger.info("Scheduler: risk report posted to Slack #%s", channel)
+                else:
+                    logger.warning("Scheduler: Slack post_message returned False — check bot permissions")
+            else:
+                logger.info(
+                    "Scheduler: Slack not available (SLACK_USE_MOCK=true or no token) — "
+                    "skipping notification. Risk summary logged above."
+                )
+        except Exception:
+            logger.exception("Scheduler: failed to post risk report to Slack — continuing")
 
     except Exception:
         logger.exception("Scheduler: sprint risk scan failed")

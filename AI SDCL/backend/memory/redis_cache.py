@@ -19,21 +19,18 @@ Why scan instead of vector search?
 TTL: each cache entry expires after 1 hour (configurable in config/redis.yaml).
      After expiry, the same query will be re-answered and re-cached.
 """
+import asyncio
 import json
 import logging
-import os
 import uuid
 from datetime import datetime
 
 import numpy as np
 
-logger = logging.getLogger(__name__)
+from backend.core.config_loader import config
+from backend.core.settings import settings as _settings
 
-# ── Config (read from yaml via ConfigLoader would require async; use env + defaults here)
-_REDIS_URL        = os.getenv("REDIS_URL", "redis://localhost:6379")
-_KEY_PREFIX       = "cache:query:"
-_DEFAULT_TTL      = 3600   # 1 hour — matches redis.yaml semantic_cache TTL
-_SIM_THRESHOLD    = 0.92   # minimum cosine similarity to count as a cache hit
+logger = logging.getLogger(__name__)
 
 
 def _cosine_similarity(a: list[float], b: list[float]) -> float:
@@ -57,17 +54,28 @@ class SemanticCache:
 
     def __init__(self) -> None:
         self._client = None   # created lazily in _get_client()
+        self._init_lock = asyncio.Lock()  # prevents double-init under concurrent cold-start
+
+        redis_cfg = config.get_redis_config()
+        rag_cfg   = config.get_rag_config()
+
+        self._redis_url     = _settings.REDIS_URL
+        self._key_prefix    = redis_cfg.get("key_prefixes", {}).get("semantic_cache", "cache:query:")
+        self._default_ttl   = redis_cfg.get("ttl", {}).get("semantic_cache", 3600)
+        self._sim_threshold = rag_cfg.get("retrieval", {}).get("cache_similarity_threshold", 0.92)
 
     async def _get_client(self):
         """Return (or create) the async Redis client."""
-        if self._client is None:
-            try:
-                from redis.asyncio import Redis
-                self._client = Redis.from_url(_REDIS_URL, decode_responses=True)
-                logger.info("SemanticCache: connected to Redis at %s", _REDIS_URL)
-            except Exception:
-                logger.exception("SemanticCache: failed to connect to Redis")
-                self._client = None
+        if self._client is not None:
+            return self._client
+        async with self._init_lock:
+            if self._client is None:  # re-check after acquiring lock
+                try:
+                    from redis.asyncio import Redis
+                    self._client = Redis.from_url(self._redis_url, decode_responses=True)
+                    logger.info("SemanticCache: connected to Redis at %s", self._redis_url)
+                except Exception:
+                    logger.exception("SemanticCache: failed to connect to Redis")
         return self._client
 
     async def get_cached(self, query: str, user_role: str = "") -> str | None:
@@ -90,7 +98,7 @@ class SemanticCache:
             query_embedding = model.encode([query], show_progress_bar=False)[0].tolist()
 
             # Scan only this role's cache namespace
-            role_prefix = f"{_KEY_PREFIX}{user_role}:" if user_role else _KEY_PREFIX
+            role_prefix = f"{self._key_prefix}{user_role}:" if user_role else self._key_prefix
             keys = await client.keys(f"{role_prefix}*")
             if not keys:
                 return None
@@ -108,7 +116,7 @@ class SemanticCache:
                     best_score    = similarity
                     best_response = entry.get("response")
 
-            if best_score >= _SIM_THRESHOLD and best_response:
+            if best_score >= self._sim_threshold and best_response:
                 logger.info(
                     "SemanticCache: HIT role='%s' similarity=%.3f for query='%s...'",
                     user_role, best_score, query[:50],
@@ -130,7 +138,7 @@ class SemanticCache:
         query: str,
         response: str,
         user_role: str = "",
-        ttl: int = _DEFAULT_TTL,
+        ttl: int | None = None,
     ) -> None:
         """
         Store a query + response in the role-scoped cache with a TTL.
@@ -145,12 +153,14 @@ class SemanticCache:
         if client is None:
             return
 
+        effective_ttl = ttl if ttl is not None else self._default_ttl
+
         try:
             from backend.rag.retriever import _get_embed_model
             model     = _get_embed_model()
             embedding = model.encode([query], show_progress_bar=False)[0].tolist()
 
-            role_prefix = f"{_KEY_PREFIX}{user_role}:" if user_role else _KEY_PREFIX
+            role_prefix = f"{self._key_prefix}{user_role}:" if user_role else self._key_prefix
             key         = f"{role_prefix}{uuid.uuid4()}"
 
             await client.hset(key, mapping={
@@ -160,15 +170,65 @@ class SemanticCache:
                 "response":   response,
                 "created_at": datetime.now().isoformat(),
             })
-            await client.expire(key, ttl)
+            await client.expire(key, effective_ttl)
 
             logger.info(
                 "SemanticCache: stored role='%s' query='%s...' (ttl=%ds)",
-                user_role, query[:50], ttl,
+                user_role, query[:50], effective_ttl,
             )
 
         except Exception:
             logger.exception("SemanticCache.set_cached: error — response not cached")
+
+    async def invalidate(self, query: str, user_role: str = "") -> bool:
+        """
+        Delete all cache entries semantically similar to this query for this role.
+
+        Called after HITL approve/reject — the world state just changed (a ticket was
+        created, a release was approved, a reviewer was assigned), so any cached answer
+        about that topic is now stale and must not be served again.
+
+        Returns True if at least one entry was deleted.
+        """
+        client = await self._get_client()
+        if client is None:
+            return False
+
+        try:
+            from backend.rag.retriever import _get_embed_model
+            model           = _get_embed_model()
+            query_embedding = model.encode([query], show_progress_bar=False)[0].tolist()
+
+            role_prefix = f"{self._key_prefix}{user_role}:" if user_role else self._key_prefix
+            keys        = await client.keys(f"{role_prefix}*")
+            if not keys:
+                return False
+
+            deleted = 0
+            for key in keys:
+                entry = await client.hgetall(key)
+                if not entry or "embedding" not in entry:
+                    continue
+                stored_emb = json.loads(entry["embedding"])
+                similarity = _cosine_similarity(query_embedding, stored_emb)
+                if similarity >= self._sim_threshold:
+                    await client.delete(key)
+                    deleted += 1
+                    logger.info(
+                        "SemanticCache.invalidate: deleted key='%s' similarity=%.3f role='%s'",
+                        key, similarity, user_role,
+                    )
+
+            if deleted:
+                logger.info(
+                    "SemanticCache.invalidate: %d stale entr%s removed for role='%s' query='%s...'",
+                    deleted, "y" if deleted == 1 else "ies", user_role, query[:50],
+                )
+            return deleted > 0
+
+        except Exception:
+            logger.exception("SemanticCache.invalidate: error — cache not invalidated")
+            return False
 
 
 # ── Module-level singleton — shared by graph nodes and chat route ─────────────

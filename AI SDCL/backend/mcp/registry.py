@@ -12,9 +12,16 @@ Why this indirection?
   2. The registry owns the concurrency cap — max N parallel MCP calls via asyncio.Semaphore.
   3. All connector failures are isolated here. One broken connector doesn't crash the agent.
 
+Adding a new connector (Plugin Registry pattern):
+  1. Create the new connector class (e.g. LinearConnector)
+  2. Call MCPRegistry.register("linear", LinearConnector, MockLinearConnector)
+     at the bottom of its file.
+  3. Import the connector file in backend/mcp/__init__.py so self-registration runs.
+  Zero changes to this file.
+
 Usage (in an agent):
     mcp = MCPRegistry()
-    tickets = await mcp.get("jira").search_tickets("dashboard blocked", "antlog")
+    tickets = await mcp.get("jira").search_tickets("dashboard blocked", "SDLC")
 
     # Or call multiple connectors in parallel (safe, respects semaphore):
     jira_data, slack_data = await mcp.call_parallel([
@@ -24,13 +31,10 @@ Usage (in an agent):
 """
 import asyncio
 import logging
-from typing import Any
+from typing import Any, Type
 
 from backend.core.config_loader import config
 from backend.mcp.base_connector import BaseMCPConnector
-from backend.mcp.connectors.mock_github import MockGitHubConnector
-from backend.mcp.connectors.mock_jira import MockJiraConnector
-from backend.mcp.connectors.mock_slack import MockSlackConnector
 
 logger = logging.getLogger(__name__)
 
@@ -42,13 +46,43 @@ class MCPRegistry:
     """
     Instantiates and manages all MCP connectors.
 
-    Phase 6: all connectors are mock (no real API keys needed).
-    A future phase will check env vars and use real connectors when credentials exist.
+    Connector selection is automatic:
+      - If the real connector reports is_available() = True → use it
+      - Otherwise fall back to the registered mock connector
+
+    This means switching from mock → real is zero-code: just set the right
+    environment variables and restart.
     """
 
+    # ── Plugin Registry ─────────────────────────────────────────────────────
+    # Maps connector type name → (RealClass, MockClass)
+    # Populated by connector files calling MCPRegistry.register() at import time.
+    _registry: dict[str, tuple[Type[BaseMCPConnector], Type[BaseMCPConnector]]] = {}
+
+    @classmethod
+    def register(
+        cls,
+        connector_type: str,
+        real_class: Type[BaseMCPConnector],
+        mock_class: Type[BaseMCPConnector],
+    ) -> None:
+        """
+        Register a connector type.
+
+        Called at the bottom of each connector file:
+            MCPRegistry.register("jira", JiraConnector, MockJiraConnector)
+
+        Must be called before MCPRegistry() is instantiated (i.e. at module import time).
+        """
+        cls._registry[connector_type] = (real_class, mock_class)
+        logger.debug("MCPRegistry: registered connector type '%s'", connector_type)
+
     def __init__(self) -> None:
-        # get_mcp_registry() already unwraps the "connectors" key — returns the connector dict
-        connectors_cfg = config.get_mcp_registry()
+        # Ensure all connector self-registrations have run before we try to build them.
+        # The import triggers register() calls in each connector file.
+        import backend.mcp.connectors  # noqa: F401
+
+        connectors_cfg  = config.get_mcp_registry()
         self._semaphore = asyncio.Semaphore(_DEFAULT_MAX_CONCURRENT)
         self._connectors: dict[str, BaseMCPConnector] = {}
 
@@ -68,17 +102,38 @@ class MCPRegistry:
         )
 
     def _build_connector(self, name: str, cfg: dict) -> BaseMCPConnector | None:
-        """Map connector type name → concrete class. All mock in Phase 6."""
+        """
+        Instantiate a connector from the registry.
+
+        Looks up the connector type in _registry (populated by self-registration calls).
+        If the real connector's is_available() returns True, uses it.
+        Otherwise falls back to the mock connector automatically.
+        """
         connector_type = cfg.get("type", name)
-        try:
-            if connector_type == "jira":
-                return MockJiraConnector(name=name, connector_config=cfg)
-            if connector_type == "slack":
-                return MockSlackConnector(name=name, connector_config=cfg)
-            if connector_type == "github":
-                return MockGitHubConnector(name=name, connector_config=cfg)
-            logger.warning("MCPRegistry: unknown connector type '%s' for '%s'", connector_type, name)
+
+        if connector_type not in self._registry:
+            logger.warning(
+                "MCPRegistry: unknown connector type '%s' for '%s' — "
+                "make sure the connector file is imported in backend/mcp/connectors/__init__.py",
+                connector_type, name,
+            )
             return None
+
+        real_class, mock_class = self._registry[connector_type]
+
+        try:
+            real = real_class(name=name, connector_config=cfg)
+            if real.is_available():
+                logger.info(
+                    "MCPRegistry: using REAL %s connector (%s credentials configured)",
+                    name, connector_type.upper(),
+                )
+                return real
+            logger.info(
+                "MCPRegistry: %s credentials not set — using mock %s connector",
+                connector_type.upper(), name,
+            )
+            return mock_class(name=name, connector_config=cfg)
         except Exception:
             logger.exception("MCPRegistry: failed to build connector '%s'", name)
             return None
@@ -111,16 +166,12 @@ class MCPRegistry:
 
         Args:
             calls: list of (connector_name, method_name, kwargs)
-                   e.g. [("jira", "search_tickets", {"query": "...", "project": "antlog"})]
+                   e.g. [("jira", "search_tickets", {"query": "...", "project": "SDLC"})]
 
         Returns:
             list of results in the same order as calls.
             If a connector raises, its result is the Exception object (not re-raised).
             Callers must check: if not isinstance(result, Exception): use(result)
-
-        Why return_exceptions=True?
-            Per resilience_standards.md: one failing connector must not crash all others.
-            Jira being down should not prevent Slack from returning data.
         """
         async def _one_call(connector_name: str, method: str, kwargs: dict) -> Any:
             async with self._semaphore:
@@ -128,7 +179,7 @@ class MCPRegistry:
                 fn = getattr(connector, method)
                 return await fn(**kwargs)
 
-        tasks = [_one_call(name, method, kwargs) for name, method, kwargs in calls]
+        tasks   = [_one_call(name, method, kwargs) for name, method, kwargs in calls]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         for i, (name, method, _) in enumerate(calls):

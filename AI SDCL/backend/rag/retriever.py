@@ -24,14 +24,29 @@ Official docs:
 """
 import logging
 import math
+import re
 from dataclasses import dataclass
 from sentence_transformers import SentenceTransformer, CrossEncoder
 from rank_bm25 import BM25Okapi
+
+try:
+    from langsmith import traceable as _traceable
+except ImportError:
+    def _traceable(fn=None, **_kw):
+        return fn if fn is not None else (lambda f: f)
 
 from backend.core.config_loader import config
 from backend.rag.vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
+
+# Filler words stripped before matching a recall query against document titles,
+# so "show me the clean code checklist" matches on {clean, code, checklist}.
+_RECALL_STOPWORDS = {
+    "show", "me", "the", "a", "an", "of", "for", "my", "our", "please", "give",
+    "whole", "entire", "full", "complete", "all", "list", "to", "and", "what",
+    "is", "are", "in", "on", "see", "view", "get", "tell", "about",
+}
 
 # ── Load models once at module import time (expensive — do NOT load per-request)
 # SentenceTransformer auto-downloads on first run (~90MB, cached in ~/.cache/)
@@ -42,22 +57,54 @@ _RERANK_MODEL = None
 def _get_embed_model() -> SentenceTransformer:
     global _EMBED_MODEL
     if _EMBED_MODEL is None:
-        model_name = config.get_rag_config().get("embeddings", {}).get("model", "all-MiniLM-L6-v2")
+        rag_cfg    = config.get_rag_config()
+        model_name = rag_cfg.get("embeddings", {}).get("model", "all-MiniLM-L6-v2")
+        config_dim = rag_cfg.get("embeddings", {}).get("dimension", 384)
         logger.info("HybridRetriever: loading embedding model '%s'...", model_name)
-        _EMBED_MODEL = SentenceTransformer(model_name)
-        logger.info("HybridRetriever: embedding model loaded")
+        model = SentenceTransformer(model_name)
+        actual_dim = model.get_sentence_embedding_dimension()
+        if actual_dim != config_dim:
+            raise ValueError(
+                f"Embedding dimension mismatch: rag_sources.yaml says {config_dim} but "
+                f"'{model_name}' produces {actual_dim}-dim vectors. "
+                f"Update embeddings.dimension in config/rag_sources.yaml."
+            )
+        _EMBED_MODEL = model
+        logger.info("HybridRetriever: embedding model loaded (dim=%d)", actual_dim)
     return _EMBED_MODEL
 
 
 def _get_rerank_model() -> CrossEncoder:
     global _RERANK_MODEL
     if _RERANK_MODEL is None:
-        # cross-encoder/ms-marco-MiniLM-L-6-v2 — free, local, production-grade
-        # Same concept as bge-reranker-large but smaller and faster
-        logger.info("HybridRetriever: loading reranker model...")
-        _RERANK_MODEL = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+        model_name = config.get_rag_config().get("embeddings", {}).get(
+            "reranker_model", "cross-encoder/ms-marco-MiniLM-L-6-v2"
+        )
+        logger.info("HybridRetriever: loading reranker model '%s'...", model_name)
+        _RERANK_MODEL = CrossEncoder(model_name)
         logger.info("HybridRetriever: reranker model loaded")
     return _RERANK_MODEL
+
+
+def rerank_relevance(query: str, texts: list[str]) -> float:
+    """
+    Return the MAX reranker relevance (0.0–1.0) of `query` against candidate `texts`.
+
+    Used by agents to judge whether live MCP data is actually on-topic — an ML
+    relevance signal (the same CrossEncoder used for RAG), not keyword presence.
+    Returns 0.0 for no candidates. Fails OPEN (1.0) on model error so a reranker
+    failure never suppresses legitimate live data.
+    """
+    candidates = [t for t in texts if t and t.strip()]
+    if not candidates:
+        return 0.0
+    try:
+        model  = _get_rerank_model()
+        scores = model.predict([(query, t) for t in candidates])
+        return max(_sigmoid(float(s)) for s in scores)
+    except Exception:
+        logger.exception("rerank_relevance: scoring failed — treating as relevant (fail-open)")
+        return 1.0
 
 
 def embed_text(text: str) -> list[float]:
@@ -103,8 +150,21 @@ class RetrievedChunk:
 
 
 def _sigmoid(x: float) -> float:
-    """Convert CrossEncoder raw logit to [0, 1] probability."""
-    return 1.0 / (1.0 + math.exp(-max(-500.0, min(500.0, x))))
+    """
+    Map CrossEncoder ms-marco raw logit → display confidence [0, 1].
+
+    Temperature T=3 spreads the typical domain-specific logit range [-5, +5]
+    across a meaningful display range:
+        logit -5  → 0.19  (19% — weak evidence)
+        logit  0  → 0.50  (50% — neutral)
+        logit +5  → 0.81  (81% — strong evidence)
+
+    Without temperature (T=1), logit -5 → 0.007 = 1% which looks broken
+    even when the retrieval is actually finding relevant chunks.
+    The ms-marco model was trained on web queries (not sprint docs) so its
+    raw logits are systematically lower for technical domain text.
+    """
+    return 1.0 / (1.0 + math.exp(-max(-500.0, min(500.0, x / 3.0))))
 
 
 def _reciprocal_rank_fusion(
@@ -153,7 +213,7 @@ class HybridRetriever:
 
     Usage:
         retriever = HybridRetriever()
-        chunks, confidence = retriever.retrieve("CORS error nginx auth", project="antlog")
+        chunks, confidence = retriever.retrieve("CORS error nginx auth", project="SDLC")
         # chunks: list[RetrievedChunk], confidence: float (reranker top score)
     """
 
@@ -164,6 +224,7 @@ class HybridRetriever:
         self.top_k = rag_cfg.get("top_k_after_rerank", 7)
         self.confidence_thresholds = config.get_confidence_thresholds()
 
+    @_traceable(name="hybrid_retriever", run_type="retriever")
     def retrieve(
         self,
         query: str,
@@ -244,11 +305,11 @@ class HybridRetriever:
 
         return chunks, top_score
 
-    def retrieve_with_corrective_rag(
+    async def retrieve_with_corrective_rag(
         self,
         query: str,
         project: str,
-        llm_rewrite_fn,             # callable: (query: str) -> str
+        llm_rewrite_fn,             # async callable: async (query: str) -> str
     ) -> tuple[list[RetrievedChunk], float, str]:
         """
         Corrective RAG (Adaptive RAG loop from solution doc Section 4.8).
@@ -269,18 +330,91 @@ class HybridRetriever:
 
         # Low confidence — try corrective RAG
         logger.info("HybridRetriever: low confidence (%.3f) — triggering corrective RAG", confidence)
-        reformulated = llm_rewrite_fn(query)
+        reformulated = await llm_rewrite_fn(query)
         logger.info("HybridRetriever: reformulated query: '%s'", reformulated[:100])
 
         chunks2, confidence2 = self.retrieve(reformulated, project)
 
         if confidence2 >= low_threshold:
+            logger.info(
+                "HybridRetriever: corrective RAG RECOVERED — confidence %.3f → %.3f (strategy='corrective')",
+                confidence, confidence2,
+            )
             return chunks2, confidence2, "corrective"
 
         # Still low after retry — return best of both attempts
         best_chunks = chunks if confidence >= confidence2 else chunks2
         best_confidence = max(confidence, confidence2)
+        logger.info(
+            "HybridRetriever: corrective RAG could not recover — confidence %.3f / %.3f (strategy='degraded')",
+            confidence, confidence2,
+        )
         return best_chunks, best_confidence, "degraded"
+
+    def retrieve_full_document(self, doc_title: str, project: str) -> list[RetrievedChunk]:
+        """
+        RECALL mode: return ALL chunks of a document, in authored order.
+
+        For "show me the whole/entire/complete X" queries where the user wants the
+        full section reassembled — not the top-k most similar fragments. Pairs with
+        identify_document() which picks the doc_title from a cheap semantic probe.
+
+        Returns RetrievedChunk objects ordered by chunk_index (images last). Score is
+        set to 1.0 — these are returned because the document was explicitly requested,
+        not ranked by similarity.
+        """
+        rows = self.vector_store.get_document_chunks(doc_title, project)
+        chunks = [
+            RetrievedChunk(
+                text=r["text"],
+                parent_text=r["metadata"].get("parent_text") or r["text"],
+                source=r["metadata"].get("source", "unknown"),
+                doc_type=r["metadata"].get("type", "unknown"),
+                score=1.0,
+                metadata=r["metadata"],
+            )
+            for r in rows
+        ]
+        logger.info(
+            "HybridRetriever.retrieve_full_document: '%s' → %d chunks (recall mode)",
+            doc_title, len(chunks),
+        )
+        return chunks
+
+    def identify_document(self, query: str, project: str) -> str:
+        """
+        Find the most likely target doc_title for a recall query.
+
+        A pure "top semantic chunk" probe is biased toward large, image-heavy docs:
+        e.g. "clean code checklist" would land on the 114-chunk "Clean Code Best
+        Practices" deck instead of the 12-chunk "Clean Code Checklist". So among the
+        candidate docs the probe surfaces, prefer the one whose TITLE best matches the
+        query words; fall back to the top chunk's doc when no title overlaps.
+        Returns "" if nothing confident is found (caller falls back to normal retrieval).
+        """
+        chunks, confidence = self.retrieve(query, project)
+        if not chunks:
+            return ""
+        no_evidence = self.confidence_thresholds.get("no_evidence_threshold", 0.20)
+        if confidence < no_evidence:
+            return ""
+
+        q_words = set(re.findall(r"[a-z0-9]+", query.lower())) - _RECALL_STOPWORDS
+        # Candidate titles in semantic-rank order (de-duplicated)
+        candidates: list[str] = []
+        for c in chunks:
+            t = (c.metadata or {}).get("doc_title", "")
+            if t and t not in candidates:
+                candidates.append(t)
+
+        def title_overlap(title: str) -> int:
+            return len(q_words & set(re.findall(r"[a-z0-9]+", title.lower())))
+
+        # Highest title-overlap wins; ties broken by best semantic rank (earliest).
+        best = max(candidates, key=lambda t: (title_overlap(t), -candidates.index(t)))
+        if title_overlap(best) >= 1:
+            return best
+        return chunks[0].metadata.get("doc_title", "") or ""
 
     def _confidence_tier(self, score: float) -> str:
         """Human-readable confidence tier for logging."""

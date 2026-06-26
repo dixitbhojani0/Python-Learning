@@ -17,9 +17,13 @@ CoT + Structured JSON output (same reasoning chain as RiskAgent, but
 focused on a binary go/no-go decision rather than a numeric score).
 """
 import asyncio
-import json
 import logging
-import re
+
+try:
+    from langsmith import traceable
+except ImportError:
+    def traceable(fn=None, **_kw):
+        return fn if fn is not None else (lambda f: f)
 
 from backend.agents.base_agent import AgentPayload, BaseAgent
 from backend.core.config_loader import config as _default_config
@@ -27,24 +31,6 @@ from backend.orchestrator.state import SDLCState
 from backend.rag.retriever import HybridRetriever, RetrievedChunk
 
 logger = logging.getLogger(__name__)
-
-
-# ── JSON extraction (same helper pattern as RiskAgent) ────────────────────────
-
-def _parse_json_block(text: str) -> dict:
-    match = re.search(r"```json\s*(.*?)\s*```", text, re.DOTALL)
-    if match:
-        json_str = match.group(1)
-    else:
-        match = re.search(r"\{.*\}", text, re.DOTALL)
-        if not match:
-            return {}
-        json_str = match.group(0)
-    try:
-        return json.loads(json_str)
-    except json.JSONDecodeError:
-        logger.warning("ReleaseReadinessAgent: failed to parse JSON from LLM output")
-        return {}
 
 
 # ── Context formatters ─────────────────────────────────────────────────────────
@@ -132,12 +118,12 @@ def _format_release_response(release_data: dict) -> str:
         for w in warnings:
             lines.append(f"- ⚠️ {w}")
 
-    lines += [
-        "",
-        "---",
-        "_This is a release proposal. Click **Approve** to confirm release readiness "
-        "or **Reject** to cancel._",
-    ]
+    if verdict == "GO":
+        hitl_note = "_Click **Approve** to confirm release readiness or **Reject** to cancel._"
+    else:
+        hitl_note = "_Click **Approve** to acknowledge these blockers or **Reject** to dispute this assessment._"
+
+    lines += ["", "---", hitl_note]
 
     return "\n".join(lines)
 
@@ -182,7 +168,7 @@ class ReleaseReadinessAgent(BaseAgent):
         try:
             results = await asyncio.gather(
                 self.mcp.get("jira").get_sprint_board(project),
-                self.mcp.get("jira").search_tickets("high blocked open", project),
+                self.mcp.get("jira").search_tickets("", project),
                 self.mcp.get("github").list_open_prs(),
                 return_exceptions=True,
             )
@@ -200,6 +186,7 @@ class ReleaseReadinessAgent(BaseAgent):
             logger.exception("ReleaseReadinessAgent: MCP fetch failed — using RAG only")
             return {}, [], []
 
+    @traceable(name="release_readiness_agent", run_type="chain")
     async def run(self, state: SDLCState) -> AgentPayload:
         """Execute release readiness assessment and return HITL proposal."""
         query   = state["query"]
@@ -235,31 +222,44 @@ class ReleaseReadinessAgent(BaseAgent):
             github_context=_format_github_context(github_prs),
         )
 
-        # ── Step 4: Call LLM ─────────────────────────────────────────────────
-        temperature = self.config.get_temperature("agent_reasoning")  # 0.1
-        max_tokens  = 600
+        # ── Step 4: Call LLM via generate_structured (provider handles JSON extraction) ──
+        temperature  = self.config.get_temperature("agent_reasoning")  # 0.1
+        resp         = await self.llm.generate_structured(reasoning_tmpl, system_prompt, temperature, 1000)
+        release_data = resp.structured if not resp.parse_error else {}
 
-        tokens: list[str] = []
-        async for token in self.llm.generate(reasoning_tmpl, system_prompt, temperature, max_tokens):
-            tokens.append(token)
-
-        llm_output = "".join(tokens)
-
-        # ── Step 5: Parse JSON → HITL proposal ───────────────────────────────
-        release_data = _parse_json_block(llm_output)
-
-        if not release_data:
-            logger.warning("ReleaseReadinessAgent: JSON parse failed — NO_GO fallback")
-            release_data = {
-                "verdict": "NO_GO",
-                "confidence": 0.0,
-                "blockers": ["Could not complete automated assessment — review manually."],
-                "warnings": [],
-                "open_critical_tickets": 0,
-                "open_prs": len(github_prs),
-                "sprint_complete": False,
-                "summary": "Automated release readiness check could not be completed.",
-            }
+        # ── Step 5: Handle response ────────────────────────────────────────────
+        if resp.is_empty or not release_data:
+            # LLM failed to produce valid JSON (rate limit, quota, or prompt issue).
+            # Do NOT show a fake NO_GO with HITL buttons — that would be misleading.
+            # Return an honest error with whatever data we did fetch.
+            logger.warning("ReleaseReadinessAgent: JSON parse failed — returning error, not fake NO_GO")
+            sprint_pct = sprint_board.get("completion_pct", "?") if sprint_board else "?"
+            error_response = (
+                "## Release Readiness — Assessment Incomplete\n\n"
+                "The automated assessment could not be completed due to a temporary system issue.\n\n"
+                "**What I was able to fetch:**\n"
+                f"- Sprint completion: {sprint_pct}%\n"
+                f"- Open GitHub PRs: {len(github_prs)}\n"
+                f"- Jira tickets checked: {len(jira_tickets)}\n\n"
+                "**What to do:**\n"
+                "- Try again in a few minutes\n"
+                "- Check Jira directly for blocked/critical tickets\n"
+                "- Check GitHub for unreviewed PRs"
+            )
+            all_sources = list({c.source for c in chunks})
+            if sprint_board or jira_tickets:
+                all_sources.append("jira_live")
+            if github_prs:
+                all_sources.append("github_live")
+            return AgentPayload(
+                agent_name="release_readiness",
+                confidence=0.0,
+                summary="Assessment incomplete — AI model error",
+                structured={"final_response": error_response},
+                sources=all_sources,
+                hitl_required=False,   # no fake HITL for a failed assessment
+                hitl_proposal={},
+            )
 
         final_response = _format_release_response(release_data)
 

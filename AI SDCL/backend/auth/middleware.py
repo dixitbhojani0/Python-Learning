@@ -1,20 +1,26 @@
 """
 backend/auth/middleware.py
 
-Simple role-based auth for demo.
-Uses hardcoded demo tokens from .env — no OAuth complexity.
+Dual-mode authentication:
 
-In production this would validate JWTs from Google OAuth.
-The interface is identical — swap the implementation, keep the API.
+  Production mode (JWT):
+    Header: Authorization: Bearer <jwt>
+    The JWT is validated using HS256 with JWT_SECRET_KEY from settings.
+    Required claims: sub (user_id), role, name, project.
+    Active when JWT_SECRET_KEY is set to something other than "placeholder".
 
-Demo tokens (set in .env):
-    dev_token_alice      → developer role
-    manager_token_bob    → manager role
-    stakeholder_token_client → stakeholder role
+  Development / demo mode (static tokens):
+    Header: x-token: dev_token_alice
+    Simple dict lookup against DEMO_TOKEN_* from settings.
+    Active when JWT_SECRET_KEY is "placeholder" OR APP_ENV == "development".
+    Both headers are accepted simultaneously so the frontend doesn't need to change.
+
+The UserContext dataclass is identical in both modes — all downstream code is unchanged.
 """
 import logging
-from fastapi import Header, HTTPException, status
 from dataclasses import dataclass
+
+from fastapi import HTTPException, Request, status
 
 from backend.core.settings import settings
 
@@ -24,15 +30,16 @@ logger = logging.getLogger(__name__)
 @dataclass
 class UserContext:
     """Represents the authenticated user for one request."""
-    token: str
-    role: str           # developer | manager | technical_leader | stakeholder
-    name: str
+    token:   str
+    role:    str     # developer | manager | technical_leader | stakeholder | admin
+    name:    str
     project: str
 
 
-# ── Demo user registry — loaded from settings
-# In production: validate JWT, extract claims
-DEMO_USERS: dict[str, UserContext] = {
+# ── Demo user registry ────────────────────────────────────────────────────────
+# Used in development / when JWT is not configured.
+
+_DEMO_USERS: dict[str, UserContext] = {
     settings.DEMO_TOKEN_DEVELOPER: UserContext(
         token=settings.DEMO_TOKEN_DEVELOPER,
         role="developer",
@@ -53,34 +60,112 @@ DEMO_USERS: dict[str, UserContext] = {
     ),
 }
 
+_JWT_ENABLED = (
+    settings.JWT_SECRET_KEY not in ("placeholder", "", "change_this_in_production")
+    and settings.APP_ENV == "production"
+)
 
-async def get_current_user(x_token: str = Header(..., alias="x-token")) -> UserContext:
-    """
-    FastAPI dependency — validates demo token and returns UserContext.
-    Usage in routes:  user: UserContext = Depends(get_current_user)
 
-    Frontend sends:   headers={"x-token": "dev_token_alice"}
+# ── JWT validation ────────────────────────────────────────────────────────────
+
+def _decode_jwt(token: str) -> dict:
     """
-    user = DEMO_USERS.get(x_token)
-    if not user:
-        logger.warning("Auth: invalid token '%s'", x_token[:20])
+    Decode and validate a JWT using HS256 + JWT_SECRET_KEY.
+
+    Returns the claims dict on success.
+    Raises HTTPException(401) on any validation failure.
+
+    Uses PyJWT (pip install PyJWT). Falls back gracefully if not installed.
+    """
+    try:
+        import jwt as pyjwt
+    except ImportError:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token. Use one of the demo tokens from .env.example",
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="PyJWT not installed. Run: pip install PyJWT",
         )
-    logger.debug("Auth: authenticated %s as %s", user.name, user.role)
-    return user
+    try:
+        payload = pyjwt.decode(
+            token,
+            settings.JWT_SECRET_KEY,
+            algorithms=["HS256"],
+            options={"require": ["sub", "role", "exp"]},
+        )
+        return payload
+    except pyjwt.ExpiredSignatureError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired.")
+    except pyjwt.InvalidTokenError as exc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=f"Invalid token: {exc}")
 
 
-async def get_admin_user(x_token: str = Header(..., alias="x-token")) -> UserContext:
+def _user_from_jwt(token: str) -> UserContext:
+    """Decode JWT and build a UserContext from its claims."""
+    claims = _decode_jwt(token)
+    role = claims.get("role", "developer")
+    if role not in ("developer", "manager", "technical_leader", "stakeholder", "admin"):
+        role = "developer"
+    return UserContext(
+        token=token,
+        role=role,
+        name=claims.get("name") or claims.get("email") or claims.get("sub", "user"),
+        project=claims.get("project", settings.DEFAULT_PROJECT),
+    )
+
+
+# ── FastAPI dependency ────────────────────────────────────────────────────────
+
+async def get_current_user(request: Request) -> UserContext:
     """
-    Admin-only dependency. Only manager role can access /admin/* routes.
+    FastAPI dependency — validates credentials and returns UserContext.
+
+    Accepts two header formats (tried in order):
+      1. Authorization: Bearer <jwt>   — production JWT auth
+      2. x-token: dev_token_alice      — demo token auth (development)
+
+    Usage in routes:
+        user: UserContext = Depends(get_current_user)
+    """
+    # ── Try JWT first (Authorization: Bearer header) ──────────────────────────
+    auth_header = request.headers.get("authorization") or request.headers.get("Authorization")
+    if auth_header and auth_header.lower().startswith("bearer "):
+        bearer_token = auth_header[7:].strip()
+        if _JWT_ENABLED:
+            user = _user_from_jwt(bearer_token)
+            logger.debug("Auth(JWT): authenticated %s as %s", user.name, user.role)
+            return user
+        # JWT not enabled — fall through to demo token check
+        logger.debug("Auth: Bearer header present but JWT not enabled — trying demo tokens")
+
+    # ── Try demo token (x-token header) ──────────────────────────────────────
+    x_token = request.headers.get("x-token") or request.headers.get("X-Token")
+    if x_token:
+        user = _DEMO_USERS.get(x_token)
+        if user:
+            logger.debug("Auth(demo): authenticated %s as %s", user.name, user.role)
+            return user
+        logger.warning("Auth: invalid demo token '%s...'", x_token[:20])
+
+    # ── No valid credentials ──────────────────────────────────────────────────
+    mode_hint = (
+        "Use Authorization: Bearer <jwt>"
+        if _JWT_ENABLED
+        else "Use x-token: dev_token_alice (or manager_token_bob / stakeholder_token_client)"
+    )
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail=f"Authentication required. {mode_hint}",
+    )
+
+
+async def get_admin_user(request: Request) -> UserContext:
+    """
+    Admin-only dependency. Only manager / technical_leader / admin roles allowed.
     Usage:  user: UserContext = Depends(get_admin_user)
     """
-    user = await get_current_user(x_token)
-    if user.role not in ("manager", "technical_leader"):
+    user = await get_current_user(request)
+    if user.role not in ("manager", "technical_leader", "admin"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin access requires manager or technical_leader role",
+            detail="Admin access requires manager, technical_leader, or admin role.",
         )
     return user

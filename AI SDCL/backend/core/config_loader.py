@@ -19,6 +19,14 @@ from watchdog.events import FileSystemEventHandler
 
 logger = logging.getLogger(__name__)
 
+# Import deferred to break potential circular imports at module load.
+# prompt_safety only imports stdlib (logging, re) so there is no cycle,
+# but we import lazily to keep module-level side effects predictable.
+def _get_safety_guard():
+    from backend.core.prompt_safety import safety_guard  # noqa: PLC0415
+    return safety_guard
+
+
 # ── Path to the config directory (relative to project root)
 CONFIG_DIR = Path(__file__).parent.parent.parent / "config"
 
@@ -30,6 +38,8 @@ CONFIG_FILES = {
     "mcp_registry": "mcp_registry.yaml",
     "rag_sources":  "rag_sources.yaml",
     "redis":        "redis.yaml",
+    "chunking":     "chunking.yaml",
+    "security":     "security.yaml",
 }
 
 
@@ -116,7 +126,15 @@ class ConfigLoader:
             return ""
         if kwargs:
             try:
-                return template.format(**kwargs)
+                # Sanitize all string kwargs before .format() to prevent prompt injection
+                # via user-derived content (query, Jira titles, Slack messages, etc.).
+                # Non-string values (int, float, dict) are passed through unchanged.
+                guard = _get_safety_guard()
+                safe_kwargs = {
+                    k: guard.sanitize(str(v)) if isinstance(v, str) else v
+                    for k, v in kwargs.items()
+                }
+                return template.format(**safe_kwargs)
             except KeyError as e:
                 logger.error("ConfigLoader: missing format key %s for prompt '%s'", e, key)
                 return template
@@ -151,6 +169,16 @@ class ConfigLoader:
         with self._lock:
             return self._configs.get("redis", {})
 
+    def get_chunking_config(self) -> dict:
+        """Returns chunking strategy config from chunking.yaml."""
+        with self._lock:
+            return self._configs.get("chunking", {})
+
+    def get_security_config(self) -> dict:
+        """Returns security config from security.yaml (injection patterns, etc.)."""
+        with self._lock:
+            return self._configs.get("security", {})
+
     def get_temperature(self, task: str) -> float:
         """
         Get temperature for a specific task type.
@@ -168,9 +196,13 @@ class ConfigLoader:
         return rag.get("retrieval", {}).get("confidence", {})
 
     def get_agent_triggers(self, agent_name: str) -> list[str]:
-        """Returns keyword triggers for an agent (used by intent classifier)."""
+        """Returns keyword triggers for an agent (fallback classifier only)."""
         agent = self.get_agent(agent_name)
         return agent.get("trigger_keywords", [])
+
+    def get_agent_routing_description(self, agent_name: str) -> str:
+        """Returns the routing_description for an agent (read by LLM supervisor)."""
+        return self.get_agent(agent_name).get("routing_description", "")
 
     def is_agent_enabled(self, agent_name: str) -> bool:
         """Check if an agent is enabled in config."""

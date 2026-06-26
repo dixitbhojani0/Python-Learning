@@ -32,7 +32,9 @@ Why NOT use tenacity @retry decorator here?
   Tenacity will be used in Phase 6 for MCP connector calls (regular async functions).
 """
 import asyncio
+import json
 import logging
+from contextvars import ContextVar
 from typing import AsyncGenerator
 
 from langchain_groq import ChatGroq
@@ -41,8 +43,47 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from backend.core.config_loader import config
 from backend.core.settings import settings
 from backend.providers.base_llm import BaseLLMProvider
+from backend.providers.llm_response import LLMResponse
 
 logger = logging.getLogger(__name__)
+
+# ── SSE streaming context variables ─────────────────────────────────────────────
+# When a chat request wants real-time streaming, chat.py sets _active_stream_id
+# to the session's stream UUID before invoking the graph. generate() then pushes
+# each token to Redis so the /api/stream/{id} SSE endpoint can forward them.
+# _suppress_stream is set True by generate_text() to prevent internal CoT/JSON
+# calls from polluting the user-visible stream.
+_active_stream_id: ContextVar[str]  = ContextVar("_active_stream_id",  default="")
+_suppress_stream:  ContextVar[bool] = ContextVar("_suppress_stream",   default=False)
+
+
+def set_stream_id(stream_id: str) -> None:
+    """Called by chat.py before graph.ainvoke() to enable per-request streaming."""
+    _active_stream_id.set(stream_id)
+
+
+async def _push_token(stream_id: str, text: str) -> None:
+    """Fire-and-forget: push one token chunk to Redis list stream:{stream_id}."""
+    try:
+        from redis.asyncio import Redis
+        client = Redis.from_url(settings.REDIS_URL, decode_responses=True, socket_connect_timeout=1)
+        await client.rpush(f"stream:{stream_id}", json.dumps({"text": text}))
+        await client.expire(f"stream:{stream_id}", 300)
+        await client.aclose()
+    except Exception:
+        pass  # Redis unavailable — streaming degrades silently
+
+
+async def write_stream_done(stream_id: str, final_response: str = "") -> None:
+    """Called by chat.py after graph.ainvoke() to signal the SSE endpoint to close."""
+    try:
+        from redis.asyncio import Redis
+        client = Redis.from_url(settings.REDIS_URL, decode_responses=True, socket_connect_timeout=1)
+        value = final_response if final_response else "1"
+        await client.setex(f"stream:{stream_id}:done", 300, value)
+        await client.aclose()
+    except Exception:
+        pass
 
 # Context window sizes per Groq-hosted model (in tokens)
 # Used by get_model_window() so ContextBuilder knows the budget
@@ -147,6 +188,10 @@ class GroqProvider(BaseLLMProvider):
             HumanMessage(content=prompt),    # the actual task or question
         ]
 
+        sid      = _active_stream_id.get("")
+        suppress = _suppress_stream.get(False)
+        do_stream = bool(sid) and not suppress
+
         # ── Try primary model with retry on transient errors ──────────────────
         for attempt in range(_MAX_RETRIES):
             try:
@@ -159,6 +204,8 @@ class GroqProvider(BaseLLMProvider):
                     # We only yield when there's actual content
                     if chunk.content:
                         yield chunk.content
+                        if do_stream:
+                            await _push_token(sid, chunk.content)
 
                 return  # ← Successful stream completed, exit generate()
 
@@ -198,6 +245,8 @@ class GroqProvider(BaseLLMProvider):
             ):
                 if chunk.content:
                     yield chunk.content
+                    if do_stream:
+                        await _push_token(sid, chunk.content)
 
         except Exception:
             # Both models failed. Log it and return nothing.
@@ -220,3 +269,75 @@ class GroqProvider(BaseLLMProvider):
         Default to 8192 if model is unknown.
         """
         return _MODEL_WINDOWS.get(self._primary_model, 8192)
+
+    async def generate_text(
+        self,
+        prompt: str,
+        system: str,
+        temperature: float,
+        max_tokens: int,
+    ) -> LLMResponse:
+        """
+        Collect the full streaming response into a single LLMResponse object.
+
+        Use this for agent internal reasoning (CoT prompts, summarization, etc.)
+        where you need the complete text before proceeding, not a token-by-token stream.
+
+        Suppresses SSE token push — internal reasoning calls must not appear
+        in the user-visible stream; only the final response generate() call streams.
+        """
+        suppress_token = _suppress_stream.set(True)
+        try:
+            tokens: list[str] = []
+            async for chunk in self.generate(prompt, system, temperature, max_tokens):
+                tokens.append(chunk)
+            text = "".join(tokens)
+        finally:
+            _suppress_stream.reset(suppress_token)
+        return LLMResponse(
+            text=text,
+            model=self._primary_model,
+            is_empty=not text.strip(),
+        )
+
+    async def generate_structured(
+        self,
+        prompt: str,
+        system: str,
+        temperature: float,
+        max_tokens: int,
+    ) -> LLMResponse:
+        """
+        Collect full response and attempt to extract a JSON object.
+
+        Groq does not use function calling here — it relies on parse_json_block()
+        to find ```json ... ``` blocks or raw { } objects in the response text.
+
+        Future providers (Gemini, OpenAI) may override this to use native
+        function calling / structured output APIs, producing cleaner JSON without
+        regex parsing. The interface stays the same — agents never know the difference.
+
+        Returns:
+            LLMResponse with:
+              .text        — full raw LLM output (useful for debugging)
+              .structured  — parsed dict (empty dict if parse failed)
+              .parse_error — True when no valid JSON was found
+              .is_empty    — True when LLM returned nothing at all
+        """
+        resp = await self.generate_text(prompt, system, temperature, max_tokens)
+        if resp.is_empty:
+            resp.parse_error = True
+            return resp
+
+        from backend.agents.base_agent import parse_json_block   # local import avoids circular
+        data            = parse_json_block(resp.text)
+        resp.structured = data
+        resp.parse_error = not bool(data)
+        return resp
+
+
+# ── Self-registration ────────────────────────────────────────────────────────────
+# This runs when groq_provider.py is first imported (via providers/__init__.py).
+# No changes to factory.py are needed when adding or removing Groq support.
+from backend.providers.factory import LLMFactory
+LLMFactory.register("groq", GroqProvider)

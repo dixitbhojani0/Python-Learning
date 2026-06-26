@@ -11,6 +11,8 @@ Why Pydantic models (not plain dicts)?
 """
 from pydantic import BaseModel, Field
 
+from backend.core.settings import settings
+
 
 class ChatRequest(BaseModel):
     """
@@ -21,8 +23,16 @@ class ChatRequest(BaseModel):
                 to maintain conversation context (used in Phase 9 — memory layer).
     """
     message:    str       = Field(...,          min_length=1, max_length=2000)
-    project:    str       = Field(default="antlog")
+    project:    str       = Field(default=settings.DEFAULT_PROJECT)
     session_id: str | None = Field(default=None)
+
+
+class ImageRef(BaseModel):
+    """A document image relevant to the answer — served from /images/{file}."""
+    url:       str            # e.g. "/images/690ea3b8.png" — GET-able from the API
+    doc_title: str = ""       # which document the image came from
+    page:      int | None = None
+    caption:   str = ""       # OCR excerpt / placeholder, for alt text + display
 
 
 class ChatResponse(BaseModel):
@@ -45,10 +55,15 @@ class ChatResponse(BaseModel):
     confidence:      float
     sources:         list[str]
     session_id:      str
+    stream_id:       str        = ""   # open GET /api/stream/{stream_id} for SSE token feed
     strategy:        str
+    agent:           str        = ""   # which agent handled the query (intent) — shown as a UI chip
+    relevancy:       float      = 0.0  # answer↔query cosine — answer-quality signal
+    faithfulness:    float      = 0.0  # claims grounded in retrieved evidence (LLM judge) — hallucination signal
     hitl_required:   bool       = False
     hitl_action_id:  str | None = None
     response_cached: bool       = False
+    images:          list[ImageRef] = []   # document images relevant to the answer
 
 
 class HITLRequest(BaseModel):

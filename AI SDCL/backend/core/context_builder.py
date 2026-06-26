@@ -27,19 +27,6 @@ logger = logging.getLogger(__name__)
 # Groq's Llama tokenizer differs by ±3-5 tokens/message — well within our safety buffer
 ENCODER = tiktoken.get_encoding("cl100k_base")
 
-# ── Token budget per slot (guidelines, not hard caps)
-SLOT_BUDGETS = {
-    "system":   200,
-    "persona":  100,
-    "summary":  300,
-    "recent":   400,
-    "rag":      1500,
-    "tools":    500,
-    # "query" has no cap — always sent in full
-}
-
-TOTAL_INPUT_BUDGET = 8000   # tokens — stay under Groq context limit
-
 
 def count_tokens(text: str) -> int:
     """Count tokens in a string using tiktoken. Never estimate — always measure."""
@@ -53,6 +40,12 @@ class ContextBuilder:
     Builds the final prompt by assembling all 7 slots.
     Gracefully compresses slots if total exceeds budget.
     """
+
+    def __init__(self) -> None:
+        budget_cfg = config.get_llm_config().get("primary", {}).get("context_budget", {})
+        self._total_budget       = budget_cfg.get("total_input_tokens", 8000)
+        self._max_recent         = budget_cfg.get("max_recent_messages", 5)
+        self._max_rag_chunks     = budget_cfg.get("max_rag_chunks", 7)
 
     def build(
         self,
@@ -98,7 +91,7 @@ class ContextBuilder:
                      {k: count_tokens(v) for k, v in slots.items()}, total)
 
         # ── Graceful compression if over budget
-        if total > TOTAL_INPUT_BUDGET:
+        if total > self._total_budget:
             slots = self._compress(slots, total)
 
         return self._assemble(slots)
@@ -127,7 +120,7 @@ class ContextBuilder:
         if not messages:
             return ""
         lines = ["## Recent Conversation"]
-        for msg in messages[-5:]:           # keep last 5 at most
+        for msg in messages[-self._max_recent:]:
             role = msg.get("role", "user").capitalize()
             content = msg.get("content", "")
             lines.append(f"{role}: {content}")
@@ -137,7 +130,7 @@ class ContextBuilder:
         if not chunks:
             return ""
         lines = ["## Retrieved Context (from Sprint Docs, Jira History, ADRs)"]
-        for i, chunk in enumerate(chunks[:7], 1):      # max 7 chunks
+        for i, chunk in enumerate(chunks[:self._max_rag_chunks], 1):
             source = chunk.get("source", "unknown")
             text = chunk.get("parent_text") or chunk.get("text", "")
             score = chunk.get("score", 0.0)
@@ -184,12 +177,12 @@ class ContextBuilder:
         """
         logger.warning(
             "ContextBuilder: over token budget (%d/%d tokens). Compressing...",
-            total, TOTAL_INPUT_BUDGET
+            total, self._total_budget
         )
 
         # Cut RAG from bottom (lowest reranker score — already sorted desc)
         rag_lines = slots["rag"].split("### Source ")
-        while len(rag_lines) > 2 and total > TOTAL_INPUT_BUDGET:
+        while len(rag_lines) > 2 and total > self._total_budget:
             removed = rag_lines.pop()
             saved = count_tokens("### Source " + removed)
             total -= saved
@@ -197,9 +190,9 @@ class ContextBuilder:
         slots["rag"] = "### Source ".join(rag_lines)
 
         # Cut oldest recent messages
-        if total > TOTAL_INPUT_BUDGET:
+        if total > self._total_budget:
             lines = slots["recent"].split("\n")
-            while len(lines) > 3 and total > TOTAL_INPUT_BUDGET:
+            while len(lines) > 3 and total > self._total_budget:
                 dropped = lines.pop(1)      # remove oldest (keep header at [0])
                 total -= count_tokens(dropped)
             slots["recent"] = "\n".join(lines)

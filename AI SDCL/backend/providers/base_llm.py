@@ -25,17 +25,27 @@ How agents use this:
   result = "".join(tokens)
 """
 from abc import ABC, abstractmethod
-from typing import AsyncGenerator
+from typing import AsyncGenerator, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from backend.providers.llm_response import LLMResponse
 
 
 class BaseLLMProvider(ABC):
     """
     Interface every LLM provider must implement.
 
-    Two methods are required:
-      generate()         — stream a response token by token
-      get_model_name()   — return which model is active (for logging)
-      get_model_window() — return context window size (for token budget calculation)
+    Methods:
+      generate()             — stream response token by token (original, keep for streaming UI)
+      generate_text()        — collect full response as LLMResponse (agent reasoning)
+      generate_structured()  — collect + parse JSON into LLMResponse.structured
+      get_model_name()       — active model name (logging / LangSmith)
+      get_model_window()     — context window size (token budget calculation)
+
+    Why keep generate() alongside generate_text()?
+      generate() is used for real-time streaming to the user (SSE / Chainlit).
+      generate_text() is used for agent internal reasoning (need full text before deciding).
+      generate_structured() is generate_text() + JSON parsing inside the provider.
     """
 
     @abstractmethod
@@ -65,16 +75,53 @@ class BaseLLMProvider(ABC):
 
         Yields:
             str — one small chunk of tokens at a time (usually a word or few characters)
+        """
+        ...
 
-        --- Example 1: Collect full response (agent internal reasoning) ---
-            tokens = []
-            async for chunk in provider.generate(prompt, system, temperature=0.1, max_tokens=500):
-                tokens.append(chunk)
-            result = "".join(tokens)
+    @abstractmethod
+    async def generate_text(
+        self,
+        prompt: str,
+        system: str,
+        temperature: float,
+        max_tokens: int,
+    ) -> "LLMResponse":
+        """
+        Collect the full LLM response as a normalized LLMResponse object.
 
-        --- Example 2: Stream to Chainlit (user-facing response) ---
-            async for chunk in provider.generate(prompt, system, temperature=0.4, max_tokens=1024):
-                await chainlit_message.stream_token(chunk)
+        Use for agent internal reasoning (CoT, summarization) where streaming
+        to the user is not needed — you need the complete text to process it.
+
+        Returns:
+            LLMResponse with .text populated, .is_empty=True if LLM returned nothing.
+        """
+        ...
+
+    @abstractmethod
+    async def generate_structured(
+        self,
+        prompt: str,
+        system: str,
+        temperature: float,
+        max_tokens: int,
+    ) -> "LLMResponse":
+        """
+        Collect the full response and extract structured JSON into LLMResponse.structured.
+
+        Provider-specific implementations:
+          Groq:   collects token stream → parse_json_block() regex extraction
+          Gemini: uses function calling → structured dict directly (no regex needed)
+          OpenAI: uses function calling → structured dict directly (no regex needed)
+
+        Agents always receive the same LLMResponse — they never know which path was taken.
+        Switch providers → only the provider file changes, not the agents.
+
+        Returns:
+            LLMResponse with:
+              .text        — full raw output (for debugging)
+              .structured  — parsed dict ({} if parse failed)
+              .parse_error — True when JSON could not be extracted
+              .is_empty    — True when LLM returned nothing
         """
         ...
 
@@ -94,3 +141,4 @@ class BaseLLMProvider(ABC):
         Example: llama-3.3-70b returns 8192.
         """
         ...
+

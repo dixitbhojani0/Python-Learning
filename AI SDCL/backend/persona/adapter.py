@@ -25,11 +25,17 @@ logger = logging.getLogger(__name__)
 # System prompt prefix for the rewriting step.
 # The persona instruction from prompts.yaml is appended after this.
 _REWRITE_PREAMBLE = (
-    "You are a communication style adapter for SDLC status reports. "
-    "Rewrite the given answer to match the style requirements below. "
-    "IMPORTANT: Keep ALL facts, numbers, ticket IDs, and decisions exactly the same. "
-    "Only change the language style, vocabulary, and emphasis.\n\n"
-    "Style requirements:\n"
+    "You adapt the writing style of an answer for a specific reader. "
+    "Rewrite the given answer to match the style below.\n\n"
+    "STRICT RULES:\n"
+    "- Keep ALL facts, numbers, ticket IDs, names, and decisions exactly as given.\n"
+    "- Do NOT add information that is not in the original answer. Never invent "
+    "completion percentages, risk levels (AT RISK/BLOCKED), blocker owners, ETAs, "
+    "sprint goals, or deadlines that the original does not state.\n"
+    "- If the original says information is unavailable or out of scope, keep that "
+    "meaning and stay brief (1-3 sentences). Do NOT turn it into a status report.\n"
+    "- Only change vocabulary, tone, and emphasis — not content.\n\n"
+    "Style to apply:\n"
 )
 
 

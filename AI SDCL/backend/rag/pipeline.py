@@ -1,15 +1,14 @@
 """
 backend/rag/pipeline.py
 
-Full RAG ingestion pipeline — reads documents, chunks them,
-adds contextual prefixes via LLM, embeds, and stores in Qdrant.
+Full RAG ingestion pipeline — orchestrates reading, chunking, embedding, and storage.
 
 Run this script to populate the vector store:
     python scripts/ingest.py
-    python scripts/ingest.py --no-llm   (skip Groq API calls, faster)
+    python scripts/ingest.py --no-llm   (skip LLM calls, faster)
 
 Flow per document:
-  1. Read file (markdown, text, JSON)
+  1. Read file (detected by extension/doc_type)
   2. Detect document type → choose chunking strategy
   3. DocumentChunker splits into parent+child pairs (quality gate applied inside)
   4. LLM generates 1-2 sentence context prefix per child chunk (batched + throttled)
@@ -30,99 +29,98 @@ Why batch throttle for LLM mode?
   Groq free tier: ~30 requests/minute. 200 chunks = 200 API calls = rate limit in ~1 min.
   Processing in batches of 10 with 2s sleep keeps throughput at ~25 req/min.
 """
+import asyncio
+import concurrent.futures
 import json
 import logging
 import time
+import uuid
 from pathlib import Path
 
-from langchain_groq import ChatGroq
-
-from backend.core.settings import settings
 from backend.core.config_loader import config
-from backend.rag.chunker import DocumentChunker, Chunk
+from backend.providers.base_llm import BaseLLMProvider
+from backend.providers.factory import LLMFactory
+from backend.rag.chunker import Chunk, ChunkingStrategyFactory, DocumentChunker
+from backend.rag.loaders import extract_pdf_images, load_pdf_with_pypdf, load_slack_json
 from backend.rag.retriever import embed_texts_batch
+from backend.rag.validators import validate_embedding, validate_metadata
 from backend.rag.vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
 
-# ── Ingestion throttle constants (read from config in production — hardcoded here for clarity)
+# ── Ingestion throttle constants ──────────────────────────────────────────────
 _BATCH_SIZE  = 10    # number of LLM prefix calls per batch before sleeping
 _BATCH_SLEEP = 2.0   # seconds to sleep between batches (keeps Groq at ~25 req/min)
 
-# ── Required metadata fields — chunks missing these are silently broken at retrieval time
-_REQUIRED_METADATA = {"project", "source", "type"}
+# Where extracted document images are saved (served read-only by the API).
+# Lives under data/ so the docker-compose volume mount persists it across restarts.
+_IMAGES_DIR = Path(__file__).parents[2] / "data" / "images"
 
 
-# ── Validation helpers ────────────────────────────────────────────────────────
+# ── LLM sync bridge ───────────────────────────────────────────────────────────
 
-def _validate_embedding(embedding: list[float], expected_dim: int = 384) -> bool:
+def _provider_generate_sync(
+    provider: BaseLLMProvider,
+    prompt: str,
+    system: str,
+    temperature: float,
+    max_tokens: int,
+) -> str:
     """
-    Sanity-check the embedding vector before storing it.
+    Call an async LLM provider synchronously from the ingestion pipeline.
 
-    All-zero vector: happens when embed_text() receives empty/whitespace input.
-    It matches EVERYTHING equally under cosine similarity — corrupts search.
+    Why not asyncio.run() directly?
+      asyncio.run() raises RuntimeError if called from inside a running event loop
+      (which happens when admin.py calls ingest_directory from a FastAPI async route).
 
-    Wrong dimension: model mismatch between ingestion and query time.
-    Would cause all searches to return wrong results silently.
+    Solution: spin up a dedicated worker thread with its own brand-new event loop.
+      The thread has no existing loop, so asyncio.run() inside it always succeeds.
+      Works correctly from both:
+        - CLI (scripts/ingest.py) — no event loop at all
+        - FastAPI routes (admin.py) — event loop exists but is on a different thread
     """
-    if len(embedding) != expected_dim:
-        return False
-    if all(v == 0.0 for v in embedding):
-        return False
-    return True
+    def _run_in_new_loop() -> str:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            resp = loop.run_until_complete(
+                provider.generate_text(prompt, system, temperature, max_tokens)
+            )
+            return resp.text.strip()
+        finally:
+            loop.close()
+            asyncio.set_event_loop(None)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(_run_in_new_loop).result()
 
 
-def _validate_metadata(metadata: dict) -> bool:
-    """
-    Check that all required metadata fields are present before storing.
-
-    'project' — used by Qdrant pre-filter on every search. Missing = chunk invisible.
-    'source'  — used by mark_stale() to clean up old chunks on re-ingestion.
-    'type'    — used by agents to filter by document type (e.g. only 'version_policy').
-    """
-    missing = _REQUIRED_METADATA - metadata.keys()
-    if missing:
-        logger.warning("Pipeline: chunk missing required metadata fields: %s", missing)
-        return False
-    return True
-
-
-# ── LLM helpers ──────────────────────────────────────────────────────────────
-
-def _build_llm() -> ChatGroq:
-    """Build LLM client for contextual prefix generation. temperature=0.0 — deterministic."""
-    llm_cfg = config.get_llm_config()
-    primary = llm_cfg.get("primary", {})
-    return ChatGroq(
-        api_key=settings.GROQ_API_KEY,
-        model=primary.get("model", settings.GROQ_MODEL),
-        temperature=primary.get("temperatures", {}).get("chunk_contextualization", 0.0),
-        max_tokens=primary.get("max_tokens", {}).get("chunk_context", 100),
-    )
-
-
-def _generate_context_prefix(llm: ChatGroq, doc_title: str, doc_type: str, chunk_text: str) -> str:
+def _generate_context_prefix(provider: BaseLLMProvider, doc_title: str, doc_type: str, chunk_text: str) -> str:
     """
     Ask the LLM to write a 1-2 sentence context description for this chunk.
     Prepended to the chunk before embedding so the vector carries document context.
 
     Retry logic: up to 3 attempts with exponential backoff (2s → 4s).
-    Why? Groq free tier occasionally returns 429 (rate limit) or 503 (overloaded).
-    On permanent failure: return "" — chunk is still stored, just without prefix.
+    On permanent failure: return "" — chunk is stored without prefix.
     """
+    llm_cfg = config.get_llm_config()
+    primary  = llm_cfg.get("primary", {})
+    temperature = primary.get("temperatures", {}).get("chunk_contextualization", 0.0)
+    max_tokens  = primary.get("max_tokens",   {}).get("chunk_context", 100)
+    system      = "You are a technical documentation assistant. Be concise and precise."
+
     prompt = config.get_prompt(
         "chunk_context_generator",
         doc_title=doc_title,
         doc_type=doc_type,
-        chunk_text=chunk_text[:500],    # limit input to avoid token explosion
+        chunk_text=chunk_text[:500],
     )
     for attempt in range(3):
         try:
-            response = llm.invoke(prompt)
-            return response.content.strip()
+            return _provider_generate_sync(provider, prompt, system, temperature, max_tokens)
         except Exception as e:
             if attempt < 2:
-                wait = 2 ** (attempt + 1)   # 2s then 4s
+                wait = 2 ** (attempt + 1)
                 logger.warning(
                     "Pipeline: LLM prefix attempt %d/3 failed: %s — retrying in %ds",
                     attempt + 1, e, wait,
@@ -142,28 +140,28 @@ class RAGPipeline:
     Usage:
         pipeline = RAGPipeline()
         count = pipeline.ingest_file("data/sprint_docs/sprint_12_plan.md",
-                                     metadata={"project": "antlog", "source": "local"})
+                                     metadata={"project": "SDLC", "source": "local"})
         print(f"Ingested {count} chunks")
     """
 
     def __init__(self, use_llm_context: bool = True):
         """
         Args:
-            use_llm_context: If True, call Groq LLM to generate context prefix per chunk.
+            use_llm_context: If True, call LLM to generate context prefix per chunk.
                              If False (--no-llm flag), embed chunk text directly.
         """
-        self.chunker = DocumentChunker()
-        self.vector_store = VectorStore()
+        self.chunker         = DocumentChunker()
+        self.vector_store    = VectorStore()
         self.use_llm_context = use_llm_context
-        self._llm = _build_llm() if use_llm_context else None
-        self.total_chunks = 0
+        self._provider       = LLMFactory.get_provider() if use_llm_context else None
+        self.total_chunks    = 0
 
     def ingest_file(self, filepath: str | Path, metadata: dict) -> int:
         """
         Ingest a single file into the vector store.
 
         Args:
-            filepath: Path to the file (.md, .txt, or .json for Slack mock)
+            filepath: Path to the file
             metadata: Must include 'project' and 'source' keys at minimum
 
         Returns:
@@ -177,10 +175,20 @@ class RAGPipeline:
         logger.info("Pipeline: ingesting '%s'", filepath.name)
 
         doc_type  = self._detect_doc_type(filepath, metadata)
-        doc_title = filepath.stem.replace("_", " ").title()
+        doc_title = metadata.get("doc_title") or filepath.stem.replace("_", " ").title()
 
-        if filepath.suffix == ".json":
+        strategy     = ChunkingStrategyFactory.resolve(doc_type, filepath.suffix)
+        split_method = ChunkingStrategyFactory.get_split_method(strategy)
+
+        logger.debug(
+            "Pipeline: '%s' → doc_type=%s strategy=%s split_method=%s",
+            filepath.name, doc_type, strategy, split_method,
+        )
+
+        if split_method == "message_per_chunk":
             return self._ingest_slack_json(filepath, metadata, doc_type)
+        elif split_method == "element_aware":
+            return self._ingest_with_unstructured(filepath, doc_title, doc_type, metadata)
         else:
             text = filepath.read_text(encoding="utf-8")
             return self._ingest_text(text, doc_title, doc_type, metadata)
@@ -189,9 +197,7 @@ class RAGPipeline:
         """
         Ingest plain text / markdown documents.
 
-        Flow:
-          chunk_document() → collect all chunks → LLM prefixes (batched) →
-          batch embed → validate each → store valid ones
+        Flow: chunk_document() → LLM prefixes (batched) → batch embed → validate → store
         """
         chunks = list(self.chunker.chunk_document(text, doc_title, doc_type, metadata))
         if not chunks:
@@ -209,13 +215,13 @@ class RAGPipeline:
         Format: list of {user, message, timestamp} objects.
         Thread = parent chunk, individual messages = children.
         """
-        with open(filepath, encoding="utf-8") as f:
-            messages = json.load(f)
+        messages = load_slack_json(filepath)
+        if not messages:
+            return 0
 
         channel = filepath.stem
-        meta = {**metadata, "channel": channel, "type": "chat"}
-
-        chunks = list(self.chunker.chunk_slack_messages(messages, meta))
+        meta    = {**metadata, "channel": channel, "type": doc_type}
+        chunks  = list(self.chunker.chunk_slack_messages(messages, meta))
         if not chunks:
             return 0
 
@@ -224,9 +230,158 @@ class RAGPipeline:
         logger.info("Pipeline: ingested %d Slack message chunks from '%s'", count, filepath.name)
         return count
 
+    def _ingest_with_unstructured(self, filepath: Path, doc_title: str, doc_type: str, metadata: dict) -> int:
+        """
+        Ingest any rich document (PDF, DOCX, HTML, PPTX, etc.) via unstructured.io.
+
+        unstructured.partition() auto-detects the file type and returns a list of
+        typed elements: Title, NarrativeText, ListItem, Table, Image, Header, Footer.
+
+        Falls back to pypdf plain-text extraction if unstructured is not installed
+        or if partition() fails (e.g. corrupted PDF).
+        """
+        try:
+            from unstructured.partition.auto import partition
+            from unstructured.documents.elements import Image, Header, Footer, PageBreak
+        except ImportError:
+            logger.error(
+                "Pipeline: unstructured is not installed — cannot ingest '%s'. "
+                "Run: pip install unstructured",
+                filepath.name,
+            )
+            return 0
+
+        try:
+            elements = partition(filename=str(filepath))
+        except Exception as exc:
+            logger.warning(
+                "Pipeline: unstructured.partition() failed for '%s': %s",
+                filepath.name, exc,
+            )
+            if filepath.suffix.lower() == ".pdf":
+                logger.info("Pipeline: falling back to pypdf for '%s'", filepath.name)
+                return self._ingest_pdf_with_pypdf(filepath, doc_title, doc_type, metadata)
+            return 0
+
+        # Filter TOC elements: table-of-contents dot leaders ("Chapter 1 ......... 12")
+        # are noise — they match TOC queries but never contain real answers.
+        def _is_toc(text: str) -> bool:
+            if not text or len(text) < 20:
+                return False
+            return text.count(".") / len(text) > 0.25
+
+        toc_skipped = 0
+        filtered_elements = []
+        for el in elements:
+            if el.text and _is_toc(el.text):
+                toc_skipped += 1
+            else:
+                filtered_elements.append(el)
+
+        if toc_skipped:
+            logger.info("Pipeline: '%s' — skipped %d TOC entries (dot leaders)", filepath.name, toc_skipped)
+        elements = filtered_elements
+
+        # Images are no longer discarded: for PDFs they are extracted, saved, and
+        # OCR'd into dedicated image chunks AFTER text chunking (see below), so they
+        # become both searchable (OCR text) and showable (image_path metadata).
+
+        # Count element types for observability
+        skipped_types: dict[str, int] = {}
+        text_element_count = 0
+        for el in elements:
+            if isinstance(el, (Image, Header, Footer, PageBreak)):
+                t = type(el).__name__
+                skipped_types[t] = skipped_types.get(t, 0) + 1
+            elif el.text and el.text.strip():
+                text_element_count += 1
+
+        if skipped_types:
+            logger.info(
+                "Pipeline: '%s' — skipped elements (no text content): %s",
+                filepath.name, skipped_types,
+            )
+
+        if text_element_count == 0:
+            logger.warning(
+                "Pipeline: '%s' produced no extractable text — "
+                "may be a scanned image document with no text layer.",
+                filepath.name,
+            )
+            return 0
+
+        logger.info(
+            "Pipeline: unstructured extracted %d elements (%d with text) from '%s'",
+            len(elements), text_element_count, filepath.name,
+        )
+
+        chunks = list(self.chunker.chunk_from_elements(elements, doc_title, doc_type, metadata))
+
+        # Add image chunks (PDF only) — saved + OCR'd, searchable and showable.
+        if filepath.suffix.lower() == ".pdf":
+            image_chunks = self._build_image_chunks(filepath, doc_title, doc_type, metadata)
+            if image_chunks:
+                logger.info("Pipeline: '%s' — added %d image chunk(s)", filepath.name, len(image_chunks))
+                chunks.extend(image_chunks)
+
+        if not chunks:
+            logger.warning("Pipeline: no chunks produced from '%s'", doc_title)
+            return 0
+
+        count = self._ingest_chunks(chunks, doc_title)
+        self.total_chunks += count
+        logger.info("Pipeline: ingested %d chunks from '%s'", count, doc_title)
+        return count
+
+    def _build_image_chunks(self, filepath: Path, doc_title: str, doc_type: str, metadata: dict) -> list[Chunk]:
+        """
+        Extract embedded images, save + OCR them, and build one Chunk per image.
+
+        Each image chunk:
+          - text        = OCR text when meaningful, else a "Image on page N" placeholder
+                          (so the image is still findable by document/page).
+          - metadata    = image_id, image_path, page_number, element_type="Image",
+                          is_image=True — image_path is what the API serves to the UI.
+          - parent_id == chunk_id → atomic (no separate parent point created).
+        """
+        records = extract_pdf_images(filepath, _IMAGES_DIR)
+        chunks: list[Chunk] = []
+        for rec in records:
+            ocr  = (rec.get("ocr_text") or "").strip()
+            text = ocr if len(ocr) > 30 else f"Image on page {rec['page_number']} of {doc_title}."
+            chunk_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, rec["image_id"]))
+            chunks.append(Chunk(
+                text=text,
+                chunk_id=chunk_id,
+                doc_title=doc_title,
+                doc_type=doc_type,
+                metadata={
+                    **metadata,
+                    "is_image":      True,
+                    "image_id":      rec["image_id"],
+                    "image_path":    rec["image_path"],
+                    "page_number":   rec["page_number"],
+                    "element_type":  "Image",
+                    "section_title": doc_title,
+                    "has_ocr":       bool(ocr),
+                },
+                parent_id=chunk_id,
+                parent_text=text,
+            ))
+        return chunks
+
+    def _ingest_pdf_with_pypdf(self, filepath: Path, doc_title: str, doc_type: str, metadata: dict) -> int:
+        """
+        Fallback: extract PDF text with pypdf and run through standard text chunking.
+        """
+        full_text = load_pdf_with_pypdf(filepath)
+        if not full_text:
+            return 0
+        return self._ingest_text(full_text, doc_title, doc_type, metadata)
+
     def _ingest_chunks(self, chunks: list[Chunk], doc_title: str) -> int:
         """
-        Core batch ingestion method — used by both _ingest_text and _ingest_slack_json.
+        Core batch ingestion method — used by all _ingest_* methods.
 
         Steps:
           1. Generate LLM context prefixes in batches of _BATCH_SIZE (throttled)
@@ -234,17 +389,17 @@ class RAGPipeline:
           3. Batch embed all texts in one model.encode() call
           4. Validate embedding + metadata for each chunk
           5. Store valid chunks in Qdrant
+          6. Store unique parent chunks as separate Qdrant points (excluded from search)
 
         Returns: number of chunks successfully stored
         """
         # ── Step 1: Generate LLM context prefixes (batched + throttled)
         prefixes: list[str] = []
-        if self.use_llm_context and self._llm:
+        if self.use_llm_context and self._provider:
             logger.info("Pipeline: generating LLM context prefixes for %d chunks (batched)...", len(chunks))
             for i, chunk in enumerate(chunks):
-                prefix = _generate_context_prefix(self._llm, doc_title, chunk.doc_type, chunk.text)
+                prefix = _generate_context_prefix(self._provider, doc_title, chunk.doc_type, chunk.text)
                 prefixes.append(prefix)
-                # After each batch of _BATCH_SIZE, sleep to stay within Groq rate limit
                 if (i + 1) % _BATCH_SIZE == 0 and (i + 1) < len(chunks):
                     logger.debug("Pipeline: throttle — sleeping %.1fs after batch %d", _BATCH_SLEEP, (i + 1) // _BATCH_SIZE)
                     time.sleep(_BATCH_SLEEP)
@@ -261,28 +416,26 @@ class RAGPipeline:
         logger.info("Pipeline: batch embedding %d texts...", len(texts_to_embed))
         embeddings = embed_texts_batch(texts_to_embed)
 
-        # ── Step 4 & 5: Validate each chunk and store valid ones
+        # ── Steps 4 & 5: Validate each chunk and store valid ones
         count = 0
+        valid_chunks_with_embeddings: list[tuple[Chunk, list[float]]] = []
+
         for chunk, prefix, embedding in zip(chunks, prefixes, embeddings):
-            # Build full metadata payload
             full_metadata = {
                 **chunk.metadata,
                 "doc_title":      chunk.doc_title,
                 "type":           chunk.doc_type,
                 "parent_id":      chunk.parent_id,
+                "prev_chunk_id":  chunk.prev_chunk_id,
+                "next_chunk_id":  chunk.next_chunk_id,
                 "context_prefix": prefix,
+                "is_parent":      False,
             }
 
-            # Validate embedding (catches all-zero vectors and dimension mismatches)
-            if not _validate_embedding(embedding):
-                logger.warning(
-                    "Pipeline: invalid embedding for chunk '%s...' — skipping",
-                    chunk.text[:40],
-                )
+            if not validate_embedding(embedding):
+                logger.warning("Pipeline: invalid embedding for chunk '%s...' — skipping", chunk.text[:40])
                 continue
-
-            # Validate metadata (catches missing project/source/type)
-            if not _validate_metadata(full_metadata):
+            if not validate_metadata(full_metadata):
                 continue
 
             self.vector_store.upsert(
@@ -293,8 +446,90 @@ class RAGPipeline:
                 chunk_id=chunk.chunk_id,
             )
             count += 1
+            valid_chunks_with_embeddings.append((chunk, embedding))
+
+        # ── Step 6: Store unique parent chunks as separate Qdrant points
+        # Tagged is_parent=True so they're excluded from search() but queryable
+        # by ID via VectorStore.get_by_parent_id() for sibling-chunk lookups.
+        _CHILD_ONLY = frozenset({
+            "chunk_index", "total_chunks", "document_position",
+            "chunk_size", "element_type", "page_number", "section_title",
+        })
+        unique_parents: dict[str, tuple[str, dict]] = {}
+        for chunk, _ in valid_chunks_with_embeddings:
+            if chunk.parent_id and chunk.parent_id not in unique_parents:
+                if chunk.parent_id == chunk.chunk_id:
+                    continue
+                parent_meta = {k: v for k, v in chunk.metadata.items() if k not in _CHILD_ONLY}
+                unique_parents[chunk.parent_id] = (chunk.parent_text, parent_meta)
+
+        if unique_parents:
+            p_ids   = list(unique_parents.keys())
+            p_texts = [unique_parents[pid][0] for pid in p_ids]
+            p_metas = [unique_parents[pid][1] for pid in p_ids]
+            logger.debug("Pipeline: embedding %d unique parent chunks for '%s'", len(p_ids), doc_title)
+            p_embs  = embed_texts_batch(p_texts)
+            for pid, ptext, pmeta, pemb in zip(p_ids, p_texts, p_metas, p_embs):
+                if validate_embedding(pemb) and validate_metadata(pmeta):
+                    self.vector_store.upsert_parent(pid, ptext, pemb, pmeta)
 
         return count
+
+    def build_cross_document_links(
+        self,
+        project:        str,
+        min_similarity: float = 0.75,
+        top_k:          int   = 3,
+    ) -> int:
+        """
+        Post-ingest step: find the top-K most similar chunks from OTHER sources
+        for every chunk in the project, and write their IDs into related_chunk_ids.
+
+        Run once after all documents are ingested (admin → POST /admin/build-links).
+        Takes ~10ms per chunk (small Qdrant collection).
+
+        Returns: number of chunks that received at least one cross-document link.
+        """
+        logger.info("build_cross_document_links: scanning project='%s'...", project)
+        all_records = self.vector_store.scroll_chunks(project, with_vectors=True)
+
+        if not all_records:
+            logger.info("build_cross_document_links: no chunks for project='%s'", project)
+            return 0
+
+        linked_count = 0
+        for record in all_records:
+            chunk_id = str(record.id)
+            source   = record.payload.get("source", "")
+            vector   = record.vector
+
+            if vector is None:
+                continue
+            if isinstance(vector, dict):
+                vector = next(iter(vector.values()), None)
+                if vector is None:
+                    continue
+
+            related = self.vector_store.search_related(
+                query_embedding=list(vector),
+                exclude_source=source,
+                project=project,
+                top_k=top_k,
+                min_score=min_similarity,
+            )
+
+            if related:
+                self.vector_store.update_payload(
+                    chunk_id,
+                    {"related_chunk_ids": [r["id"] for r in related]},
+                )
+                linked_count += 1
+
+        logger.info(
+            "build_cross_document_links: linked %d/%d chunks (project=%s min_sim=%.2f)",
+            linked_count, len(all_records), project, min_similarity,
+        )
+        return linked_count
 
     def ingest_directory(self, directory: str | Path, metadata: dict) -> int:
         """
@@ -312,7 +547,7 @@ class RAGPipeline:
             logger.error("Pipeline: directory not found: %s", directory)
             return 0
 
-        supported = {".md", ".txt", ".json"}
+        supported = ChunkingStrategyFactory.supported_extensions()
         files = [f for f in directory.iterdir() if f.suffix in supported and f.is_file()]
 
         if not files:

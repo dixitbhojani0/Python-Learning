@@ -49,3 +49,6 @@ class SDLCState(TypedDict):
     # ── Final output
     final_response:       str
     response_cached:      bool        # True if this response was served from semantic cache
+    skip_persona:         bool        # True → adapt_persona is skipped (structured review/HITL cards)
+    faithfulness:         float       # live eval: claims grounded in evidence (0–1) — shown as UI chip
+    relevancy:            float       # live eval: answer↔query cosine (0–1) — shown as UI chip

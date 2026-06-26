@@ -16,44 +16,21 @@ Design: same dependency-injection pattern as CrossSourceAgent.
   Pass mock retriever + mock LLM in tests — no real models needed.
 """
 import asyncio
-import json
 import logging
-import re
+
+try:
+    from langsmith import traceable
+except ImportError:
+    def traceable(fn=None, **_kw):
+        return fn if fn is not None else (lambda f: f)
 
 from backend.agents.base_agent import AgentPayload, BaseAgent
 from backend.core.config_loader import config as _default_config
+from backend.core.prompt_safety import safety_guard
 from backend.orchestrator.state import SDLCState
 from backend.rag.retriever import HybridRetriever, RetrievedChunk
 
 logger = logging.getLogger(__name__)
-
-
-# ── JSON extraction helper ─────────────────────────────────────────────────────
-
-def _parse_json_block(text: str) -> dict:
-    """
-    Extract and parse a JSON block from LLM output.
-
-    LLMs sometimes wrap JSON in ```json...``` markers, sometimes output
-    raw JSON, sometimes add explanation text around it. This handles all three.
-    Falls back to empty dict on any parse failure — agent handles that gracefully.
-    """
-    # Try ```json ... ``` block first (most reliable)
-    match = re.search(r"```json\s*(.*?)\s*```", text, re.DOTALL)
-    if match:
-        json_str = match.group(1)
-    else:
-        # Fall back to first {...} block
-        match = re.search(r"\{.*\}", text, re.DOTALL)
-        if not match:
-            return {}
-        json_str = match.group(0)
-
-    try:
-        return json.loads(json_str)
-    except json.JSONDecodeError:
-        logger.warning("RiskAgent: failed to parse JSON from LLM output")
-        return {}
 
 
 # ── Context formatters ─────────────────────────────────────────────────────────
@@ -97,12 +74,29 @@ def _format_jira_context(sprint_board: dict, blocked_tickets: list[dict]) -> str
     if blocked_tickets:
         lines.append("\nBlocked tickets:")
         for t in blocked_tickets:
-            blocker_desc = "; ".join(t.get("blockers", [])) or "reason not specified"
+            raw_blockers  = "; ".join(t.get("blockers", [])) or "reason not specified"
+            safe_title    = safety_guard.sanitize(t.get("title", ""))
+            safe_assignee = safety_guard.sanitize(t.get("assignee", "unassigned"))
+            safe_blockers = safety_guard.sanitize(raw_blockers)
             lines.append(
-                f"  - [{t['id']}] {t['title']}"
-                f" (assignee: {t.get('assignee', 'unassigned')}, reason: {blocker_desc})"
+                f"  - [{t['id']}] {safe_title}"
+                f" (assignee: {safe_assignee}, reason: {safe_blockers})"
             )
 
+    return "\n".join(lines)
+
+
+def _format_pr_context(prs: list[dict]) -> str:
+    """Format open PRs so the LLM can weigh stalled / failing-CI PRs as delivery risk."""
+    if not prs:
+        return "No open PRs."
+    lines = []
+    for pr in prs:
+        reviewers = ", ".join(pr.get("reviewers", [])) or "NONE ASSIGNED"
+        lines.append(
+            f"- [{pr.get('id', '?')}] {safety_guard.sanitize(pr.get('title', ''))} "
+            f"(CI: {pr.get('ci_status', 'unknown')}, reviewers: {reviewers})"
+        )
     return "\n".join(lines)
 
 
@@ -122,6 +116,7 @@ def _format_risk_response(risk_data: dict) -> str:
     total       = risk_data.get("total_tickets", 0)
     days        = risk_data.get("days_remaining")
     blockers    = risk_data.get("blockers", [])
+    pr_risks    = risk_data.get("pr_risks", [])
     recommend   = risk_data.get("recommendation", "")
 
     level_emoji = {"HIGH": "🔴", "MEDIUM": "🟡", "LOW": "🟢"}.get(level, "⚪")
@@ -144,6 +139,11 @@ def _format_risk_response(risk_data: dict) -> str:
         lines += ["", "**Active Blockers:**"]
         for b in blockers:
             lines.append(f"- {b}")
+
+    if pr_risks:
+        lines += ["", "**PRs adding delivery risk:**"]
+        for p in pr_risks:
+            lines.append(f"- {p}")
 
     if recommend:
         lines += ["", f"**Recommended Action:** {recommend}"]
@@ -207,6 +207,25 @@ class RiskAgent(BaseAgent):
             logger.exception("RiskAgent: Jira MCP fetch failed — risk score will use RAG only")
             return {}, []
 
+    async def _fetch_open_prs(self, project: str) -> list[dict]:
+        """
+        Fetch open PRs from GitHub MCP so the risk reasoning can weigh stalled
+        (no reviewer) or failing-CI PRs as additional delivery risk.
+
+        Returns [] (non-fatal) if GitHub MCP is unavailable or the call fails —
+        risk assessment still works on Jira + RAG alone.
+        """
+        if self.mcp is None:
+            return []
+        try:
+            prs = await self.mcp.get("github").list_open_prs()
+            logger.info("RiskAgent: %d open PRs fetched for risk weighting", len(prs))
+            return prs[:8]   # cap to avoid prompt bloat
+        except Exception:
+            logger.exception("RiskAgent: GitHub PR fetch failed — continuing without PRs")
+            return []
+
+    @traceable(name="risk_agent", run_type="chain")
     async def run(self, state: SDLCState) -> AgentPayload:
         """
         Execute sprint risk assessment.
@@ -222,13 +241,23 @@ class RiskAgent(BaseAgent):
 
         # ── Step 1: RAG — sprint docs ─────────────────────────────────────────
         # "sprint risk" retrieves sprint planning docs, velocity history, sprint goals
-        rag_query = f"sprint risk delivery blockers velocity {query}"
+        safe_query = safety_guard.sanitize(query)
+        rag_query = f"sprint risk delivery blockers velocity {safe_query}"
         chunks, confidence = self.retriever.retrieve(rag_query, project)
 
         logger.info("RiskAgent: %d RAG chunks, top confidence=%.3f", len(chunks), confidence)
 
-        # ── Step 2: MCP — live Jira data ─────────────────────────────────────
+        # ── Step 2: MCP — live Jira data + open PRs ──────────────────────────
         sprint_board, blocked_tickets = await self._fetch_jira_data(project)
+        open_prs = await self._fetch_open_prs(project)
+
+        # ── Hallucination guard ──────────────────────────────────────────
+        # Abort early if no sprint docs AND no Jira data — nothing to reason over.
+        # RiskAgent can work with Jira alone (live data) — RAG is a bonus.
+        low_conf_payload = self._low_confidence_guard(confidence, chunks, query)
+        if low_conf_payload is not None and not sprint_board and not blocked_tickets:
+            logger.warning("RiskAgent: no RAG context and no Jira data — returning not-found")
+            return low_conf_payload
 
         # ── Step 3: Build CoT prompt ──────────────────────────────────────────
         system_prompt  = self.config.get_prompt("system_prompt")
@@ -236,32 +265,35 @@ class RiskAgent(BaseAgent):
             "risk_agent_reasoning",
             rag_context=_format_rag_context(chunks),
             jira_context=_format_jira_context(sprint_board, blocked_tickets),
+            pr_context=_format_pr_context(open_prs),
         )
 
-        # ── Step 4: Call LLM (low temperature — numeric reasoning must be stable)
-        temperature = self.config.get_temperature("agent_reasoning")  # 0.1
-        max_tokens  = 600   # JSON output is compact; cap to avoid padding
+        # ── Step 4: Call LLM via generate_structured (provider handles JSON extraction) ──
+        temperature = self.config.get_temperature("agent_reasoning")   # 0.1
+        resp      = await self.llm.generate_structured(reasoning_tmpl, system_prompt, temperature, 1000)
+        risk_data = resp.structured if not resp.parse_error else {}
 
-        tokens: list[str] = []
-        async for token in self.llm.generate(reasoning_tmpl, system_prompt, temperature, max_tokens):
-            tokens.append(token)
-
-        llm_output = "".join(tokens)
-        logger.debug("RiskAgent: LLM output length=%d", len(llm_output))
-
-        # ── Step 5: Parse JSON → format response ─────────────────────────────
-        risk_data = _parse_json_block(llm_output)
-
-        if not risk_data:
-            # LLM didn't produce parseable JSON — return safe fallback
-            logger.warning("RiskAgent: JSON parse failed — using fallback response")
+        # ── Step 5: Handle response ───────────────────────────────────────────
+        if resp.is_empty:
+            logger.warning("RiskAgent: LLM returned empty response — possible rate limit or quota exhausted")
+            final_response = (
+                "I'm temporarily unavailable — please try again in a moment.\n\n"
+                "If the issue persists, contact your system administrator."
+            )
+            risk_data = {}
+        elif resp.parse_error or not resp.structured:
+            # LLM responded but not in JSON format — use honest fallback
+            logger.warning("RiskAgent: JSON parse failed — returning fallback response")
             final_response = (
                 "I could not compute a precise risk score from the available data.\n\n"
                 "Based on the sprint documentation, this sprint shows signs of delivery risk.\n"
                 "Please check Jira directly for the current blocker status."
             )
+            risk_data = {}
         else:
+            risk_data      = resp.structured
             final_response = _format_risk_response(risk_data)
+
 
         # ── Collect sources ───────────────────────────────────────────────────
         all_sources = list({c.source for c in chunks})
