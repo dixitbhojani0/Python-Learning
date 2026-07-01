@@ -1,0 +1,51 @@
+Layer 1 — Parent-Child Chunking
+Every document is split at two levels simultaneously:
+
+
+Original Document (e.g. sprint_12_plan.md)
+        │
+        ▼
+┌─────────────────────────────────────┐
+│  Parent Chunk (~1500 tokens / 6000 chars)  │  ← paragraph-aware split
+│  "Full context block the LLM reads" │
+└─────────────────────────────────────┘
+        │
+        ▼  sliding window with 40-token overlap
+┌──────────┐  ┌──────────┐  ┌──────────┐
+│  Child 1  │  │  Child 2  │  │  Child 3  │  ← 350 tokens each
+│ (embedded)│  │ (embedded)│  │ (embedded)│
+└──────────┘  └──────────┘  └──────────┘
+Why two levels?
+
+Child chunk (350 tokens) → embedded and searched. Small = precise embedding, captures one specific idea
+Parent chunk (1500 tokens) → what the LLM actually reads. Large = full context, the LLM understands where the child sits in the document
+Each child carries parent_text attached to it in Qdrant. When retrieved, the LLM gets the big parent, not the small child.
+
+Layer 2 — Contextual Prefix (before embedding)
+This is from the Anthropic Contextual Retrieval paper (2024). Before embedding a child chunk, an LLM generates a 1-2 sentence summary of what document it came from and what context the chunk provides. That summary is prepended to the chunk text.
+
+
+Without prefix (standard chunking):
+  "pool exhausted after config change"
+  → embedding only captures those words, no context
+
+With contextual prefix:
+  "This is from the DB connection architecture doc, Section 4,
+   discussing failure modes under high concurrency."
+  + "pool exhausted after config change"
+  → embedding now carries document context too
+Why it matters for SDLC docs: Sprint docs and ADRs have sections that reference concepts defined elsewhere. Without the prefix, a chunk about "nginx reload" has no embedding signal that it's from the infrastructure runbook. With the prefix, retrieval is dramatically more accurate.
+
+This prefix step is optional at ingest time — controlled by --no-llm flag in scripts/ingest.py. Without a Groq key, skip it and use raw chunk text.
+
+Layer 3 — Quality Gate
+Before any chunk is stored, it passes through _has_meaningful_content():
+
+
+# Strips all markdown symbols, counts words longer than 2 chars
+# Skips if fewer than 5 meaningful words
+clean = re.sub(r'[#\-*|`_\[\]()\s]+', ' ', text).strip()
+words = [w for w in clean.split() if len(w) > 2]
+return len(words) >= 5
+This prevents storing junk like ## Summary, ---, **Status**: ACTIVE as chunks. Those would pollute search results with zero-information embeddings.
+
