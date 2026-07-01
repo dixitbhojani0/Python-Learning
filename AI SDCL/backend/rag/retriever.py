@@ -128,11 +128,13 @@ def embed_texts_batch(texts: list[str]) -> list[list[float]]:
     Use embed_text() for single query encoding at retrieval time.
     """
     model = _get_embed_model()
-    normalize = config.get_rag_config().get("embeddings", {}).get("normalize", True)
+    embed_cfg = config.get_rag_config().get("embeddings", {})
+    normalize = embed_cfg.get("normalize", True)
+    batch_size = embed_cfg.get("batch_size", 32)
     vectors = model.encode(
         texts,
         normalize_embeddings=normalize,
-        batch_size=32,
+        batch_size=batch_size,
         show_progress_bar=False,
     )
     return [v.tolist() for v in vectors]
@@ -164,47 +166,43 @@ def _sigmoid(x: float) -> float:
     The ms-marco model was trained on web queries (not sprint docs) so its
     raw logits are systematically lower for technical domain text.
     """
-    return 1.0 / (1.0 + math.exp(-max(-500.0, min(500.0, x / 3.0))))
+    T = config.get_rag_config().get("retrieval", {}).get("sigmoid_temperature", 3.0)
+    return 1.0 / (1.0 + math.exp(-max(-500.0, min(500.0, x / T))))
 
 
 def _reciprocal_rank_fusion(
-    vector_results: list[dict],
-    bm25_scores: list[float],
-    k: int = 60,
+    list_a: list[dict],
+    list_b: list[dict],
+    k: int | None = None,
 ) -> list[dict]:
     """
-    Reciprocal Rank Fusion (RRF) merges two ranked lists intelligently.
+    Reciprocal Rank Fusion over two INDEPENDENT ranked lists.
 
     Formula: RRF(d) = Σ 1 / (k + rank(d))
-    A document ranked #1 in both lists scores higher than one ranked #1 in only one list.
-    k=60 is the standard value from the original RRF paper (Cormack et al., 2009).
+    k=60 is the standard default (Cormack et al., 2009).
 
-    Why not just average scores?
-    - Vector scores and BM25 scores are on different scales
-    - RRF uses ranks (not raw scores) — scale-independent and more robust
+    Accepts two separate ranked lists (vector results and BM25 results) — each
+    produced independently from the full corpus. Documents appearing in both lists
+    score higher than those in only one.
     """
+    if k is None:
+        k = config.get_rag_config().get("retrieval", {}).get("rrf_k", 60)
     rrf_scores: dict[str, float] = {}
     id_to_doc: dict[str, dict] = {}
 
-    # Score from vector search (already ranked by Qdrant)
-    for rank, doc in enumerate(vector_results):
+    for rank, doc in enumerate(list_a):
         doc_id = doc["id"]
         rrf_scores[doc_id] = rrf_scores.get(doc_id, 0.0) + 1.0 / (k + rank + 1)
         id_to_doc[doc_id] = doc
 
-    # Score from BM25 (re-rank the same docs by BM25 score)
-    bm25_ranked = sorted(
-        zip(range(len(vector_results)), bm25_scores),
-        key=lambda x: x[1],
-        reverse=True,
-    )
-    for rank, (doc_idx, _) in enumerate(bm25_ranked):
-        doc_id = vector_results[doc_idx]["id"]
+    for rank, doc in enumerate(list_b):
+        doc_id = doc["id"]
         rrf_scores[doc_id] = rrf_scores.get(doc_id, 0.0) + 1.0 / (k + rank + 1)
+        if doc_id not in id_to_doc:
+            id_to_doc[doc_id] = doc
 
-    # Return docs sorted by combined RRF score
     sorted_ids = sorted(rrf_scores, key=lambda d: rrf_scores[d], reverse=True)
-    return [id_to_doc[doc_id] for doc_id in sorted_ids if doc_id in id_to_doc]
+    return [id_to_doc[doc_id] for doc_id in sorted_ids]
 
 
 class HybridRetriever:
@@ -223,6 +221,48 @@ class HybridRetriever:
         self.initial_candidates = rag_cfg.get("initial_candidates", 30)
         self.top_k = rag_cfg.get("top_k_after_rerank", 7)
         self.confidence_thresholds = config.get_confidence_thresholds()
+        # Per-project BM25 index cache: project → (BM25Okapi, list[dict])
+        # Built lazily on first retrieve(); call clear_bm25_cache() after re-ingest.
+        self._bm25_cache: dict[str, tuple] = {}
+
+    def _get_or_build_bm25(self, project: str) -> tuple:
+        """
+        Return (BM25Okapi model, corpus_docs list) for this project.
+
+        Builds from full Qdrant corpus on first call, then caches in memory.
+        Full-corpus BM25 ensures keyword matches outside the vector top-N are
+        not invisible — the standard hybrid retrieval pattern.
+        """
+        if project not in self._bm25_cache:
+            records = self.vector_store.scroll_chunks(project, with_vectors=False)
+            corpus_docs = [
+                {
+                    "id":          str(r.id),
+                    "text":        r.payload.get("text", ""),
+                    "parent_text": r.payload.get("parent_text", ""),
+                    "source":      r.payload.get("source", "unknown"),
+                    "type":        r.payload.get("type", "unknown"),
+                    "metadata":    r.payload,
+                }
+                for r in records
+                if r.payload.get("text")
+            ]
+            tokenized = [doc["text"].lower().split() for doc in corpus_docs]
+            bm25 = BM25Okapi(tokenized) if tokenized else BM25Okapi([[]])
+            self._bm25_cache[project] = (bm25, corpus_docs)
+            logger.info(
+                "HybridRetriever: built BM25 index project='%s' — %d docs",
+                project, len(corpus_docs),
+            )
+        return self._bm25_cache[project]
+
+    def clear_bm25_cache(self, project: str = None) -> None:
+        """Invalidate BM25 index cache. Call after re-ingest. None = clear all projects."""
+        if project:
+            self._bm25_cache.pop(project, None)
+        else:
+            self._bm25_cache.clear()
+        logger.info("HybridRetriever: BM25 cache cleared (project=%s)", project or "all")
 
     @_traceable(name="hybrid_retriever", run_type="retriever")
     def retrieve(
@@ -262,14 +302,18 @@ class HybridRetriever:
             logger.warning("HybridRetriever: no vector results for project='%s'", project)
             return [], 0.0
 
-        # ── Step 2: BM25 sparse search (exact keyword matching)
-        corpus = [r["text"] for r in vector_results]
-        tokenized_corpus = [doc.lower().split() for doc in corpus]
-        bm25 = BM25Okapi(tokenized_corpus)
-        bm25_scores = bm25.get_scores(query.lower().split())
+        # ── Step 2: Independent BM25 search on FULL corpus
+        # BM25 runs over all non-parent chunks for this project (not just the
+        # vector top-N) so keyword-only matches are never invisible.
+        bm25_model, bm25_corpus = self._get_or_build_bm25(project)
+        bm25_raw = bm25_model.get_scores(query.lower().split())
+        top_bm25_idx = sorted(
+            range(len(bm25_raw)), key=lambda i: bm25_raw[i], reverse=True
+        )[:self.initial_candidates]
+        bm25_results = [bm25_corpus[i] for i in top_bm25_idx if bm25_raw[i] > 0]
 
-        # ── Step 3: Reciprocal Rank Fusion — merge vector + BM25 rankings
-        fused = _reciprocal_rank_fusion(vector_results, bm25_scores)
+        # ── Step 3: RRF fuse two independent ranked lists
+        fused = _reciprocal_rank_fusion(vector_results, bm25_results)
 
         # ── Step 4: Cross-encoder reranker — true relevance scoring
         reranker = _get_rerank_model()

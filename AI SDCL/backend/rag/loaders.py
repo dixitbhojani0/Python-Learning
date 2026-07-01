@@ -169,6 +169,62 @@ def extract_pdf_images(filepath: Path, images_dir: Path) -> list[dict]:
     return records
 
 
+def _table_to_markdown(table: list[list]) -> str:
+    """Convert a pdfplumber table (list of rows, each a list of cells) to markdown pipe format."""
+    if not table:
+        return ""
+    rows = [[str(cell or "").strip().replace("\n", " ") for cell in row] for row in table]
+    rows = [r for r in rows if any(c for c in r)]  # drop fully-empty rows
+    if not rows:
+        return ""
+    width = max(len(r) for r in rows)
+    header = rows[0] + [""] * (width - len(rows[0]))
+    lines = [
+        "| " + " | ".join(header) + " |",
+        "| " + " | ".join(["---"] * width) + " |",
+    ]
+    for row in rows[1:]:
+        padded = row + [""] * (width - len(row))
+        lines.append("| " + " | ".join(padded[:width]) + " |")
+    return "\n".join(lines)
+
+
+def load_pdf_tables(filepath: Path) -> list[tuple[int, str]]:
+    """
+    Extract tables from a PDF using pdfplumber (coordinate-based, not OCR).
+
+    Returns list of (page_number, markdown_table_text) tuples.
+    Returns [] if pdfplumber is not installed or no tables are found.
+
+    Why pdfplumber over unstructured for tables?
+    PDFs store table cells as positioned text fragments — no row/column concept
+    in the format. unstructured guesses structure from text order and often garbles
+    or skips table cells entirely. pdfplumber reads the actual coordinate grid and
+    reconstructs rows/columns mathematically, giving exact cell text every time.
+    """
+    try:
+        import pdfplumber
+    except ImportError:
+        logger.debug("loaders: pdfplumber not installed — PDF table extraction unavailable")
+        return []
+
+    results: list[tuple[int, str]] = []
+    try:
+        with pdfplumber.open(str(filepath)) as pdf:
+            for page_idx, page in enumerate(pdf.pages):
+                page_num = page_idx + 1
+                for table in page.extract_tables() or []:
+                    md = _table_to_markdown(table)
+                    if md:
+                        results.append((page_num, md))
+    except Exception:
+        logger.exception("loaders: pdfplumber table extraction failed for '%s'", filepath.name)
+
+    if results:
+        logger.info("loaders: pdfplumber found %d table(s) in '%s'", len(results), filepath.name)
+    return results
+
+
 def get_pdf_image_elements(filepath: Path) -> list:
     """
     Extract text from image XObjects embedded in a PDF via pypdf + pytesseract OCR.

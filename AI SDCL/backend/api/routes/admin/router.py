@@ -57,6 +57,10 @@ from backend.memory.session_store import session_store
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+# ── MCP outbound-host sub-router (admin manages connections to other MCP servers)
+from backend.api.routes.admin.mcp_servers import router as _mcp_servers_router  # noqa: E402
+router.include_router(_mcp_servers_router)
+
 
 # ── Stats ──────────────────────────────────────────────────────────────────────
 
@@ -215,6 +219,15 @@ async def admin_ingest(
             total += pipeline.ingest_directory(d, job["meta"])
 
         duration = time.monotonic() - start
+
+        # Invalidate the in-memory BM25 corpus index so the next retrieve()
+        # call rebuilds from the updated Qdrant corpus.
+        try:
+            from backend.orchestrator.nodes import get_retriever
+            get_retriever().clear_bm25_cache(body.project)
+        except Exception:
+            pass  # retriever may not be initialized yet — first-boot ingest
+
         msg = (
             f"Ingested {total} chunks from project='{body.project}' "
             f"in {duration:.1f}s (LLM context: {'enabled' if body.use_llm else 'disabled'})."
@@ -312,13 +325,14 @@ async def admin_ingest_confluence(
     )
     try:
         from backend.mcp.connectors.confluence_connector import ConfluenceConnector, _is_system_page
-        from backend.mcp.connectors.mock_confluence import MockConfluenceConnector
         from backend.rag.pipeline import RAGPipeline
 
         connector = ConfluenceConnector(name="confluence", connector_config={})
         if not connector.is_available():
-            logger.info("admin/ingest/confluence: credentials are placeholders — using mock pages")
-            connector = MockConfluenceConnector(name="mock_confluence", connector_config={})
+            raise HTTPException(
+                status_code=400,
+                detail="Confluence credentials are not configured. Please set Confluence credentials in .env to enable Confluence ingestion."
+            )
 
         start = time.monotonic()
         pages = await connector.get_all_page_texts(body.space_key)
@@ -576,13 +590,14 @@ async def admin_ingest_jira(
     )
     try:
         from backend.mcp.connectors.jira_connector import JiraConnector
-        from backend.mcp.connectors.mock_jira import MockJiraConnector
         from backend.rag.pipeline import RAGPipeline
 
         connector = JiraConnector(name="jira", connector_config={})
         if not connector.is_available():
-            logger.info("admin/ingest/jira: credentials are placeholders — using mock tickets")
-            connector = MockJiraConnector(name="mock_jira", connector_config={})
+            raise HTTPException(
+                status_code=400,
+                detail="Jira credentials are not configured. Please set JIRA_TOKEN in .env to enable Jira ingestion."
+            )
 
         start = time.monotonic()
 

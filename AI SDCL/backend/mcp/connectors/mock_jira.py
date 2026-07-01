@@ -155,3 +155,8 @@ class MockJiraConnector(BaseMCPConnector):
         """Mock ticket assignment — always succeeds."""
         logger.debug("MockJira.assign_ticket: %s → %s", ticket_id, account_id)
         return {"success": True, "ticket_id": ticket_id, "account_id": account_id}
+
+    async def add_comment(self, ticket_id: str, body: str) -> dict:
+        """Mock comment add — always succeeds."""
+        logger.debug("MockJira.add_comment: %s ← %s", ticket_id, body[:60])
+        return {"success": True, "ticket_id": ticket_id}

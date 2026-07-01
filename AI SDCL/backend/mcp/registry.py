@@ -55,26 +55,25 @@ class MCPRegistry:
     """
 
     # ── Plugin Registry ─────────────────────────────────────────────────────
-    # Maps connector type name → (RealClass, MockClass)
+    # Maps connector type name → RealClass
     # Populated by connector files calling MCPRegistry.register() at import time.
-    _registry: dict[str, tuple[Type[BaseMCPConnector], Type[BaseMCPConnector]]] = {}
+    _registry: dict[str, Type[BaseMCPConnector]] = {}
 
     @classmethod
     def register(
         cls,
         connector_type: str,
         real_class: Type[BaseMCPConnector],
-        mock_class: Type[BaseMCPConnector],
     ) -> None:
         """
         Register a connector type.
 
         Called at the bottom of each connector file:
-            MCPRegistry.register("jira", JiraConnector, MockJiraConnector)
+            MCPRegistry.register("jira", JiraConnector)
 
         Must be called before MCPRegistry() is instantiated (i.e. at module import time).
         """
-        cls._registry[connector_type] = (real_class, mock_class)
+        cls._registry[connector_type] = real_class
         logger.debug("MCPRegistry: registered connector type '%s'", connector_type)
 
     def __init__(self) -> None:
@@ -83,7 +82,16 @@ class MCPRegistry:
         import backend.mcp.connectors  # noqa: F401
 
         connectors_cfg  = config.get_mcp_registry()
-        self._semaphore = asyncio.Semaphore(_DEFAULT_MAX_CONCURRENT)
+        # Read global concurrency cap from mcp_registry.yaml > max_concurrent_calls.
+        # Falls back to _DEFAULT_MAX_CONCURRENT (3) if the key is absent so existing
+        # deployments without the new config key continue to work unchanged.
+        # We access the raw config dict via get_security_config-style helper — the
+        # top-level mcp_registry key is not exposed by get_mcp_registry() which only
+        # returns the `connectors` sub-dict. Using the internal _configs is lint-flagged
+        # (SLF001); the cleanest fix is a dedicated accessor on ConfigLoader.
+        raw_reg = config.get_mcp_registry_raw()
+        max_concurrent = int(raw_reg.get("max_concurrent_calls", _DEFAULT_MAX_CONCURRENT))
+        self._semaphore = asyncio.Semaphore(max_concurrent)
         self._connectors: dict[str, BaseMCPConnector] = {}
 
         for name, connector_cfg in connectors_cfg.items():
@@ -105,9 +113,7 @@ class MCPRegistry:
         """
         Instantiate a connector from the registry.
 
-        Looks up the connector type in _registry (populated by self-registration calls).
-        If the real connector's is_available() returns True, uses it.
-        Otherwise falls back to the mock connector automatically.
+        Fail loud if the real connector reports is_available() = False.
         """
         connector_type = cfg.get("type", name)
 
@@ -119,24 +125,26 @@ class MCPRegistry:
             )
             return None
 
-        real_class, mock_class = self._registry[connector_type]
+        real_class = self._registry[connector_type]
 
         try:
             real = real_class(name=name, connector_config=cfg)
-            if real.is_available():
-                logger.info(
-                    "MCPRegistry: using REAL %s connector (%s credentials configured)",
-                    name, connector_type.upper(),
-                )
-                return real
-            logger.info(
-                "MCPRegistry: %s credentials not set — using mock %s connector",
-                connector_type.upper(), name,
-            )
-            return mock_class(name=name, connector_config=cfg)
         except Exception:
             logger.exception("MCPRegistry: failed to build connector '%s'", name)
             return None
+
+        if real.is_available():
+            logger.info(
+                "MCPRegistry: using REAL %s connector (%s credentials configured)",
+                name, connector_type.upper(),
+            )
+            return real
+
+        # Fail loud on missing live credentials.
+        raise RuntimeError(
+            f"MCP connector '{name}' ({connector_type}) is enabled but has no live "
+            f"credentials. Set the required env vars."
+        )
 
     def get(self, name: str) -> BaseMCPConnector:
         """

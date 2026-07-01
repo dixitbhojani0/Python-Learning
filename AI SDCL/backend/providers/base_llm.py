@@ -29,6 +29,7 @@ from typing import AsyncGenerator, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from backend.providers.llm_response import LLMResponse
+    from langchain_core.language_models import BaseChatModel
 
 
 class BaseLLMProvider(ABC):
@@ -124,6 +125,26 @@ class BaseLLMProvider(ABC):
               .is_empty    — True when LLM returned nothing
         """
         ...
+
+    def get_chat_model(self) -> "BaseChatModel":
+        """
+        Return a LangChain chat model that supports tool calling (`bind_tools`),
+        for the agentic MCP tool-use loop (e.g. `create_react_agent`).
+
+        This is the ONE seam that keeps tool-use provider-agnostic. The MCP client,
+        the MCP server, and the tool-use node never reference a concrete provider —
+        they ask the *configured* provider for its tool-calling model. So swapping
+        Groq → Gemini → OpenAI means implementing this method in that provider
+        only; **no MCP code and no agent code change.**
+
+        Not abstract on purpose: providers that only do text generation still
+        instantiate. A provider used in the tool-use loop MUST override this.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement get_chat_model() — required "
+            "for the MCP tool-use loop. Return a LangChain BaseChatModel that "
+            "supports bind_tools() (e.g. ChatGroq / ChatOpenAI / ChatGoogleGenerativeAI)."
+        )
 
     @abstractmethod
     def get_model_name(self) -> str:

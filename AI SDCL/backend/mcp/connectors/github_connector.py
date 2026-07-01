@@ -8,6 +8,7 @@ Auto-selected by MCPRegistry when GITHUB_TOKEN != "placeholder" in settings.
 
 GitHub REST API docs: https://docs.github.com/en/rest
 """
+import asyncio
 import logging
 
 import httpx
@@ -20,11 +21,6 @@ logger = logging.getLogger(__name__)
 _API_BASE = "https://api.github.com"
 _TIMEOUT  = httpx.Timeout(connect=5.0, read=25.0, write=5.0, pool=5.0)
 
-
-def _mock_fallback():
-    """Return a MockGitHubConnector for graceful fallback when the real API fails."""
-    from backend.mcp.connectors.mock_github import MockGitHubConnector
-    return MockGitHubConnector(name="mock_fallback", connector_config={})
 
 
 def _normalize_pr(pr: dict) -> dict:
@@ -142,14 +138,7 @@ class GitHubConnector(BaseMCPConnector):
             return results
         except httpx.HTTPStatusError as exc:
             status = exc.response.status_code
-            if status in (404, 422):
-                logger.warning(
-                    "GitHubConnector.search_prs: repo '%s/%s' returned HTTP %d — "
-                    "check GITHUB_REPO in .env. Falling back to mock data.",
-                    self._owner, target_repo, status,
-                )
-                return await _mock_fallback().search_prs(query)
-            logger.exception("GitHubConnector.search_prs failed — HTTP %d", status)
+            logger.warning("GitHubConnector.search_prs: HTTP %d for repo '%s/%s'", status, self._owner, target_repo)
             return []
         except Exception:
             logger.exception("GitHubConnector.search_prs failed for query='%s'", query[:50])
@@ -188,42 +177,81 @@ class GitHubConnector(BaseMCPConnector):
             return results
         except httpx.HTTPStatusError as exc:
             status = exc.response.status_code
-            if status in (404, 422):
-                logger.warning(
-                    "GitHubConnector.list_open_prs: repo '%s/%s' returned HTTP %d — "
-                    "check GITHUB_REPO in .env. Falling back to mock data.",
-                    self._owner, target_repo, status,
-                )
-                return await _mock_fallback().list_open_prs()
-            logger.exception("GitHubConnector.list_open_prs failed — HTTP %d", status)
+            logger.warning("GitHubConnector.list_open_prs: HTTP %d for repo '%s/%s'", status, self._owner, target_repo)
             return []
         except Exception:
             logger.exception("GitHubConnector.list_open_prs failed for repo='%s'", target_repo)
             return []
 
     async def get_pr_details(self, pr_id: str) -> dict | None:
-        """Return full PR details by PR number (accepts 'PR-47' or '47')."""
+        """Return full PR details by PR number (accepts 'PR-47' or '47').
+
+        Includes reviews (state/body), review_comments (line-anchored), and
+        issue_comments (top-level PR discussion). All four sub-fetches run in
+        parallel for latency. A failing sub-fetch yields an empty list, never
+        a crash — the main PR result is still returned.
+        """
         number = pr_id.replace("PR-", "").strip()
+        base = f"{_API_BASE}/repos/{self._owner}/{self._repo}"
         try:
             async with httpx.AsyncClient(headers=self._headers, timeout=_TIMEOUT) as client:
-                r = await client.get(
-                    f"{_API_BASE}/repos/{self._owner}/{self._repo}/pulls/{number}",
-                )
+                r = await client.get(f"{base}/pulls/{number}")
                 if r.status_code == 404:
                     return None
                 r.raise_for_status()
                 pr = r.json()
 
-                # Fetch changed files
-                r_files = await client.get(
-                    f"{_API_BASE}/repos/{self._owner}/{self._repo}/pulls/{number}/files",
+                files_r, reviews_r, review_cmts_r, issue_cmts_r, ci = await asyncio.gather(
+                    client.get(f"{base}/pulls/{number}/files"),
+                    client.get(f"{base}/pulls/{number}/reviews"),
+                    client.get(f"{base}/pulls/{number}/comments"),
+                    client.get(f"{base}/issues/{number}/comments"),
+                    self._get_pr_ci_status(client, int(number)),
+                    return_exceptions=True,
                 )
-                files = [f["filename"] for f in (r_files.json() if r_files.is_success else [])]
-                pr["_files_changed"] = files
-                pr["_ci_status"] = await self._get_pr_ci_status(client, int(number))
 
-            logger.info("GitHubConnector.get_pr_details: fetched PR-%s", number)
-            return _normalize_pr(pr)
+                def _safe(resp):
+                    return resp.json() if hasattr(resp, "is_success") and resp.is_success else []
+
+                pr["_files_changed"] = [f["filename"] for f in _safe(files_r)]
+                pr["_ci_status"] = ci if isinstance(ci, str) else "unknown"
+                pr["_reviews"] = [
+                    {
+                        "state":        rv.get("state"),
+                        "user":         (rv.get("user") or {}).get("login", ""),
+                        "body":         rv.get("body") or "",
+                        "submitted_at": rv.get("submitted_at", ""),
+                    }
+                    for rv in _safe(reviews_r)
+                ]
+                pr["_review_comments"] = [
+                    {
+                        "user":       (c.get("user") or {}).get("login", ""),
+                        "body":       c.get("body") or "",
+                        "path":       c.get("path", ""),
+                        "line":       c.get("line"),
+                        "created_at": c.get("created_at", ""),
+                    }
+                    for c in _safe(review_cmts_r)
+                ]
+                pr["_issue_comments"] = [
+                    {
+                        "user":       (c.get("user") or {}).get("login", ""),
+                        "body":       c.get("body") or "",
+                        "created_at": c.get("created_at", ""),
+                    }
+                    for c in _safe(issue_cmts_r)
+                ]
+
+            normalized = _normalize_pr(pr)
+            normalized["reviews"]         = pr["_reviews"]
+            normalized["review_comments"] = pr["_review_comments"]
+            normalized["issue_comments"]  = pr["_issue_comments"]
+            logger.info(
+                "GitHubConnector.get_pr_details: PR-%s with %d reviews, %d review_comments, %d issue_comments",
+                number, len(normalized["reviews"]), len(normalized["review_comments"]), len(normalized["issue_comments"]),
+            )
+            return normalized
         except Exception:
             logger.exception("GitHubConnector.get_pr_details failed for pr_id='%s'", pr_id)
             return None
@@ -263,9 +291,27 @@ class GitHubConnector(BaseMCPConnector):
             logger.exception("GitHubConnector.approve_pr failed for %s", pr_id)
             return {"pr": pr_id, "status": "error"}
 
+    async def request_changes_pr(self, pr_id: str, body: str = "", reviewer: str = "") -> dict:
+        """
+        Submit a REQUEST_CHANGES review on the PR (real GitHub API).
+        Blocks merge until the author addresses the feedback.
+        """
+        number = pr_id.replace("PR-", "").strip()
+        try:
+            async with httpx.AsyncClient(headers=self._headers, timeout=_TIMEOUT) as client:
+                r = await client.post(
+                    f"{_API_BASE}/repos/{self._owner}/{self._repo}/pulls/{number}/reviews",
+                    json={"event": "REQUEST_CHANGES", "body": body or "Changes requested."},
+                )
+                r.raise_for_status()
+            logger.info("GitHubConnector.request_changes_pr: PR-%s changes requested", number)
+            return {"pr": pr_id, "status": "CHANGES_REQUESTED", "reviewer": reviewer, "body": body}
+        except Exception:
+            logger.exception("GitHubConnector.request_changes_pr failed for %s", pr_id)
+            return {"pr": pr_id, "status": "error"}
+
 
 # Self-registration — tells MCPRegistry which classes handle "github" connectors.
 # Import this file (via backend/mcp/connectors/__init__.py) to activate.
 from backend.mcp.registry import MCPRegistry  # noqa: E402
-from backend.mcp.connectors.mock_github import MockGitHubConnector  # noqa: E402
-MCPRegistry.register("github", GitHubConnector, MockGitHubConnector)
+MCPRegistry.register("github", GitHubConnector)

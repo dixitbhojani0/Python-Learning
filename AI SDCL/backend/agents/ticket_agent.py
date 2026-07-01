@@ -28,6 +28,7 @@ except ImportError:
 
 from backend.agents.base_agent import AgentPayload, BaseAgent
 from backend.core.config_loader import config as _default_config
+from backend.mcp_client.client import call_mcp_tool
 from backend.orchestrator.state import SDLCState
 from backend.rag.retriever import HybridRetriever, RetrievedChunk
 
@@ -122,6 +123,26 @@ def _format_ticket_proposal(ticket_data: dict, similar_tickets: list[dict], proj
     return "\n".join(lines)
 
 
+def _clean_ticket_query(query: str) -> str:
+    """
+    Preprocess/clean ticket creation query to extract the core subject of the issue.
+    This strips out common ticket creation verbs and patterns, returning the core
+    nouns/keywords to be used for duplicate checking and similar ticket search.
+    """
+    # Normalize spaces
+    q = " ".join(query.split())
+    # Match prefixes like "create ticket regarding...", "create a ticket for..."
+    pattern = r'(?i)^\b(create|raise|file|report|open)\s+(a\s+|an\s+|one\s+|new\s+)?(ticket|bug|issue|story|task|defect)\s+(regarding|for|about|with|on)?\s*'
+    q_cleaned = re.sub(pattern, '', q)
+
+    # If the query starts with "regarding", "for", "about", strip it too
+    q_cleaned = re.sub(r'(?i)^\b(regarding|for|about|with|on)\s+', '', q_cleaned)
+
+    # Strip trailing punctuation
+    q_cleaned = q_cleaned.rstrip('.!? ')
+    return q_cleaned
+
+
 # ── Agent class ────────────────────────────────────────────────────────────────
 
 class TicketAgent(BaseAgent):
@@ -144,11 +165,13 @@ class TicketAgent(BaseAgent):
         )
 
     async def _fetch_similar_tickets(self, query: str, project: str) -> list[dict]:
-        """Search Jira for tickets similar to the reported issue."""
-        if self.mcp is None:
-            return []
+        """Search Jira (over MCP) for tickets similar to the reported issue."""
+        cleaned = _clean_ticket_query(query)
+        logger.info("TicketAgent: searching similar tickets for cleaned query: %r (original: %r)", cleaned, query)
         try:
-            tickets = await self.mcp.get("jira").search_tickets(query, project)
+            tickets = await call_mcp_tool("jira_search_tickets", {"query": cleaned, "project": project})
+            if not isinstance(tickets, list):
+                tickets = []
             logger.info("TicketAgent: found %d similar Jira tickets", len(tickets))
             return tickets
         except Exception:
@@ -156,11 +179,10 @@ class TicketAgent(BaseAgent):
             return []
 
     async def _fetch_project_members(self, project: str) -> list[dict]:
-        """Fetch all assignable members for the project from Jira."""
-        if self.mcp is None:
-            return []
+        """Fetch all assignable members for the project from Jira (over MCP)."""
         try:
-            return await self.mcp.get("jira").get_project_members(project)
+            members = await call_mcp_tool("jira_get_project_members", {"project": project})
+            return members if isinstance(members, list) else []
         except Exception:
             logger.warning("TicketAgent: could not fetch project members — assignee will be unassigned")
             return []
@@ -204,15 +226,13 @@ class TicketAgent(BaseAgent):
         project = state["project_id"]
         query   = state["query"]
 
-        ticket, members = {}, []
-        if self.mcp:
-            results = await asyncio.gather(
-                self.mcp.get("jira").get_ticket(ticket_id),
-                self.mcp.get("jira").get_project_members(project),
-                return_exceptions=True,
-            )
-            ticket  = results[0] if not isinstance(results[0], Exception) else {}
-            members = results[1] if not isinstance(results[1], Exception) else []
+        results = await asyncio.gather(
+            call_mcp_tool("jira_get_ticket", {"ticket_id": ticket_id}),
+            call_mcp_tool("jira_get_project_members", {"project": project}),
+            return_exceptions=True,
+        )
+        ticket  = results[0] if isinstance(results[0], dict) else {}
+        members = results[1] if isinstance(results[1], list) else []
 
         # If ticket is empty, it doesn't exist in Jira — reject immediately, no HITL
         if not ticket or not ticket.get("title"):
@@ -323,6 +343,47 @@ class TicketAgent(BaseAgent):
             },
         )
 
+    async def _run_comment(self, state: SDLCState, ticket_id: str) -> AgentPayload:
+        """Propose adding a developer comment to a ticket (E6) — HITL gated."""
+        query   = state["query"]
+        project = state["project_id"]
+
+        # Extract the comment body: text after a colon / "saying" / "that".
+        body_match   = re.search(r'(?::|\bsaying\b|\bthat\b)\s+(.+)$', query, re.IGNORECASE)
+        comment_body = body_match.group(1).strip() if body_match else ""
+
+        if not comment_body:
+            msg = (
+                f"What comment should I add to **{ticket_id}**? For example:\n\n"
+                f"`add a comment to {ticket_id}: investigated — this is a 3-day refactor, not a quick fix.`"
+            )
+            return AgentPayload(
+                agent_name="ticket_agent", confidence=1.0,
+                summary="comment body needed",
+                structured={"final_response": msg}, sources=[], response=msg,
+            )
+
+        card = "\n".join([
+            f"## Add Comment to {ticket_id}",
+            "",
+            f"> {comment_body}",
+            "",
+            f"_Click **Approve** to post this comment to {ticket_id}, or **Reject** to cancel._",
+        ])
+        return AgentPayload(
+            agent_name="ticket_agent", confidence=0.9,
+            summary=f"Comment proposal for {ticket_id}",
+            structured={"final_response": card},
+            sources=["jira_live"],
+            hitl_required=True,
+            hitl_proposal={
+                "action":    "comment_ticket",
+                "ticket_id": ticket_id,
+                "comment":   comment_body,
+                "project":   project,
+            },
+        )
+
     @traceable(name="ticket_agent", run_type="chain")
     async def run(self, state: SDLCState) -> AgentPayload:
         """Propose a Jira ticket for the reported issue — always requires HITL."""
@@ -338,6 +399,40 @@ class TicketAgent(BaseAgent):
         if assign_match and ticket_id_match:
             ticket_id = f"{ticket_id_match.group(1).upper()}-{ticket_id_match.group(2)}"
             return await self._run_assignment(state, ticket_id)
+
+        # ── Comment intent (E6): "add a comment to SDLC-5: ...", "log a note on SDLC-5 saying ..." ──
+        # Requires an explicit write verb so it doesn't fire on "show comments on SDLC-5" (a read).
+        comment_match = re.search(r'\b(add|log|leave|post|write)\s+(a\s+)?(comment|note)\b', query.lower())
+        if comment_match and ticket_id_match:
+            ticket_id = f"{ticket_id_match.group(1).upper()}-{ticket_id_match.group(2)}"
+            return await self._run_comment(state, ticket_id)
+
+        # ── List/search intent: "show open tickets", "list tickets for X", "find bugs", "who is assigned" ──
+        # These are read-only queries — search Jira and return results without HITL.
+        _LIST_WORDS   = re.compile(r'\b(show|list|find|search|get|display|what|which|who)\b', re.I)
+        _CREATE_WORDS = re.compile(r'\b(create|raise|file|report|open a( new)? (ticket|issue|bug))\b', re.I)
+        if _LIST_WORDS.search(query) and not _CREATE_WORDS.search(query):
+            tickets = await self._fetch_similar_tickets(query, project)
+            if tickets:
+                lines = [f"Here are the Jira tickets I found in **{project}**:\n"]
+                for t in tickets:
+                    assignee = t.get("assignee") or "unassigned"
+                    lines.append(
+                        f"- **{t['id']}** [{t.get('status', '?')}] [{t.get('priority', '?')}] "
+                        f"{t['title']} — Assignee: {assignee}"
+                    )
+                response_text = "\n".join(lines)
+            else:
+                response_text = f"No tickets found matching your search in project **{project}**."
+            return AgentPayload(
+                agent_name="ticket_agent",
+                confidence=0.9,
+                summary="Jira ticket search results",
+                structured={"final_response": response_text},
+                sources=["jira_live"],
+                hitl_required=False,
+                hitl_proposal={},
+            )
 
         # ── Step 1: Search Jira for similar tickets (async MCP call) ─────────
         similar_tickets = await self._fetch_similar_tickets(query, project)
@@ -377,23 +472,53 @@ class TicketAgent(BaseAgent):
                     ticket_data["assignee_account_id"] = suggested_member.get("account_id", "")
                     logger.info("TicketAgent: auto-assigned to '%s' (accountId=%s)", ticket_data["assignee"], ticket_data["assignee_account_id"])
 
-        if not ticket_data or not ticket_data.get("title"):
-            logger.warning("TicketAgent: JSON parse failed — returning clarification instead of fallback proposal")
-            # Don't create a garbage ticket. Tell the user what they need to provide.
+        # ── Elicitation guard (matches the MCP host pattern — Antigravity / Claude
+        # Desktop ask for missing required fields before proposing a write). We
+        # catch THREE shapes of "the user didn't give enough":
+        #   1. extraction failed → no title at all
+        #   2. extraction produced a placeholder title (the LLM filled the slot
+        #      with the imperative itself when the input was just "create ticket")
+        #   3. description is suspiciously short or starts with a meta-phrase
+        #      ("the user wants…") — both are LLM hallucination signatures
+        _title = (ticket_data.get("title") or "").strip()
+        _desc  = (ticket_data.get("description") or "").strip()
+        _PLACEHOLDER_TITLES = {
+            "ticket", "a ticket", "new ticket", "create ticket", "create a ticket",
+            "new jira ticket", "create jira ticket", "open ticket", "open a ticket",
+        }
+        _META_DESC_PREFIXES = (
+            "the user wants", "user wants", "the user is asking",
+            "the user requested", "user requested", "the user needs",
+        )
+        is_placeholder = (
+            _title.lower() in _PLACEHOLDER_TITLES
+            or _desc.lower().startswith(_META_DESC_PREFIXES)
+            or len(_desc) < 30
+        )
+
+        if not ticket_data or not _title or is_placeholder:
+            reason = (
+                "JSON parse failed" if (not ticket_data or not _title)
+                else f"placeholder extraction (title={_title!r}, desc={_desc[:40]!r})"
+            )
+            logger.warning("TicketAgent: %s — asking the user for ticket details", reason)
             clarification = (
-                "I wasn't able to extract enough detail to propose a ticket from your message.\n\n"
-                "To create a Jira ticket, please describe the issue more specifically, for example:\n"
-                "- What is the error message or symptom?\n"
-                "- Which endpoint or service is affected?\n"
-                "- When did it start happening?\n\n"
-                "If you were asking about existing blocked tickets, try: "
-                "**\"Which tickets are blocked in sprint 12?\"**"
+                "Please share the ticket details. The standard MCP host pattern "
+                "is to collect required fields before creating the issue:\n\n"
+                "- **Title** — one-line summary of the issue or request\n"
+                "- **Description** — what's the problem / requirement, ideally with "
+                "service or endpoint affected and any error message\n"
+                "- **Priority** — LOW / MEDIUM / HIGH / CRITICAL (default MEDIUM)\n"
+                "- **Assignee** — team member name, or leave blank for unassigned\n\n"
+                "**Example:** *Create ticket: Add CSV export to the analytics "
+                "dashboard. Users need to export sprint data. Priority HIGH. "
+                "Assign to Alice.*"
             )
             return AgentPayload(
                 agent_name="ticket_agent",
                 confidence=0.0,
-                summary="Clarification needed",
-                structured={"final_response": clarification},
+                summary="Clarification needed — please provide ticket details",
+                structured={"final_response": clarification, "skip_persona": True},
                 sources=[],
                 hitl_required=False,   # ← do NOT show HITL buttons for a clarification
                 hitl_proposal={},

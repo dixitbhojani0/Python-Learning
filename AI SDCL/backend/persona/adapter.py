@@ -56,19 +56,34 @@ class PersonaAdapter:
         self.llm    = llm
         self.config = config_loader
 
-    async def adapt(self, response: str, persona_key: str) -> str:
+    async def adapt(self, response: str, persona_key: str, query: str = "") -> str:
         """
         Rewrite `response` in the style of `persona_key`.
 
         Args:
             response:    the original answer from an agent (technical, multi-source)
             persona_key: one of "developer", "manager", "technical_leader", "stakeholder"
+            query:       the original user question. Forwarded to the persona prompt so
+                         rules can be context-aware — e.g. the stakeholder persona names
+                         people only when the user explicitly asked WHO. Empty = no query
+                         signal (callers that don't have it, like reflection, can omit it).
 
         Returns:
             The rewritten response. Falls back to original `response` on any error
             so a rewriting failure never breaks the user experience.
         """
         if not response.strip():
+            return response
+
+        # Skip rewriting for "I don't know" responses — persona adds noise, not value.
+        _NO_REWRITE_PREFIXES = (
+            "I couldn't find",
+            "I don't have",
+            "I'm not able",
+            "This assistant answers questions about",
+            "Based on limited context",
+        )
+        if any(response.lstrip().startswith(p) for p in _NO_REWRITE_PREFIXES):
             return response
 
         # Load style instruction from prompts.yaml (same key used in generation step)
@@ -87,10 +102,16 @@ class PersonaAdapter:
             .get("response", 1024)
         )
 
+        user_prompt = (
+            f"Original question:\n{query}\n\nAnswer to rewrite:\n\n{response}"
+            if query.strip()
+            else f"Answer to rewrite:\n\n{response}"
+        )
+
         try:
             tokens: list[str] = []
             async for token in self.llm.generate(
-                prompt=f"Answer to rewrite:\n\n{response}",
+                prompt=user_prompt,
                 system=system_prompt,
                 temperature=temperature,
                 max_tokens=max_tokens,

@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     # ── LLM
     GROQ_API_KEY: str = "placeholder"
     GROQ_MODEL: str = "llama-3.3-70b-versatile"
+    OPENAI_API_KEY: str = "placeholder"
 
     # ── LangSmith Observability
     LANGCHAIN_TRACING_V2: str = "false"
@@ -63,7 +64,7 @@ class Settings(BaseSettings):
 
     # ── Slack MCP
     SLACK_BOT_TOKEN: str = "placeholder"
-    SLACK_USE_MOCK: bool = True
+    SLACK_USE_MOCK: bool = False
 
     # ── App
     APP_SECRET_KEY: str = "change_this_in_production"

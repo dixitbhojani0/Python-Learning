@@ -148,6 +148,22 @@ class _SQLiteBackend:
     async def aload_project(self, project_id, limit, response_truncate) -> list[dict]:
         return await asyncio.to_thread(self._load_project, project_id, limit, response_truncate)
 
+    def _update_last_hitl(self, session_id, new_response) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE conversation_turns SET response = ? "
+                "WHERE id = ("
+                "  SELECT id FROM conversation_turns "
+                "  WHERE session_id = ? AND response = '[Action proposal pending approval]' "
+                "  ORDER BY created_at DESC LIMIT 1"
+                ")",
+                (new_response[:2000], session_id),
+            )
+            conn.commit()
+
+    async def aupdate_last_hitl(self, session_id, new_response) -> None:
+        await asyncio.to_thread(self._update_last_hitl, session_id, new_response)
+
 
 # ── PostgreSQL backend ────────────────────────────────────────────────────────
 
@@ -247,6 +263,19 @@ class _PostgresBackend:
                 t["response"] = t["response"][:response_truncate]
         return turns
 
+    async def aupdate_last_hitl(self, session_id, new_response) -> None:
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE conversation_turns SET response = $1 "
+                "WHERE id = ("
+                "  SELECT id FROM conversation_turns "
+                "  WHERE session_id = $2 AND response = '[Action proposal pending approval]' "
+                "  ORDER BY created_at DESC LIMIT 1"
+                ")",
+                new_response[:2000], session_id,
+            )
+
 
 # ── Public SessionStore facade ────────────────────────────────────────────────
 
@@ -290,6 +319,18 @@ class SessionStore:
             logger.debug("SessionStore.asave_turn: session='%s'", session_id)
         except Exception:
             logger.exception("SessionStore.asave_turn: failed — turn not persisted")
+
+    async def aupdate_last_hitl_turn(
+        self,
+        session_id: str,
+        response:   str,
+    ) -> None:
+        """Update the last pending HITL turn response with the actual outcome."""
+        try:
+            await self._backend.aupdate_last_hitl(session_id, response)
+            logger.debug("SessionStore.aupdate_last_hitl_turn: session='%s'", session_id)
+        except Exception:
+            logger.exception("SessionStore.aupdate_last_hitl_turn: failed")
 
     async def aload_recent_turns(
         self,

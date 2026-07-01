@@ -24,11 +24,9 @@ from backend.api.limiter import limiter
 from backend.api.models.schemas import ChatRequest, ChatResponse
 from backend.auth.middleware import UserContext, get_current_user
 from backend.core.prompt_safety import safety_guard
-from backend.memory.redis_cache import semantic_cache
 from backend.memory.semantic_memory import semantic_memory
 from backend.memory.session_store import session_store
 from backend.orchestrator.graph import graph
-from backend.orchestrator.nodes import _is_live_query
 from backend.providers.groq_provider import set_stream_id, write_stream_done
 
 logger = logging.getLogger(__name__)
@@ -208,21 +206,8 @@ async def chat(
         except Exception:
             logger.exception("Chat: semantic_memory.extract_and_save failed — continuing")
 
-    # ── Cache the response in Redis (only fresh, confident, non-fallback answers)
-    # Skips the same cases as semantic memory — a "don't know" or low-confidence answer
-    # cached for 1 hour would block all similar queries from reaching the LLM.
-    if (
-        not result.get("response_cached")
-        and not result.get("hitl_required")
-        and not response_text.startswith("I don't have enough information")
-        and result.get("rag_confidence", 0.0) >= 0.15
-    ):
-        # Live-state queries (sprint status, open tickets, SDLC-N lookups) use a
-        # 60s TTL — stale enough to prevent hammering Jira on rapid repeated asks,
-        # fresh enough that a ticket closed in Jira shows up within a minute.
-        # All other queries use the default 1-hour TTL from config/redis.yaml.
-        cache_ttl = 60 if _is_live_query(body.message) else None
-        await semantic_cache.set_cached(body.message, response_text, user_role=user.role, ttl=cache_ttl)
+    # Response cache removed (B6) — this assistant is mostly live MCP data, so caching
+    # whole answers served stale results. Every query is now answered fresh.
 
     # Collect unique source names from RAG chunks + agent payloads (includes MCP sources)
     rag_sources   = {chunk.get("source", "unknown") for chunk in result.get("rag_chunks", [])}

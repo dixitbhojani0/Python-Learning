@@ -36,6 +36,7 @@ CONFIG_FILES = {
     "agents":       "agents.yaml",
     "llm":          "llm.yaml",
     "mcp_registry": "mcp_registry.yaml",
+    "mcp_clients":  "mcp_clients.yaml",   # outbound MCP host connections (admin-editable)
     "rag_sources":  "rag_sources.yaml",
     "redis":        "redis.yaml",
     "chunking":     "chunking.yaml",
@@ -154,6 +155,26 @@ class ConfigLoader:
         with self._lock:
             return self._configs.get("mcp_registry", {}).get("connectors", {})
 
+    def get_mcp_registry_raw(self) -> dict:
+        """
+        Returns the full top-level mcp_registry.yaml dict (not just the connectors sub-dict).
+
+        Use this to read global registry settings such as `max_concurrent_calls`.
+        get_mcp_registry() only exposes the `connectors` section; this exposes everything.
+        """
+        with self._lock:
+            return self._configs.get("mcp_registry", {})
+
+    def get_mcp_clients(self) -> dict:
+        """
+        Returns the `mcpServers` dict from mcp_clients.yaml — admin-managed
+        outbound MCP host connections. Shape matches the Claude Desktop /
+        Cursor / Antigravity standard. Empty by default; populated via the
+        admin UI (or hand-edited and hot-reloaded by the watchdog).
+        """
+        with self._lock:
+            return self._configs.get("mcp_clients", {}).get("mcpServers", {}) or {}
+
     def get_llm_config(self) -> dict:
         """Returns LLM provider config from llm.yaml."""
         with self._lock:
@@ -178,6 +199,29 @@ class ConfigLoader:
         """Returns security config from security.yaml (injection patterns, etc.)."""
         with self._lock:
             return self._configs.get("security", {})
+
+    def get_write_verbs(self) -> frozenset[str]:
+        """
+        Returns the set of write-action verb substrings from security.yaml.
+
+        Used by backend/mcp/constants.py to classify tool names as read or write.
+        Falls back to an empty frozenset if the key is absent (constants.py has
+        its own hardcoded fallback, so the system stays safe).
+        """
+        verbs = self.get_security_config().get("tool_safety", {}).get("write_verbs", [])
+        return frozenset(str(v).lower() for v in verbs) if verbs else frozenset()
+
+    def get_routing_config(self) -> dict:
+        """
+        Returns the routing & tool-gathering tuning block from llm.yaml.
+
+        Keys: routing.semantic_router.{min_score, margin}
+              routing.tool_gathering.{max_iterations, max_parallel}
+              memory.{recent_window, summary_threshold}
+              evaluation.reflect_faithfulness_threshold
+        """
+        with self._lock:
+            return self._configs.get("llm", {})
 
     def get_temperature(self, task: str) -> float:
         """

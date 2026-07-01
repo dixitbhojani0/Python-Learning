@@ -56,30 +56,111 @@ class SlackConnector(BaseMCPConnector):
             and not settings.SLACK_USE_MOCK
         )
 
+    async def _populate_cache(self, client: httpx.AsyncClient, endpoint: str) -> None:
+        """
+        Fill _channel_id_cache from `conversations.list` (workspace-wide) or
+        `users.conversations` (bot's own member list). Paginated. Errors logged
+        with the Slack error code so the host sees missing-scope problems.
+        """
+        cursor = ""
+        for _ in range(5):  # cap pages: 5 * 200 = 1000 channels, plenty for any workspace
+            params = {
+                "exclude_archived": True,
+                "types": "public_channel,private_channel",
+                "limit": 200,
+            }
+            if cursor:
+                params["cursor"] = cursor
+            try:
+                r = await client.get(f"{_API_BASE}/{endpoint}", params=params, timeout=_TIMEOUT)
+            except Exception:
+                logger.exception("SlackConnector._populate_cache: %s call failed", endpoint)
+                return
+            data = r.json() if r.is_success else {"ok": False, "error": f"http {r.status_code}"}
+            if not data.get("ok"):
+                logger.warning("SlackConnector: %s failed — %s (check bot scopes: channels:read, groups:read)",
+                               endpoint, data.get("error"))
+                return
+            for ch in data.get("channels", []):
+                self._channel_id_cache[ch["name"]] = ch["id"]
+            cursor = (data.get("response_metadata") or {}).get("next_cursor", "")
+            if not cursor:
+                return
+
     async def _resolve_channel_id(self, client: httpx.AsyncClient, channel_name: str) -> str | None:
         """
-        Convert a channel name (e.g. 'backend') to its Slack channel ID.
-        Uses a local cache to avoid repeated API calls within one request.
+        Convert a channel name (e.g. 'engineering-manager') to its Slack channel ID.
+
+        Resolution order:
+          1. local cache (avoid repeat API calls within one request)
+          2. `conversations.list` — workspace-wide view (needs channels:read/groups:read)
+          3. `users.conversations` — bot's own member list (fallback for restricted
+             scopes or private channels the bot is invited to but `conversations.list`
+             doesn't surface)
         """
         name = channel_name.lstrip("#")
         if name in self._channel_id_cache:
             return self._channel_id_cache[name]
-        try:
+
+        await self._populate_cache(client, "conversations.list")
+        if name in self._channel_id_cache:
+            return self._channel_id_cache[name]
+
+        # Fallback: lists conversations the bot is a member of by id+name. Often
+        # succeeds when the workspace-wide list is scope-restricted, since the bot
+        # IS in the channel it's trying to read from.
+        await self._populate_cache(client, "users.conversations")
+        return self._channel_id_cache.get(name)
+
+    async def _fetch_history(
+        self,
+        client: httpx.AsyncClient,
+        channel_id: str,
+        channel_name: str,
+        limit: int = 200,
+    ) -> list[dict]:
+        """
+        Fetch conversations.history, auto-joining a public channel once if the bot
+        isn't a member. Returns a list of raw Slack message dicts on success, OR a
+        single-item list `[{"error": "...", "channel": "..."}]` on real failures so
+        the host sees the real reason instead of a silent empty list.
+        """
+        async def _hit() -> dict:
             r = await client.get(
-                f"{_API_BASE}/conversations.list",
-                params={"exclude_archived": True, "types": "public_channel,private_channel", "limit": 200},
+                f"{_API_BASE}/conversations.history",
+                params={"channel": channel_id, "limit": limit},
                 timeout=_TIMEOUT,
             )
-            data = r.json()
-            if not data.get("ok"):
-                logger.warning("SlackConnector: conversations.list failed — %s", data.get("error"))
-                return None
-            for ch in data.get("channels", []):
-                self._channel_id_cache[ch["name"]] = ch["id"]
-            return self._channel_id_cache.get(name)
-        except Exception:
-            logger.exception("SlackConnector._resolve_channel_id failed for '%s'", channel_name)
-            return None
+            return r.json() if r.is_success else {"ok": False, "error": f"http {r.status_code}"}
+
+        data = await _hit()
+        if data.get("ok"):
+            return data.get("messages", [])
+
+        err = data.get("error", "unknown")
+        if err == "not_in_channel":
+            # Auto-join only works for PUBLIC channels (scope: channels:join).
+            join_r = await client.post(
+                f"{_API_BASE}/conversations.join",
+                json={"channel": channel_id},
+                timeout=_TIMEOUT,
+            )
+            join_data = join_r.json() if join_r.is_success else {"ok": False, "error": "http"}
+            if not join_data.get("ok"):
+                clean = channel_name.lstrip("#")
+                logger.warning("SlackConnector: bot not in #%s and join failed — %s", clean, join_data.get("error"))
+                return [{
+                    "error":   f"bot not in #{clean} (private channel — invite the bot manually)",
+                    "channel": clean,
+                }]
+            logger.info("SlackConnector: auto-joined #%s", channel_name.lstrip("#"))
+            data = await _hit()
+            if data.get("ok"):
+                return data.get("messages", [])
+            err = data.get("error", "unknown")
+
+        logger.warning("SlackConnector: conversations.history error for #%s — %s", channel_name, err)
+        return [{"error": f"slack api error: {err}", "channel": channel_name.lstrip("#")}]
 
     async def search_messages(
         self,
@@ -88,36 +169,27 @@ class SlackConnector(BaseMCPConnector):
         limit: int = 5,
     ) -> list[dict]:
         """
-        Search Slack messages by keyword using search.messages.
-        Optionally scopes to a specific channel by prefixing query with 'in:#channel'.
-        Requires search:read scope.
+        Find Slack messages by keyword within a channel.
+
+        We use conversations.history + local substring filter, NOT search.messages —
+        the Slack search API only accepts USER tokens; bot tokens (xoxb-) fail
+        silently. Standard workaround for bot apps. Requires channels:history (and
+        channels:join for public auto-join). Returns at most `limit` matches.
         """
-        scoped_query = f"in:#{channel} {query}" if channel else query
         try:
             async with httpx.AsyncClient(headers=self._headers, timeout=_TIMEOUT) as client:
-                r = await client.get(
-                    f"{_API_BASE}/search.messages",
-                    params={"query": scoped_query, "count": limit, "sort": "timestamp"},
-                )
-                r.raise_for_status()
-                data = r.json()
-                if not data.get("ok"):
-                    logger.warning("SlackConnector.search_messages: API error — %s", data.get("error"))
-                    return []
-                matches = data.get("messages", {}).get("matches", [])
-                results = [
-                    {
-                        "user":      (m.get("username") or m.get("user", "unknown")),
-                        "message":   m.get("text", ""),
-                        "timestamp": m.get("ts", ""),
-                        "channel":   channel,
-                        "permalink": m.get("permalink", ""),
-                    }
-                    for m in matches
-                ]
+                channel_id = await self._resolve_channel_id(client, channel)
+                if not channel_id:
+                    return [{"error": f"channel '#{channel.lstrip('#')}' not found", "channel": channel.lstrip("#")}]
+                history = await self._fetch_history(client, channel_id, channel, limit=200)
+                if history and history[0].get("error"):
+                    return history   # propagate the real reason to the host
+                q = (query or "").strip().lower()
+                matches = [m for m in history if q in (m.get("text") or "").lower()] if q else history
+                results = [_normalize_message(m, channel) for m in matches[:limit]]
             logger.info(
-                "SlackConnector.search_messages: '%s' in #%s → %d messages",
-                query[:50], channel, len(results),
+                "SlackConnector.search_messages: '%s' in #%s → %d/%d matched",
+                query[:50], channel, len(results), len(matches),
             )
             return results
         except Exception:
@@ -130,34 +202,20 @@ class SlackConnector(BaseMCPConnector):
         limit: int = 10,
     ) -> list[dict]:
         """
-        Fetch the most recent messages from a Slack channel.
-        Requires channels:history scope.
+        Most recent messages from a Slack channel. Auto-joins public channels if
+        the bot isn't a member; returns a clear error item for private channels.
+        Requires channels:history (+ channels:join for public auto-join).
         """
         try:
             async with httpx.AsyncClient(headers=self._headers, timeout=_TIMEOUT) as client:
                 channel_id = await self._resolve_channel_id(client, channel)
                 if not channel_id:
-                    logger.warning("SlackConnector: channel '#%s' not found", channel)
-                    return []
-
-                r = await client.get(
-                    f"{_API_BASE}/conversations.history",
-                    params={"channel": channel_id, "limit": limit},
-                    timeout=_TIMEOUT,
-                )
-                r.raise_for_status()
-                data = r.json()
-                if not data.get("ok"):
-                    logger.warning("SlackConnector.get_channel_history: API error — %s", data.get("error"))
-                    return []
-
-                messages = data.get("messages", [])
-                results  = [_normalize_message(m, channel) for m in messages]
-
-            logger.info(
-                "SlackConnector.get_channel_history: #%s → %d messages",
-                channel, len(results),
-            )
+                    return [{"error": f"channel '#{channel.lstrip('#')}' not found", "channel": channel.lstrip("#")}]
+                history = await self._fetch_history(client, channel_id, channel, limit=limit)
+                if history and history[0].get("error"):
+                    return history
+                results = [_normalize_message(m, channel) for m in history]
+            logger.info("SlackConnector.get_channel_history: #%s → %d messages", channel, len(results))
             return results
         except Exception:
             logger.exception("SlackConnector.get_channel_history failed for channel='%s'", channel)
@@ -195,5 +253,4 @@ class SlackConnector(BaseMCPConnector):
 # Self-registration — tells MCPRegistry which classes handle "slack" connectors.
 # Import this file (via backend/mcp/connectors/__init__.py) to activate.
 from backend.mcp.registry import MCPRegistry  # noqa: E402
-from backend.mcp.connectors.mock_slack import MockSlackConnector  # noqa: E402
-MCPRegistry.register("slack", SlackConnector, MockSlackConnector)
+MCPRegistry.register("slack", SlackConnector)

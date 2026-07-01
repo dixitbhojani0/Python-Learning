@@ -34,6 +34,49 @@ _DOC_PR_PAT = re.compile(
 )
 
 
+# Specific-PR target signals: an explicit "PR-N" id, or an approve/merge verb that
+# only makes sense against one PR. Anything else (e.g. "show me open PRs") is a
+# broad list query → list mode, no LLM deep review, no HITL.
+_PR_ID_PAT = re.compile(r'\bPR[-\s]?(\d+)\b', re.IGNORECASE)
+_PR_APPROVE_PAT = re.compile(r'\b(approve|merge|sign[\s-]?off|lgtm)\b', re.IGNORECASE)
+# Explicit reviewer name: "assign reviewer <name>", "add <name> as reviewer", "assign <name> to PR"
+_EXPLICIT_REVIEWER_PAT = re.compile(
+    r'(?:assign|add)\s+(?:reviewer\s+)?([a-zA-Z0-9_-]+)(?:\s+as\s+reviewer|\s+to\s+PR)?',
+    re.IGNORECASE,
+)
+
+
+def _query_target_pr_id(query: str) -> str:
+    """Return the explicit PR id (e.g. 'PR-5') in `query`, or '' when none — i.e. broad list."""
+    m = _PR_ID_PAT.search(query)
+    return f"PR-{m.group(1)}" if m else ""
+
+
+def _query_explicit_reviewer(query: str) -> str:
+    """Return reviewer name explicitly stated in query, or '' if none."""
+    m = _EXPLICIT_REVIEWER_PAT.search(query)
+    if not m:
+        return ""
+    name = m.group(1)
+    # Exclude words that are verbs/prepositions mistakenly captured, not usernames
+    if name.lower() in {"reviewer", "pr", "the", "a", "an", "for", "to", "in"}:
+        return ""
+    return name
+
+
+def _format_pr_list(prs: list[dict]) -> str:
+    """List-mode response: one row per open PR, no review table, no HITL prompt."""
+    if not prs:
+        return "No open PRs found."
+    lines = [f"**{len(prs)} open PR(s) needing review:**", ""]
+    for pr in prs:
+        ci = pr.get("ci_status", "unknown")
+        ci_icon = "✅" if ci == "passed" else "⏳" if ci == "running" else "❌" if ci == "failed" else "⚪"
+        lines.append(f"- `{pr['id']}` {pr['title']} — CI: {ci_icon} {ci}")
+    lines += ["", "_Ask `review PR-X` for a full review of a specific PR._"]
+    return "\n".join(lines)
+
+
 def _is_code_pr(pr: dict) -> bool:
     """Return True if the PR looks like a code change (not a documentation upload)."""
     title  = pr.get("title", "")
@@ -54,6 +97,7 @@ def _is_code_pr(pr: dict) -> bool:
 
 from backend.agents.base_agent import AgentPayload, BaseAgent
 from backend.core.config_loader import config as _default_config
+from backend.mcp_client.client import call_mcp_tool
 from backend.orchestrator.state import SDLCState
 from backend.rag.retriever import HybridRetriever, RetrievedChunk
 
@@ -215,17 +259,15 @@ class PRReviewAgent(BaseAgent):
         )
 
     async def _fetch_prs(self, query: str) -> list[dict]:
-        """Fetch relevant open PRs from GitHub MCP."""
-        if self.mcp is None:
-            return []
+        """Fetch relevant open PRs from GitHub over MCP."""
         try:
             results = await asyncio.gather(
-                self.mcp.get("github").search_prs(query),
-                self.mcp.get("github").list_open_prs(),
+                call_mcp_tool("github_search_prs", {"query": query}),
+                call_mcp_tool("github_list_open_prs", {}),
                 return_exceptions=True,
             )
-            searched = results[0] if not isinstance(results[0], Exception) else []
-            all_open = results[1] if not isinstance(results[1], Exception) else []
+            searched = results[0] if isinstance(results[0], list) else []
+            all_open = results[1] if isinstance(results[1], list) else []
 
             # Merge: searched first, then any open PRs not already in results
             seen_ids = {pr["id"] for pr in searched}
@@ -253,6 +295,50 @@ class PRReviewAgent(BaseAgent):
 
         # ── Step 1: GitHub PRs (async) ────────────────────────────────────────
         prs = await self._fetch_prs(query)
+
+        # ── List-vs-deep branch ───────────────────────────────────────────────
+        # Broad query ("show me open PRs", no PR-N named, no approve/merge verb) →
+        # list mode: one row per PR, no LLM deep review, no HITL. Matches GitHub's
+        # "review requests" UX — the user picks a PR, then asks for a deep review.
+        target_id         = _query_target_pr_id(query)
+        wants_approve      = bool(_PR_APPROVE_PAT.search(query))
+        explicit_reviewer  = _query_explicit_reviewer(query)   # e.g. "dixitbhojani-blip"
+        broad_query        = not target_id and not wants_approve and not explicit_reviewer
+
+        if broad_query:
+            logger.info("PRReviewAgent: broad list query — %d PRs, skipping deep review", len(prs))
+            list_response = _format_pr_list(prs)
+            return AgentPayload(
+                agent_name="pr_review_agent",
+                confidence=1.0 if prs else 0.0,
+                summary=f"{len(prs)} open PR(s) listed",
+                structured={
+                    "final_response": list_response,
+                    "skip_persona":   True,   # the list card is structured data, not prose
+                },
+                sources=["github_live"] if prs else [],
+                hitl_required=False,
+            )
+
+        # Specific PR → focus the rest of the flow on it (or fail loudly if missing).
+        # Silently reviewing a DIFFERENT PR than the one the user named is the worst
+        # outcome — it looks right and is wrong.
+        if target_id:
+            picked = next((p for p in prs if p["id"].upper() == target_id.upper()), None)
+            if picked is None:
+                open_ids = ", ".join(p["id"] for p in prs) or "none"
+                msg = f"**{target_id}** is not in the open PRs (currently open: {open_ids})."
+                logger.info("PRReviewAgent: %s not found in fetched PRs", target_id)
+                return AgentPayload(
+                    agent_name="pr_review_agent",
+                    confidence=0.0,
+                    summary=f"{target_id} not found",
+                    structured={"final_response": msg, "skip_persona": True},
+                    sources=["github_live"],
+                    hitl_required=False,
+                )
+            prs = [picked]
+            logger.info("PRReviewAgent: targeted %s", target_id)
 
         # ── Step 2: RAG — version policy + coding standards (sync) ───────────
         version_chunks, version_conf = self.retriever.retrieve(
@@ -326,15 +412,20 @@ class PRReviewAgent(BaseAgent):
             review_data["pr_number"] = prs[0]["id"]
             review_data["pr_title"]  = review_data.get("pr_title") or prs[0]["title"]
 
-        # ── If LLM left reviewer as "unassigned", pull from the PR's own reviewers.
-        # If still unassigned, leave it — hitl.py will refuse to call GitHub with "unassigned".
-        if review_data.get("suggested_reviewer", "unassigned") == "unassigned":
+        # ── If LLM left reviewer blank/unassigned, pull from the PR's own reviewers.
+        # LLM may return "" or "unassigned" — treat both the same.
+        if not review_data.get("suggested_reviewer") or review_data.get("suggested_reviewer") == "unassigned":
             chosen_pr = next(
                 (p for p in prs if p["id"] == review_data.get("pr_number")),
                 prs[0] if prs else None,
             )
             if chosen_pr and chosen_pr.get("reviewers"):
                 review_data["suggested_reviewer"] = chosen_pr["reviewers"][0]
+
+        # ── User explicitly named a reviewer in the query — always use that name.
+        # This overrides whatever the LLM or PR metadata suggested.
+        if explicit_reviewer:
+            review_data["suggested_reviewer"] = explicit_reviewer
 
         # ── Step 5: Format proposal card + decide if HITL is needed ─────────
         # HITL only makes sense when a real reviewer name was identified.
@@ -343,7 +434,7 @@ class PRReviewAgent(BaseAgent):
         pr_number          = review_data.get("pr_number", "")
         suggested_reviewer = review_data.get("suggested_reviewer", "unassigned")
         # Did the user ask to approve/merge the PR, or just to review/assign a reviewer?
-        wants_approval = bool(re.search(r'\b(approve|merge|sign[\s-]?off|lgtm)\b', query, re.IGNORECASE))
+        wants_approval = wants_approve   # detected once at the top of run()
 
         if wants_approval and pr_number:
             action_type   = "approve_pr"

@@ -163,6 +163,15 @@ class GroqProvider(BaseLLMProvider):
             streaming=True,
         )
 
+        # Dedicated tool-calling model for the agentic MCP tool-use loop.
+        # Non-streaming + deterministic (temp 0): tool *selection* should be stable,
+        # not creative. Exposed via get_chat_model() — the provider-agnostic seam.
+        self._tool_model = ChatGroq(
+            api_key=settings.GROQ_API_KEY,
+            model=self._primary_model,
+            temperature=0,
+        )
+
         logger.info(
             "GroqProvider: initialised — primary='%s'  fallback='%s'",
             self._primary_model,
@@ -257,6 +266,14 @@ class GroqProvider(BaseLLMProvider):
                 self._fallback_model,
             )
             return
+
+    def get_chat_model(self):
+        """
+        Return the LangChain ChatGroq tool-calling model for the MCP tool-use loop.
+        See BaseLLMProvider.get_chat_model — this is the provider-agnostic seam, so
+        the MCP/agent code never references ChatGroq directly.
+        """
+        return self._tool_model
 
     def get_model_name(self) -> str:
         """Returns the primary model name — used for logging and LangSmith traces."""

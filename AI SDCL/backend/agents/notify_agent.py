@@ -29,14 +29,15 @@ except ImportError:
 from backend.agents.base_agent import AgentPayload, BaseAgent
 from backend.core.config_loader import config as _default_config
 from backend.core.settings import settings as _settings
+from backend.mcp_client.client import call_mcp_tool
 from backend.orchestrator.state import SDLCState
 from backend.rag.retriever import HybridRetriever
 
 logger = logging.getLogger(__name__)
 
-# Used only when the LLM extraction returns no channel. Channel *mapping* is the
-# LLM's job (see config/prompts.yaml: notify_extraction) — no keyword table here.
-_DEFAULT_CHANNEL = "general"
+# Default channel comes from config/agents.yaml notify_agent.slack_channel (single
+# source of truth). Hardcoded "general" is the last-resort fallback only.
+_FALLBACK_CHANNEL = "general"
 
 
 def _format_sprint_status(board: dict, prs: list[dict]) -> str:
@@ -90,12 +91,19 @@ class NotifyAgent(BaseAgent):
             config_loader=config_loader or _default_config,
         )
 
+    def _default_channel(self) -> str:
+        """Default Slack channel from agents.yaml notify_agent.slack_channel (strip '#')."""
+        configured = (self.config.get_agent("notify_agent") or {}).get("slack_channel", "")
+        return configured.lstrip("#") or _FALLBACK_CHANNEL
+
     async def _extract_request(self, query: str) -> dict:
         """
         LLM-driven extraction of {channel, message, intent} from a notify query.
         Returns {} on parse error / LLM failure so the caller degrades gracefully.
         """
-        prompt = self.config.get_prompt("notify_extraction", query=query)
+        prompt = self.config.get_prompt(
+            "notify_extraction", query=query, default_channel=self._default_channel(),
+        )
         if not prompt:
             return {}
         try:
@@ -118,20 +126,18 @@ class NotifyAgent(BaseAgent):
         Returns "" if MCP is unavailable or the board can't be fetched, so the
         caller falls back to asking the user for explicit message text.
         """
-        if self.mcp is None:
-            return ""
         try:
             results = await asyncio.gather(
-                self.mcp.get("jira").get_sprint_board(project),
-                self.mcp.get("github").list_open_prs(),
+                call_mcp_tool("jira_get_sprint_board", {"project": project}),
+                call_mcp_tool("github_list_open_prs", {}),
                 return_exceptions=True,
             )
         except Exception:
             logger.exception("NotifyAgent: sprint data fetch failed")
             return ""
 
-        board = results[0] if not isinstance(results[0], Exception) else {}
-        prs   = results[1] if not isinstance(results[1], Exception) else []
+        board = results[0] if isinstance(results[0], dict) else {}
+        prs   = results[1] if isinstance(results[1], list) else []
         if not board:
             logger.warning("NotifyAgent: sprint board empty — cannot auto-compose status")
             return ""
@@ -151,7 +157,7 @@ class NotifyAgent(BaseAgent):
         # An explicit "#channel" token in the raw query is unambiguous and always
         # wins over the LLM's mapping; otherwise use the extracted channel.
         hash_m  = re.search(r'#([\w-]+)', query)
-        channel = hash_m.group(1) if hash_m else (extracted.get("channel") or _DEFAULT_CHANNEL)
+        channel = hash_m.group(1) if hash_m else (extracted.get("channel") or self._default_channel())
 
         intent       = extracted.get("intent", "unclear")
         message_text = (extracted.get("message") or "").strip()

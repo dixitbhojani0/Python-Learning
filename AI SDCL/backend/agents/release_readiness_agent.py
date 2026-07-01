@@ -27,6 +27,7 @@ except ImportError:
 
 from backend.agents.base_agent import AgentPayload, BaseAgent
 from backend.core.config_loader import config as _default_config
+from backend.mcp_client.client import call_mcp_tool
 from backend.orchestrator.state import SDLCState
 from backend.rag.retriever import HybridRetriever, RetrievedChunk
 
@@ -86,6 +87,7 @@ def _format_release_response(release_data: dict) -> str:
     summary   = release_data.get("summary", "")
     blockers  = release_data.get("blockers", [])
     warnings  = release_data.get("warnings", [])
+    outstanding = release_data.get("outstanding_work", [])
     open_crit = release_data.get("open_critical_tickets", 0)
     open_prs  = release_data.get("open_prs", 0)
     complete  = release_data.get("sprint_complete", False)
@@ -112,6 +114,11 @@ def _format_release_response(release_data: dict) -> str:
         lines += ["", "**Blockers (must resolve before release):**"]
         for b in blockers:
             lines.append(f"- ❌ {b}")
+
+    if outstanding:
+        lines += ["", "**Outstanding Work (incomplete sprint tickets):**"]
+        for o in outstanding:
+            lines.append(f"- 📋 {o}")
 
     if warnings:
         lines += ["", "**Warnings (non-blocking):**"]
@@ -162,28 +169,30 @@ class ReleaseReadinessAgent(BaseAgent):
 
         asyncio.gather with return_exceptions=True per resilience_standards.md.
         """
-        if self.mcp is None:
-            return {}, [], []
-
         try:
             results = await asyncio.gather(
-                self.mcp.get("jira").get_sprint_board(project),
-                self.mcp.get("jira").search_tickets("", project),
-                self.mcp.get("github").list_open_prs(),
+                call_mcp_tool("jira_get_sprint_board", {"project": project}),
+                call_mcp_tool("jira_search_tickets", {"query": "sprint", "project": project}),
+                call_mcp_tool("github_list_open_prs", {}),
                 return_exceptions=True,
             )
-            sprint_board = results[0] if not isinstance(results[0], Exception) else {}
-            jira_tickets = results[1] if not isinstance(results[1], Exception) else []
-            github_prs   = results[2] if not isinstance(results[2], Exception) else []
+            sprint_board = results[0] if isinstance(results[0], dict) else {}
+            jira_tickets = results[1] if isinstance(results[1], list) else []
+            github_prs   = results[2] if isinstance(results[2], list) else []
+
+            # Log any exceptions returned in results
+            for idx, res in enumerate(results):
+                if isinstance(res, Exception):
+                    logger.error("ReleaseReadinessAgent: gather index %d failed: %s", idx, res)
 
             logger.info(
-                "ReleaseReadinessAgent: sprint board fetched, %d Jira tickets, %d GitHub PRs",
-                len(jira_tickets), len(github_prs),
+                "ReleaseReadinessAgent: sprint board=%s, %d Jira tickets, %d GitHub PRs",
+                sprint_board, len(jira_tickets), len(github_prs),
             )
             return sprint_board, jira_tickets, github_prs
 
-        except Exception:
-            logger.exception("ReleaseReadinessAgent: MCP fetch failed — using RAG only")
+        except Exception as e:
+            logger.exception("ReleaseReadinessAgent: MCP fetch failed — using RAG only: %s", e)
             return {}, [], []
 
     @traceable(name="release_readiness_agent", run_type="chain")
@@ -205,6 +214,14 @@ class ReleaseReadinessAgent(BaseAgent):
 
         # ── Step 2: MCP — Jira + GitHub ──────────────────────────────────────
         sprint_board, jira_tickets, github_prs = await self._fetch_mcp_data(project)
+
+        # Filter tickets to only those in the current active sprint to avoid backlog leaks (IDEA/backlog tickets)
+        active_sprint_name = sprint_board.get("sprint")
+        if active_sprint_name and active_sprint_name != "No active sprint":
+            jira_tickets = [t for t in jira_tickets if t.get("sprint") == active_sprint_name]
+        else:
+            # Fallback: if no active sprint, exclude IDEA (backlog) status tickets
+            jira_tickets = [t for t in jira_tickets if t.get("status") != "IDEA"]
 
         # ── Step 3: Build CoT prompt ──────────────────────────────────────────
         # Combine sprint board stats with individual ticket list for the jira_context slot

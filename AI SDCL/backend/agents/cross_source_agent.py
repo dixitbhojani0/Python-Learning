@@ -543,13 +543,14 @@ class CrossSourceAgent(BaseAgent):
             logger.warning("CrossSourceAgent: no RAG chunks and no MCP data — returning domain message")
             domain_message = (
                 "I couldn't find relevant information for that question in the SDLC knowledge base.\n\n"
-                "This assistant answers questions about:\n"
-                "- **Sprint planning** — goals, velocity, blockers, sprint status\n"
-                "- **Jira tickets** — status, assignees, blockers (e.g. \"Tell me about SDLC-3\")\n"
-                "- **GitHub PRs** — open PRs, reviews, CI status\n"
-                "- **Incidents & ADRs** — past outages, architecture decisions\n"
-                "- **Release readiness** — go/no-go assessment\n\n"
-                "Try rephrasing with a ticket ID, sprint number, feature name, or team member."
+                "I can help with:\n"
+                "- **Sprint status** — goals, velocity, blockers, what's in progress\n"
+                "- **Jira tickets** — status, assignee, priority (e.g. *\"What's the status of SDLC-3?\"*)\n"
+                "- **GitHub PRs** — open PRs, CI status, reviewer assignment, reviews\n"
+                "- **Incidents & ADRs** — past outages, architecture decisions, root causes\n"
+                "- **Release readiness** — go/no-go, what's blocking the release\n"
+                "- **Team activity** — Slack discussions, who's working on what\n\n"
+                "Try asking with a ticket ID, PR number, feature name, or team member name."
             )
             return AgentPayload(
                 agent_name="cross_source",

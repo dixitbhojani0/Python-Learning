@@ -27,6 +27,7 @@ except ImportError:
 from backend.agents.base_agent import AgentPayload, BaseAgent
 from backend.core.config_loader import config as _default_config
 from backend.core.prompt_safety import safety_guard
+from backend.mcp_client.client import call_mcp_tool
 from backend.orchestrator.state import SDLCState
 from backend.rag.retriever import HybridRetriever, RetrievedChunk
 
@@ -72,7 +73,7 @@ def _format_jira_context(sprint_board: dict, blocked_tickets: list[dict]) -> str
         ]
 
     if blocked_tickets:
-        lines.append("\nBlocked tickets:")
+        lines.append("\nBlocked tickets (verified live from Jira):")
         for t in blocked_tickets:
             raw_blockers  = "; ".join(t.get("blockers", [])) or "reason not specified"
             safe_title    = safety_guard.sanitize(t.get("title", ""))
@@ -82,6 +83,11 @@ def _format_jira_context(sprint_board: dict, blocked_tickets: list[dict]) -> str
                 f"  - [{t['id']}] {safe_title}"
                 f" (assignee: {safe_assignee}, reason: {safe_blockers})"
             )
+    else:
+        lines.append(
+            "\nBlocked tickets: NONE — no tickets are currently blocked in Jira. "
+            "Sprint documents may reference old resolved blockers; ignore them."
+        )
 
     return "\n".join(lines)
 
@@ -186,17 +192,15 @@ class RiskAgent(BaseAgent):
 
         Falls back to ({}, []) if MCP is unavailable or any call fails.
         """
-        if self.mcp is None:
-            return {}, []
         try:
-            connector = self.mcp.get("jira")
-            results   = await asyncio.gather(
-                connector.get_sprint_board(project),
-                connector.get_blocked_tickets(project),
+            # Real MCP: the two tools the risk formula needs, fetched in parallel.
+            results = await asyncio.gather(
+                call_mcp_tool("jira_get_sprint_board", {"project": project}),
+                call_mcp_tool("jira_get_blocked_tickets", {"project": project}),
                 return_exceptions=True,
             )
-            sprint_board    = results[0] if not isinstance(results[0], Exception) else {}
-            blocked_tickets = results[1] if not isinstance(results[1], Exception) else []
+            sprint_board    = results[0] if isinstance(results[0], dict) else {}
+            blocked_tickets = results[1] if isinstance(results[1], list) else []
 
             logger.info(
                 "RiskAgent: sprint board fetched, %d blocked tickets",
@@ -215,10 +219,10 @@ class RiskAgent(BaseAgent):
         Returns [] (non-fatal) if GitHub MCP is unavailable or the call fails —
         risk assessment still works on Jira + RAG alone.
         """
-        if self.mcp is None:
-            return []
         try:
-            prs = await self.mcp.get("github").list_open_prs()
+            prs = await call_mcp_tool("github_list_open_prs", {})
+            if not isinstance(prs, list):
+                prs = []
             logger.info("RiskAgent: %d open PRs fetched for risk weighting", len(prs))
             return prs[:8]   # cap to avoid prompt bloat
         except Exception:

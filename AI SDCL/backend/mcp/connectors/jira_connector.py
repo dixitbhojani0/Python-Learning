@@ -22,12 +22,6 @@ logger = logging.getLogger(__name__)
 _TIMEOUT = httpx.Timeout(connect=5.0, read=25.0, write=5.0, pool=5.0)
 
 
-def _mock_fallback():
-    """Return a MockJiraConnector instance for graceful fallback when the real API fails."""
-    from backend.mcp.connectors.mock_jira import MockJiraConnector  # local import avoids circular dep
-    return MockJiraConnector(name="mock_fallback", connector_config={})
-
-
 def _basic_auth_header(email: str, token: str) -> str:
     encoded = base64.b64encode(f"{email}:{token}".encode()).decode()
     return f"Basic {encoded}"
@@ -65,6 +59,18 @@ def _normalize_issue(issue: dict) -> dict:
     ]
     raw_desc = fields.get("description")
     description = _extract_adf_text(raw_desc) if isinstance(raw_desc, dict) else str(raw_desc or "")
+    # B3: surface developer comments — the source of truth for "how big / how long".
+    # Only present when get_ticket fetched the `comment` field (search doesn't);
+    # keep the latest few so a stakeholder sees the real story, not a guess.
+    raw_comments = (fields.get("comment") or {}).get("comments", [])
+    comments = [
+        {
+            "author":  (c.get("author") or {}).get("displayName", "unknown"),
+            "created": (c.get("created") or "")[:10],
+            "body":    _extract_adf_text(c.get("body")),
+        }
+        for c in raw_comments
+    ][-5:]
     return {
         "id":          issue.get("key", ""),
         "title":       fields.get("summary", ""),
@@ -74,6 +80,7 @@ def _normalize_issue(issue: dict) -> dict:
         "description": description,
         "labels":      labels,
         "blockers":    blockers,
+        "comments":    comments,
         "created":     (fields.get("created") or "")[:10],
         "updated":     (fields.get("updated") or "")[:10],
         "sprint":      _extract_sprint_name(fields),
@@ -181,11 +188,11 @@ class JiraConnector(BaseMCPConnector):
         # Normalize hyphens to spaces for intent detection so "in-progress" == "in progress"
         query_normalized = query.lower().replace("-", " ")
 
+        # ── Detect sprint intent ───────────────────────────────────────────────
+        if "sprint" in query_normalized:
+            jql = f'project = "{project_key}" AND sprint in openSprints() ORDER BY updated DESC'
         # ── Detect assignee intent ─────────────────────────────────────────────
-        assignee_match = re.search(
-            r'(?:assigned to|owned by)\s+(\w+)', query_normalized
-        )
-        if assignee_match:
+        elif assignee_match := re.search(r'(?:assigned to|owned by)\s+(\w+)', query_normalized):
             name = assignee_match.group(1).capitalize()
             jql = (
                 f'project = "{project_key}" AND assignee = "{name}" '
@@ -216,7 +223,7 @@ class JiraConnector(BaseMCPConnector):
                     f"{self._base_url}/rest/api/3/search/jql",
                     json={
                         "jql":        jql,
-                        "maxResults": 10,
+                        "maxResults": 50,
                         "fields":     ["summary", "status", "priority", "assignee", "labels", "description", "issuelinks", "customfield_10020", "created", "updated"],
                     },
                 )
@@ -230,10 +237,10 @@ class JiraConnector(BaseMCPConnector):
                 logger.warning(
                     "JiraConnector.search_tickets: project '%s' returned HTTP %d — "
                     "JIRA_PROJECT_KEY in .env may be wrong. "
-                    "Check valid keys at: %s/rest/api/3/project — falling back to mock data.",
+                    "Check valid keys at: %s/rest/api/3/project",
                     project_key, status, self._base_url,
                 )
-                return await _mock_fallback().search_tickets(query, project)
+                return []
             logger.exception("JiraConnector.search_tickets failed — HTTP %d", status)
             return []
         except Exception:
@@ -301,9 +308,13 @@ class JiraConnector(BaseMCPConnector):
     async def get_blocked_tickets(self, project: str = "") -> list[dict]:
         """Return all tickets currently in a BLOCKED or IMPEDIMENT status."""
         project_key = project.upper() if project else self._project
+        # statusCategory != "Done" filters out DONE/CLOSED/RESOLVED in one clause
+        # (covers custom workflow names too) so DONE tickets carrying a stale
+        # "blocked" LABEL don't get reported as currently blocked.
         jql = (
             f'project = "{project_key}" AND '
             f'(status = "Blocked" OR labels = "blocked" OR priority = "Blocker") '
+            f'AND statusCategory != "Done" '
             f'ORDER BY priority DESC'
         )
         try:
@@ -320,10 +331,10 @@ class JiraConnector(BaseMCPConnector):
             status = exc.response.status_code
             if status in (400, 404, 410):
                 logger.warning(
-                    "JiraConnector.get_blocked_tickets: project '%s' returned HTTP %d — falling back to mock data.",
+                    "JiraConnector.get_blocked_tickets: project '%s' returned HTTP %d",
                     project_key, status,
                 )
-                return await _mock_fallback().get_blocked_tickets(project)
+                return []
             logger.exception("JiraConnector.get_blocked_tickets failed — HTTP %d", status)
             return []
         except Exception:
@@ -346,10 +357,25 @@ class JiraConnector(BaseMCPConnector):
             if not issues:
                 return {"sprint": "No active sprint", "project": project_key, "total_tickets": 0}
 
-            # Aggregate counts from the returned issues
-            done       = sum(1 for i in issues if "done" in (i["fields"].get("status", {}).get("name", "")).lower())
-            in_prog    = sum(1 for i in issues if "progress" in (i["fields"].get("status", {}).get("name", "")).lower())
-            blocked    = sum(1 for i in issues if "block" in " ".join(i["fields"].get("labels", [])).lower())
+            # Aggregate counts from the returned issues.
+            # statusCategory.key is "done" | "indeterminate" | "new" — Jira's canonical way
+            # to detect completion regardless of custom workflow names.
+            def _status_cat(issue: dict) -> str:
+                return (
+                    issue["fields"].get("status", {})
+                    .get("statusCategory", {})
+                    .get("key", "new")
+                ).lower()
+
+            done       = sum(1 for i in issues if _status_cat(i) == "done")
+            in_prog    = sum(1 for i in issues if _status_cat(i) == "indeterminate")
+            # Only count as blocked if the ticket is NOT already done — a resolved ticket
+            # with a stale "blocked" label must not inflate the blocker count.
+            blocked    = sum(
+                1 for i in issues
+                if "block" in " ".join(i["fields"].get("labels", [])).lower()
+                and _status_cat(i) != "done"
+            )
             total      = len(issues)
             pct        = round((done / total) * 100) if total else 0
             sprint_name = _extract_sprint_name(issues[0]["fields"]) or "Current Sprint"
@@ -371,10 +397,10 @@ class JiraConnector(BaseMCPConnector):
             status = exc.response.status_code
             if status in (400, 404, 410):
                 logger.warning(
-                    "JiraConnector.get_sprint_board: project '%s' returned HTTP %d — falling back to mock data.",
+                    "JiraConnector.get_sprint_board: project '%s' returned HTTP %d",
                     project_key, status,
                 )
-                return await _mock_fallback().get_sprint_board(project)
+                return {"sprint": "unknown", "project": project_key, "total_tickets": 0, "risk_level": "UNKNOWN"}
             logger.exception("JiraConnector.get_sprint_board failed — HTTP %d", status)
             return {"sprint": "unknown", "project": project_key, "total_tickets": 0, "risk_level": "UNKNOWN"}
         except Exception:
@@ -412,8 +438,34 @@ class JiraConnector(BaseMCPConnector):
             logger.info("JiraConnector.get_project_members: %d members for project '%s'", len(members), project_key)
             return members
         except Exception:
-            logger.warning("JiraConnector.get_project_members: failed for '%s' — falling back to mock", project_key)
-            return await _mock_fallback().get_project_members(project)
+            logger.warning("JiraConnector.get_project_members: failed for '%s'", project_key)
+            return []
+
+    async def add_issue_to_sprint(self, ticket_id: str, sprint_id: int) -> bool:
+        """
+        Add an existing issue to a sprint via Jira Agile REST.
+
+        Belt-and-braces companion to create_ticket: even when create_ticket sets
+        customfield_10020, Jira Cloud sometimes drops the sprint assignment
+        (custom-field id varies per instance, board permissions, classic vs
+        next-gen). Calling /rest/agile/1.0/sprint/{id}/issue post-create is the
+        documented workaround that works regardless of customfield_id quirks.
+        Returns True on success, False on any error (caller treats as best-effort).
+        """
+        url = f"{self._base_url}/rest/agile/1.0/sprint/{sprint_id}/issue"
+        try:
+            async with httpx.AsyncClient(headers=self._headers, timeout=_TIMEOUT) as client:
+                r = await client.post(url, json={"issues": [ticket_id]})
+                if r.status_code in (200, 204):
+                    logger.info("JiraConnector.add_issue_to_sprint: %s → sprint %d", ticket_id, sprint_id)
+                    return True
+                logger.warning(
+                    "JiraConnector.add_issue_to_sprint: HTTP %d for %s → sprint %d (body=%s)",
+                    r.status_code, ticket_id, sprint_id, r.text[:200],
+                )
+        except Exception:
+            logger.exception("JiraConnector.add_issue_to_sprint failed for %s → sprint %d", ticket_id, sprint_id)
+        return False
 
     async def get_active_sprint_id(self, project: str = "") -> int | None:
         """
@@ -552,9 +604,29 @@ class JiraConnector(BaseMCPConnector):
             logger.exception("JiraConnector.assign_ticket: failed for %s", ticket_id)
             return {"success": False, "error": "request failed"}
 
+    async def add_comment(self, ticket_id: str, body: str) -> dict:
+        """Add a comment to a Jira issue. POST /rest/api/3/issue/{key}/comment → 201."""
+        payload = {
+            "body": {
+                "type": "doc", "version": 1,
+                "content": [{"type": "paragraph", "content": [{"type": "text", "text": body}]}],
+            }
+        }
+        try:
+            async with httpx.AsyncClient(headers=self._headers, timeout=_TIMEOUT) as client:
+                r = await client.post(
+                    f"{self._base_url}/rest/api/3/issue/{ticket_id.upper()}/comment",
+                    json=payload,
+                )
+                r.raise_for_status()
+            logger.info("JiraConnector.add_comment: added to %s", ticket_id)
+            return {"success": True, "ticket_id": ticket_id}
+        except Exception:
+            logger.exception("JiraConnector.add_comment: failed for %s", ticket_id)
+            return {"success": False, "error": "request failed"}
+
 
 # Self-registration — tells MCPRegistry which classes handle "jira" connectors.
 # Import this file (via backend/mcp/connectors/__init__.py) to activate.
 from backend.mcp.registry import MCPRegistry  # noqa: E402
-from backend.mcp.connectors.mock_jira import MockJiraConnector  # noqa: E402
-MCPRegistry.register("jira", JiraConnector, MockJiraConnector)
+MCPRegistry.register("jira", JiraConnector)

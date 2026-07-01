@@ -139,3 +139,12 @@ class MockGitHubConnector(BaseMCPConnector):
                 return {"pr": pr_id, "status": "APPROVED", "approved_by": approver}
         logger.debug("MockGitHub.approve_pr: PR '%s' not found", pr_id)
         return {"pr": pr_id, "status": "pr_not_found"}
+
+    async def request_changes_pr(self, pr_id: str, body: str = "", reviewer: str = "") -> dict:
+        """Request changes on a PR (mock — marks it CHANGES_REQUESTED)."""
+        for pr in _MOCK_PRS:
+            if pr["id"] == pr_id:
+                pr["status"] = "CHANGES_REQUESTED"
+                logger.info("MockGitHub.request_changes_pr: %s CHANGES_REQUESTED", pr_id)
+                return {"pr": pr_id, "status": "CHANGES_REQUESTED", "reviewer": reviewer, "body": body}
+        return {"pr": pr_id, "status": "pr_not_found"}

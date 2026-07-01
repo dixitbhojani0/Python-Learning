@@ -34,8 +34,6 @@ class DriveConnector(BaseMCPConnector):
     """Real Google Drive connector — method signatures match MockDriveConnector."""
 
     def is_available(self) -> bool:
-        if self.config.get("use_mock", True):
-            return False
         return bool(_api_key())
 
     async def list_files(self, folder: str = "") -> list[dict]:
@@ -81,5 +79,4 @@ class DriveConnector(BaseMCPConnector):
 
 # Self-registration — tells MCPRegistry which classes handle "drive" connectors.
 from backend.mcp.registry import MCPRegistry  # noqa: E402
-from backend.mcp.connectors.mock_drive import MockDriveConnector  # noqa: E402
-MCPRegistry.register("drive", DriveConnector, MockDriveConnector)
+MCPRegistry.register("drive", DriveConnector)

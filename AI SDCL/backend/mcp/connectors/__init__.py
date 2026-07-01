@@ -13,5 +13,8 @@ The registry itself never needs to change.
 import backend.mcp.connectors.jira_connector   # noqa: F401
 import backend.mcp.connectors.github_connector  # noqa: F401
 import backend.mcp.connectors.slack_connector   # noqa: F401
-import backend.mcp.connectors.teams_connector   # noqa: F401
-import backend.mcp.connectors.drive_connector   # noqa: F401
+# teams + drive connectors are DISABLED in config/mcp_registry.yaml — uncomment
+# these imports (and the yaml `enabled: true`) to bring them back.
+# import backend.mcp.connectors.teams_connector   # noqa: F401
+# import backend.mcp.connectors.drive_connector   # noqa: F401
+import backend.mcp.connectors.confluence_connector  # noqa: F401

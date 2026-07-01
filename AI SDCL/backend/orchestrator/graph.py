@@ -80,18 +80,12 @@ _builder.add_edge("retrieve_memory",  "classify_intent")
 _builder.add_edge("hitl_gate",        "adapt_persona")
 _builder.add_edge("adapt_persona",    END)
 
-# ── Intent routing: classify_intent → correct agent
+# ── Intent routing: classify_intent → one or more agent nodes via Send
+# route_by_intent now returns list[Send] instead of a plain string.
+# LangGraph handles the fan-out automatically — no explicit string mapping needed.
 _builder.add_conditional_edges(
     "classify_intent",
     route_by_intent,
-    {
-        "cross_source_agent": "cross_source_agent",
-        "ticket_agent":       "ticket_agent",
-        "risk_agent":         "risk_agent",
-        "pr_review_agent":    "pr_review_agent",
-        "release_agent":      "release_agent",
-        "notify_agent":       "notify_agent",
-    },
 )
 
 # ── All agent nodes flow to hitl_gate
@@ -102,4 +96,4 @@ for _agent_node in ["cross_source_agent", "ticket_agent", "risk_agent", "pr_revi
 # Done once at module import time — never per-request
 graph = _builder.compile()
 
-logger.info("LangGraph orchestrator compiled — 10 nodes ready")
+logger.info("LangGraph orchestrator compiled — 10 nodes ready (multi-agent fan-out via Send)")

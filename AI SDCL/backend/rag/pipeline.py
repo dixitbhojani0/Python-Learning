@@ -31,7 +31,6 @@ Why batch throttle for LLM mode?
 """
 import asyncio
 import concurrent.futures
-import json
 import logging
 import time
 import uuid
@@ -41,7 +40,7 @@ from backend.core.config_loader import config
 from backend.providers.base_llm import BaseLLMProvider
 from backend.providers.factory import LLMFactory
 from backend.rag.chunker import Chunk, ChunkingStrategyFactory, DocumentChunker
-from backend.rag.loaders import extract_pdf_images, load_pdf_with_pypdf, load_slack_json
+from backend.rag.loaders import extract_pdf_images, load_pdf_tables, load_pdf_with_pypdf, load_slack_json
 from backend.rag.retriever import embed_texts_batch
 from backend.rag.validators import validate_embedding, validate_metadata
 from backend.rag.vector_store import VectorStore
@@ -187,6 +186,11 @@ class RAGPipeline:
 
         if split_method == "message_per_chunk":
             return self._ingest_slack_json(filepath, metadata, doc_type)
+        elif filepath.suffix.lower() == ".pdf":
+            # PDFs bypass unstructured (can segfault on certain files) and use
+            # pypdf for prose text + pdfplumber for tables — more reliable and
+            # produces better table fidelity than unstructured's coordinate guessing.
+            return self._ingest_pdf(filepath, doc_title, doc_type, metadata)
         elif split_method == "element_aware":
             return self._ingest_with_unstructured(filepath, doc_title, doc_type, metadata)
         else:
@@ -242,7 +246,8 @@ class RAGPipeline:
         """
         try:
             from unstructured.partition.auto import partition
-            from unstructured.documents.elements import Image, Header, Footer, PageBreak
+            from unstructured.documents.elements import Image, Header, Footer, PageBreak, Table
+            from unstructured.documents.elements import ElementMetadata as _EMeta
         except ImportError:
             logger.error(
                 "Pipeline: unstructured is not installed — cannot ingest '%s'. "
@@ -281,6 +286,22 @@ class RAGPipeline:
         if toc_skipped:
             logger.info("Pipeline: '%s' — skipped %d TOC entries (dot leaders)", filepath.name, toc_skipped)
         elements = filtered_elements
+
+        # ── PDF tables: replace unstructured's coordinate-guessed (often garbled) Table
+        # elements with pdfplumber's mathematically-exact ones. Non-PDF files are
+        # unaffected; PDFs without tables are unaffected (pdf_tables stays []).
+        if filepath.suffix.lower() == ".pdf":
+            pdf_tables = load_pdf_tables(filepath)
+            if pdf_tables:
+                elements = [el for el in elements if not isinstance(el, Table)]
+                for page_num, md in pdf_tables:
+                    tbl = Table(text=md)
+                    tbl.metadata = _EMeta(page_number=page_num)
+                    elements.append(tbl)
+                logger.info(
+                    "Pipeline: '%s' — replaced unstructured tables with %d pdfplumber table(s)",
+                    filepath.name, len(pdf_tables),
+                )
 
         # Images are no longer discarded: for PDFs they are extracted, saved, and
         # OCR'd into dedicated image chunks AFTER text chunking (see below), so they
@@ -348,7 +369,12 @@ class RAGPipeline:
         chunks: list[Chunk] = []
         for rec in records:
             ocr  = (rec.get("ocr_text") or "").strip()
-            text = ocr if len(ocr) > 30 else f"Image on page {rec['page_number']} of {doc_title}."
+            if len(ocr) <= 30:
+                # No meaningful OCR text — placeholder "Image on page N" embeds close
+                # to document-title queries and crowds out real content in retrieval.
+                # Skip the chunk; the image file is still saved for the API to serve.
+                continue
+            text = ocr
             chunk_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, rec["image_id"]))
             chunks.append(Chunk(
                 text=text,
@@ -369,6 +395,41 @@ class RAGPipeline:
                 parent_text=text,
             ))
         return chunks
+
+    def _ingest_pdf(self, filepath: Path, doc_title: str, doc_type: str, metadata: dict) -> int:
+        """
+        PDF ingestion without unstructured — avoids native segfaults on certain PDFs.
+
+        Prose text:  pypdf  (page-level text extraction, always reliable)
+        Tables:      pdfplumber (coordinate-based — exact cell text, no garbling)
+        Images:      same extract_pdf_images() path as before
+
+        All three are combined into one _ingest_chunks() call so LLM prefix
+        generation and batch embedding happen in a single pass.
+        """
+        all_chunks: list = []
+
+        # ── Prose text via pypdf
+        full_text = load_pdf_with_pypdf(filepath)
+        if full_text:
+            all_chunks.extend(self.chunker.chunk_document(full_text, doc_title, doc_type, metadata))
+
+        # ── Tables via pdfplumber — each table is its own isolated chunk set
+        for page_num, md in load_pdf_tables(filepath):
+            table_meta = {**metadata, "page_number": page_num, "element_type": "Table"}
+            all_chunks.extend(self.chunker.chunk_document(md, doc_title, doc_type, table_meta))
+
+        # ── Image chunks (OCR, same as the unstructured path)
+        all_chunks.extend(self._build_image_chunks(filepath, doc_title, doc_type, metadata))
+
+        if not all_chunks:
+            logger.warning("Pipeline: no content extracted from '%s'", doc_title)
+            return 0
+
+        count = self._ingest_chunks(all_chunks, doc_title)
+        self.total_chunks += count
+        logger.info("Pipeline: ingested %d chunks from '%s' (pypdf+pdfplumber)", count, doc_title)
+        return count
 
     def _ingest_pdf_with_pypdf(self, filepath: Path, doc_title: str, doc_type: str, metadata: dict) -> int:
         """
@@ -394,15 +455,18 @@ class RAGPipeline:
         Returns: number of chunks successfully stored
         """
         # ── Step 1: Generate LLM context prefixes (batched + throttled)
+        _ingest_cfg   = config.get_llm_config().get("ingestion", {})
+        _batch_size   = int(_ingest_cfg.get("batch_size",      _BATCH_SIZE))
+        _batch_sleep  = float(_ingest_cfg.get("batch_sleep_sec", _BATCH_SLEEP))
         prefixes: list[str] = []
         if self.use_llm_context and self._provider:
             logger.info("Pipeline: generating LLM context prefixes for %d chunks (batched)...", len(chunks))
             for i, chunk in enumerate(chunks):
                 prefix = _generate_context_prefix(self._provider, doc_title, chunk.doc_type, chunk.text)
                 prefixes.append(prefix)
-                if (i + 1) % _BATCH_SIZE == 0 and (i + 1) < len(chunks):
-                    logger.debug("Pipeline: throttle — sleeping %.1fs after batch %d", _BATCH_SLEEP, (i + 1) // _BATCH_SIZE)
-                    time.sleep(_BATCH_SLEEP)
+                if (i + 1) % _batch_size == 0 and (i + 1) < len(chunks):
+                    logger.debug("Pipeline: throttle — sleeping %.1fs after batch %d", _batch_sleep, (i + 1) // _batch_size)
+                    time.sleep(_batch_sleep)
         else:
             prefixes = [""] * len(chunks)
 

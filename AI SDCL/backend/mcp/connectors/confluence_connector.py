@@ -25,11 +25,6 @@ logger = logging.getLogger(__name__)
 _TIMEOUT = httpx.Timeout(connect=5.0, read=25.0, write=5.0, pool=5.0)
 
 
-def _mock_fallback():
-    from backend.mcp.connectors.mock_confluence import MockConfluenceConnector
-    return MockConfluenceConnector(name="mock_fallback", connector_config={})
-
-
 def _is_system_page(title: str) -> bool:
     """
     Return True for auto-generated Confluence pages that contain no project content.
@@ -137,18 +132,11 @@ class ConfluenceConnector(BaseMCPConnector):
             logger.info("ConfluenceConnector.get_pages: %d pages in space '%s'", len(result), space_key)
             return result
         except httpx.HTTPStatusError as exc:
-            status = exc.response.status_code
-            if status in (401, 403, 404):
-                logger.warning(
-                    "ConfluenceConnector.get_pages: HTTP %d for space '%s' — falling back to mock",
-                    status, space_key,
-                )
-                return await _mock_fallback().get_pages(space_key)
-            logger.exception("ConfluenceConnector.get_pages: HTTP %d", status)
-            return []
-        except Exception:
+            logger.exception("ConfluenceConnector.get_pages: HTTP error %d", exc.response.status_code)
+            raise
+        except Exception as exc:
             logger.exception("ConfluenceConnector.get_pages: request failed for space '%s'", space_key)
-            return []
+            raise exc
 
     async def get_page_content(self, page_id: str) -> str:
         """
@@ -385,3 +373,8 @@ class ConfluenceConnector(BaseMCPConnector):
         except Exception:
             logger.exception("ConfluenceConnector.download_attachment_bytes: failed for url='%s'", download_url[:80])
             return b""
+
+
+# Self-registration — tells MCPRegistry which classes handle "confluence" connectors.
+from backend.mcp.registry import MCPRegistry  # noqa: E402
+MCPRegistry.register("confluence", ConfluenceConnector)

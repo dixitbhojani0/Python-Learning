@@ -12,5 +12,5 @@
 # That's all. No changes to factory.py, graph.py, agents, or any other file.
 
 from backend.providers.groq_provider import GroqProvider          # registers "groq"
+from backend.providers.openai_provider import OpenAIProvider      # noqa: F401 — registers "openai"
 # from backend.providers.gemini_provider import GeminiProvider    # registers "gemini" (future)
-# from backend.providers.openai_provider import OpenAIProvider    # registers "openai" (future)

@@ -57,9 +57,6 @@ class TeamsConnector(BaseMCPConnector):
         self._token: str | None = None
 
     def is_available(self) -> bool:
-        # use_mock comes from config/mcp_registry.yaml (config-driven, like Slack).
-        if self.config.get("use_mock", True):
-            return False
         return bool(_cred("AZURE_TENANT_ID") and _cred("AZURE_CLIENT_ID") and _cred("AZURE_CLIENT_SECRET"))
 
     async def _get_token(self, client: httpx.AsyncClient) -> str | None:
@@ -152,5 +149,4 @@ class TeamsConnector(BaseMCPConnector):
 
 # Self-registration — tells MCPRegistry which classes handle "teams" connectors.
 from backend.mcp.registry import MCPRegistry  # noqa: E402
-from backend.mcp.connectors.mock_teams import MockTeamsConnector  # noqa: E402
-MCPRegistry.register("teams", TeamsConnector, MockTeamsConnector)
+MCPRegistry.register("teams", TeamsConnector)

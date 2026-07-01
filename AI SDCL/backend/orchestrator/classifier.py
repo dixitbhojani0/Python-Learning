@@ -9,6 +9,13 @@ Two classifiers — the first that succeeds wins:
   3. Keyword fallback: whole-word keyword matching → used when LLM fails for any reason.
 
 The safe default intent for anything that doesn't match is "cross_source".
+
+AGENT_INTENT_MAP and VALID_INTENTS are now derived from agents.yaml at runtime
+(via get_agent_intent_map()). The convention is:
+  - Each agent block may have an `intent` field.  If absent, the intent is
+    derived by stripping a trailing `_agent` suffix from the agent key.
+    e.g. risk_agent → "risk",  cross_source_agent → "cross_source".
+  - Adding a new agent = add it to agents.yaml only. Zero changes here.
 """
 import logging
 import re
@@ -19,19 +26,63 @@ from backend.providers.factory import LLMFactory
 logger = logging.getLogger(__name__)
 
 
-# ── Intent mapping ─────────────────────────────────────────────────────────────
-# Maps agents.yaml agent keys → intent strings used throughout the graph.
+# ── Intent mapping (derived from agents.yaml) ───────────────────────────────────────
+# Convention: intent = agent_cfg.get("intent") OR agent_key with "_agent" suffix stripped.
+# e.g.  cross_source_agent → "cross_source",  risk_agent → "risk".
+# This means adding a new agent block to agents.yaml is the ONLY required change.
 
-AGENT_INTENT_MAP: dict[str, str] = {
-    "cross_source_agent":      "cross_source",
-    "risk_agent":              "risk",
-    "ticket_agent":            "ticket",
-    "pr_agent":                "pr_review",
-    "release_readiness_agent": "release_readiness",
-    "notify_agent":            "notify",
-}
+_cached_intent_map: dict[str, str] | None = None
 
-VALID_INTENTS: set[str] = set(AGENT_INTENT_MAP.values())
+
+def get_agent_intent_map() -> dict[str, str]:
+    """
+    Build {agent_key: intent_string} from agents.yaml at first call, then cache.
+
+    Convention (no explicit `intent` field needed in YAML):
+        agent key          intent derived
+        ─────────────────  ─────────────────────
+        cross_source_agent cross_source
+        risk_agent         risk
+        ticket_agent       ticket
+        pr_agent           pr_review  ← explicit `intent` field overrides convention
+        release_readiness_agent release_readiness
+        notify_agent       notify
+    """
+    global _cached_intent_map
+    if _cached_intent_map is not None:
+        return _cached_intent_map
+
+    agents_cfg = config.get_agents()
+    mapping: dict[str, str] = {}
+    for agent_key, agent_cfg in agents_cfg.items():
+        if not isinstance(agent_cfg, dict):
+            continue
+        if agent_cfg.get("intent"):          # explicit override wins
+            intent = str(agent_cfg["intent"]).strip()
+        else:                                # convention: strip _agent suffix
+            intent = agent_key.removesuffix("_agent")
+        mapping[agent_key] = intent
+
+    _cached_intent_map = mapping
+    logger.debug("classifier: built AGENT_INTENT_MAP from agents.yaml: %s", mapping)
+    return mapping
+
+
+# Module-level aliases (backward-compatible names used throughout the codebase)
+AGENT_INTENT_MAP: dict[str, str] = {}      # populated lazily on first use
+VALID_INTENTS:    set[str]       = set()   # populated lazily on first use
+
+
+def _ensure_maps() -> None:
+    """Populate module-level aliases if not yet built."""
+    global AGENT_INTENT_MAP, VALID_INTENTS
+    if not AGENT_INTENT_MAP:
+        AGENT_INTENT_MAP.update(get_agent_intent_map())
+        VALID_INTENTS.update(AGENT_INTENT_MAP.values())
+
+
+# Trigger population at import time (safe — config is ready before any module is imported)
+_ensure_maps()
 
 
 # ── Priority order for keyword fallback ───────────────────────────────────────
@@ -48,12 +99,13 @@ _KEYWORD_PRIORITY_ORDER = [
 ]
 
 
-def keyword_classify(query: str) -> str:
+def keyword_classify(query: str) -> list[str]:
     """
     Keyword-based fallback classifier — used only when LLM supervisor fails.
 
     Matches whole-word patterns against trigger_keywords in agents.yaml.
-    Defaults to 'cross_source' when nothing matches (safe fallback).
+    Returns a list with one intent. Defaults to ['cross_source'] when nothing
+    matches (safe fallback). Always returns a list for consistency with llm_classify.
     """
     query_lower = query.lower()
     agents_cfg  = config.get_agents()
@@ -70,19 +122,19 @@ def keyword_classify(query: str) -> str:
                     "keyword_classify: matched '%s' → intent='%s'",
                     keyword, detected,
                 )
-                return detected
+                return [detected]
 
     logger.debug("keyword_classify: no match → defaulting to 'cross_source'")
-    return "cross_source"
+    return ["cross_source"]
 
 
-async def llm_classify(query: str) -> str:
+async def llm_classify(query: str) -> list[str]:
     """
     LLM-based supervisor routing — the primary intent classifier.
 
     Reads routing_description from each agent in agents.yaml and asks the LLM
-    to pick the right agent. Uses generate_structured() (JSON extraction, retry,
-    fallback model) — no new provider methods needed.
+    to pick the right agent(s). Now returns a list[str] to support multi-agent
+    fan-out (e.g. "create a ticket AND notify the team" → ["ticket", "notify"]).
 
     Falls back to keyword_classify() on any failure:
       - LLM rate limit or empty response
@@ -90,7 +142,7 @@ async def llm_classify(query: str) -> str:
       - Unknown agent value returned
       - Any unexpected exception
 
-    Temperature 0.0 → deterministic. Max tokens 120 → only a short JSON object.
+    Temperature 0.0 → deterministic. Max tokens 150.
     """
     agents_cfg = config.get_agents()
 
@@ -125,7 +177,7 @@ async def llm_classify(query: str) -> str:
             prompt=prompt,
             system="You are a routing agent. Output only valid JSON. No explanation.",
             temperature=0.0,
-            max_tokens=120,
+            max_tokens=150,
         )
 
         if resp.is_empty or resp.parse_error or not resp.structured:
@@ -135,21 +187,31 @@ async def llm_classify(query: str) -> str:
             )
             return keyword_classify(query)
 
-        agent  = resp.structured.get("agent", "").strip()
-        conf   = resp.structured.get("confidence", 0.0)
-        reason = resp.structured.get("reason", "")
+        # Support both new list format {"agents": [...]} and legacy {"agent": "..."}.
+        raw_agents = resp.structured.get("agents") or resp.structured.get("agent")
+        conf       = resp.structured.get("confidence", 0.0)
+        reason     = resp.structured.get("reason", "")
 
-        if agent not in VALID_INTENTS:
+        # Normalise to list — LLM may return a string or a list
+        if isinstance(raw_agents, str):
+            raw_agents = [raw_agents]
+        if not isinstance(raw_agents, list):
+            logger.warning("llm_classify: unexpected 'agents' type %s — keyword fallback", type(raw_agents))
+            return keyword_classify(query)
+
+        # Validate every intent in the list; drop unknowns
+        valid = [a.strip() for a in raw_agents if a.strip() in VALID_INTENTS]
+        if not valid:
             logger.warning(
-                "llm_classify: LLM returned unknown agent '%s' — keyword fallback", agent,
+                "llm_classify: LLM returned no valid agents %s — keyword fallback", raw_agents,
             )
             return keyword_classify(query)
 
         logger.info(
-            "llm_classify: '%s' → intent='%s' (confidence=%.2f) | %s",
-            query[:60], agent, conf, reason,
+            "llm_classify: '%s' → agents=%s (confidence=%.2f) | %s",
+            query[:60], valid, conf, reason,
         )
-        return agent
+        return valid
 
     except Exception:
         logger.exception("llm_classify: unexpected error — keyword fallback")
