@@ -1,0 +1,27 @@
+# ─────────────────────────────────────────────────────────────────────
+#  config/prompts.yaml
+#
+#  MCP starter prompts — surfaced to third-party hosts (Claude Desktop,
+#  Cursor, Antigravity) as ready-made slash-command style prompts.
+#  Hot-reloaded automatically when file changes (via watchdog).
+# ─────────────────────────────────────────────────────────────────────
+
+mcp_prompt_sprint_risk_review: |
+  Review the current sprint delivery risk for project {project}. Identify blocked
+  tickets, at-risk work, completion percentage, and the top risks to the sprint
+  goal. Give a concise risk assessment with the most important blockers first.
+
+mcp_prompt_blocker_analysis: |
+  List everything currently blocking progress in project {project}. For each
+  blocker give the ticket, who owns it, what it's waiting on, and the impact if it
+  stays blocked. Prioritise by delivery impact.
+
+mcp_prompt_release_readiness: |
+  Assess whether project {project} is ready to release. Check open blockers,
+  unfinished sprint work, open PRs awaiting review, and any failing checks.
+  Conclude with a clear go / no-go and the gating items if no-go.
+
+mcp_prompt_pr_review: |
+  Review pull request #{pr_number} in repository {repo}. Summarise what it
+  changes, flag correctness, security, and test-coverage concerns, and give a
+  clear approve / request-changes recommendation with the reasons.

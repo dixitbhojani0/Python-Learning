@@ -1,0 +1,17 @@
+{
+  "clients": {},
+  "access_tokens": {
+    "Mf2saRAmjweOzJCtBFUEXSacY7DHKXq5iLpI__pbWSY": {
+      "token": "Mf2saRAmjweOzJCtBFUEXSacY7DHKXq5iLpI__pbWSY",
+      "client_id": "service-account",
+      "scopes": [
+        "mcp"
+      ],
+      "expires_at": 1782997444,
+      "resource": null,
+      "subject": null,
+      "claims": null
+    }
+  },
+  "refresh_tokens": {}
+}

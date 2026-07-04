@@ -1,0 +1,26 @@
+# ─────────────────────────────────────────────────────────────────────
+#  config/security.yaml
+#
+#  MCP tool safety classification.
+#  Any tool whose name contains one of these verbs is treated as a write
+#  tool: excluded from autonomous gather loops and flagged
+#  destructiveHint=True in ToolAnnotations.
+#
+#  Change here, restart to apply (no code change needed).
+# ─────────────────────────────────────────────────────────────────────
+
+tool_safety:
+  write_verbs:
+    - create
+    - update
+    - delete
+    - assign
+    - reassign
+    - deassign
+    - approve
+    - reject
+    - request_changes
+    - merge
+    - send
+    - post
+    - close
