@@ -8,6 +8,12 @@
 #  Adding a new tool = add a block here. Zero Python changes needed.
 # ─────────────────────────────────────────────────────────────────────
 
+# ── Global registry settings ──────────────────────────────────────────────────
+# max_concurrent_calls: asyncio.Semaphore cap across ALL connectors.
+# Prevents thundering-herd when many agents call connectors in parallel.
+# Read by backend/mcp/registry.py — change here without touching Python code.
+max_concurrent_calls: 3
+
 connectors:
 
   # ── GitHub MCP Connector
@@ -51,17 +57,61 @@ connectors:
 
   # ── Slack MCP Connector
   # Used by: cross_source_agent, notify_agent, risk_agent
-  # Set use_mock: true to use local JSON files instead of real Slack API
+  # API docs: https://api.slack.com
   slack:
     enabled: true
     type: slack                     # maps to backend/mcp/slack_connector.py
     description: "Slack API — channel messages, notifications"
-    use_mock: true                  # DEMO MODE: reads from data/mock_slack/ folder
-    mock_data_path: "data/mock_slack"
-    token_env: SLACK_BOT_TOKEN      # only used when use_mock: false
+    token_env: SLACK_BOT_TOKEN
     available_tools:
       - search_messages
       - get_channel_history
       - send_message
     timeout_seconds: 10
+    max_retries: 2
+
+  # ── Microsoft Teams MCP Connector
+  # Used by: cross_source_agent (Slack + Teams cross-source correlation)
+  # Real connector needs an Azure AD app (AZURE_TENANT_ID/CLIENT_ID/CLIENT_SECRET)
+  # plus team_id + channel ids below.
+  teams:
+    enabled: false                  # DISABLED to reduce demo complexity — flip to true + provide Azure AD creds to re-enable
+    type: teams                     # maps to backend/mcp/connectors/teams_connector.py
+    description: "Microsoft Teams (Graph API) — channel messages, notifications"
+    team_id: ""
+    channels:                       # channel name -> Graph channel id (when real)
+      default: ""
+    available_tools:
+      - search_messages
+      - get_channel_history
+      - send_message
+      - list_members
+    timeout_seconds: 15
+    max_retries: 2
+
+  # ── Google Drive MCP Connector
+  # Used by: RAG ingestion / document source. Real connector uses GDRIVE_API_KEY.
+  drive:
+    enabled: false                  # DISABLED to reduce demo complexity — flip to true + provide GDRIVE creds to re-enable
+    type: drive                     # maps to backend/mcp/connectors/drive_connector.py
+    description: "Google Drive API — list and read documents for ingestion"
+    api_key_env: GDRIVE_API_KEY
+    available_tools:
+      - list_files
+      - read_file
+    timeout_seconds: 15
+    max_retries: 2
+
+  # ── Confluence MCP Connector
+  # Used by: cross_source / MCP gather (confluence_get_pages tool).
+  # Real connector reuses the JIRA_* Atlassian credentials (same token works for
+  # both); falls back to MockConfluenceConnector when those are placeholders.
+  confluence:
+    enabled: true
+    type: confluence                # maps to backend/mcp/connectors/confluence_connector.py
+    description: "Confluence pages (Atlassian REST) — fetch wiki content"
+    available_tools:
+      - get_pages
+      - get_page_content
+    timeout_seconds: 15
     max_retries: 2

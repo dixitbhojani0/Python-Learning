@@ -1,0 +1,10 @@
+mcpServers:
+  sdlc-mcp:
+    # Container-to-container via shared sdlc-net Docker network.
+    # sdlc-backend reaches sdlc-mcp-server by container name — no host.docker.internal needed.
+    # Local (python server.py): change to http://127.0.0.1:8100/mcp
+    url: http://sdlc-mcp-server:8100/mcp
+    transport: streamable_http
+    auth: service   # fetch rotating 1hr token via /oauth/token/service
+    disabled_tools: []
+    enabled: true

@@ -15,6 +15,7 @@ ttl:
   hitl_state: 7200                  # 2 hours — pending HITL approvals survive restarts
   session_summary: 86400            # 24 hours — active session summaries
   embedding_cache: 604800           # 7 days — don't re-embed identical text
+  stream: 300                       # 5 minutes — SSE token stream buffer
 
 # ── Key prefixes (prevents collision between key types)
 key_prefixes:

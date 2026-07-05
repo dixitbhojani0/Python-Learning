@@ -1,41 +1,41 @@
 # ─────────────────────────────────────────────────────────────────────
 #  config/rag_sources.yaml
 #
-#  RAG pipeline configuration — chunking strategy, retrieval thresholds.
+#  RAG pipeline configuration — retrieval thresholds and embeddings.
+#  Chunking sizes live in config/chunking.yaml (authoritative source).
 #  Tune these values without touching Python code.
 # ─────────────────────────────────────────────────────────────────────
-
-# ── Chunking Strategy
-chunking:
-  parent:
-    size_tokens: 1500               # Parent chunk size (full context window)
-    overlap_tokens: 0               # Parents don't overlap — clean boundaries
-  child:
-    size_tokens: 350                # Child chunk size (what gets embedded)
-    overlap_tokens: 40              # ~10% overlap between child chunks
-  contextual_prefix: true           # Prepend LLM-generated context to each child before embedding
 
 # ── Retrieval Settings
 retrieval:
   initial_candidates: 30            # BM25 + vector each fetch this many → merged → reranked
   top_k_after_rerank: 7             # Final chunks passed to context builder
 
-  # Confidence tiers (from solution doc Section 4.7)
-  # These control the system's behaviour at runtime
+  # Confidence tiers — control runtime behaviour at query time
+  # high   ≥ 0.75  → answer confidently, full RAG context
+  # medium 0.60–0.74 → answer with "Based on available data..." caveat
+  # low    0.45–0.59 → trigger corrective RAG (LLM query rewrite + retry)
+  # none   < 0.20  → graceful degradation, no hallucination
   confidence:
-    high_threshold: 0.75            # ≥ 0.75 → answer confidently, full RAG context
-    medium_threshold: 0.45          # 0.45–0.74 → answer with "Based on available data..." caveat
-    low_threshold: 0.45             # < 0.45 → trigger corrective RAG (reformulate + retry)
-    no_evidence_threshold: 0.20     # < 0.20 → graceful degradation, no hallucination
+    high_threshold: 0.75
+    medium_threshold: 0.60          # was 0.45 — matched low_threshold, tier was unreachable
+    low_threshold: 0.45
+    no_evidence_threshold: 0.20
 
   # Semantic cache threshold (Redis)
   cache_similarity_threshold: 0.92  # cosine similarity — reuse cached answer if similar enough
+
+  # Scoring calibration
+  sigmoid_temperature: 3.0          # scales CrossEncoder logits [-5,+5] → [0.19,0.81]; T=1 looks broken for domain text
+  rrf_k: 60                         # Reciprocal Rank Fusion smoothing constant (Cormack et al. 2009 standard)
 
 # ── Embedding Model (local, free — downloads ~90MB on first run)
 embeddings:
   model: all-MiniLM-L6-v2           # sentence-transformers model
   dimension: 384                    # vector dimensions (must match Qdrant collection)
   normalize: true                   # L2 normalize vectors before storage
+  reranker_model: cross-encoder/ms-marco-MiniLM-L-6-v2  # local cross-encoder reranker
+  batch_size: 32                    # chunks per encode() call — memory/latency tradeoff
 
 # ── Qdrant Collection Settings
 vector_store:
