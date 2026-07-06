@@ -45,7 +45,11 @@ class SlackConnector(BaseMCPConnector):
     async def _populate_cache(self, client: httpx.AsyncClient, endpoint: str) -> None:
         cursor = ""
         for _ in range(5):
-            params = {"exclude_archived": True, "types": "public_channel,private_channel", "limit": 200}
+            # public_channel only — matches the token's granted scopes (channels:read/history).
+            # Slack requires the scope for EVERY type requested, so asking for private_channel
+            # too (needs groups:read, not granted) was failing the WHOLE list call with
+            # missing_scope — even for public channels that channels:read alone can resolve.
+            params = {"exclude_archived": True, "types": "public_channel", "limit": 200}
             if cursor:
                 params["cursor"] = cursor
             try:

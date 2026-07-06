@@ -57,7 +57,11 @@ _oauth_provider = SDLCOAuthProvider(store=_store, issuer_url=settings.OAUTH_ISSU
 _auth_settings = AuthSettings(
     issuer_url=settings.OAUTH_ISSUER_URL,
     resource_server_url=settings.OAUTH_ISSUER_URL,  # this server is both AS and RS
-    client_registration_options=ClientRegistrationOptions(enabled=True),
+    client_registration_options=ClientRegistrationOptions(
+        enabled=True,
+        valid_scopes=["mcp"],
+        default_scopes=["mcp"],  # auto-grant mcp scope to dynamically registered clients
+    ),
     required_scopes=["mcp"],
 )
 
