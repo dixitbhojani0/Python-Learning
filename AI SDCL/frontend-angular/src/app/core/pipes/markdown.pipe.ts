@@ -60,9 +60,12 @@ export class MarkdownPipe implements PipeTransform {
         continue;
       }
 
-      // Blank line — paragraph break
+      // Blank line — paragraph break, UNLESS we're inside a list. LLM output
+      // often puts a blank line between list items for readability; closing
+      // the list there would split one ordered list into several single-item
+      // lists, each restarting its own numbering at "1."
       if (line === '') {
-        closeList();
+        if (inUl || inOl) continue;
         out.push('<br>');
         continue;
       }

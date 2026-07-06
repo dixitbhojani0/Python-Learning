@@ -9,25 +9,62 @@
       </div>
     }
 
-    @for (msg of messages(); track $index) {
+    @for (msg of messages(); track $index; let last = $last) {
       <div class="bubble" [class.user]="msg.role === 'user'" [class.assistant]="msg.role === 'assistant'">
 
-        <!-- User bubbles: plain text. Assistant bubbles: render markdown as HTML -->
+        <!-- User bubbles: plain text. Assistant bubbles: render markdown as HTML.
+             While the streaming placeholder is still empty, show a spinner in
+             its place instead of a separate loading bubble below it. -->
         @if (msg.role === 'user') {
           <div class="bubble-text">{{ msg.text }}</div>
+        } @else if (!msg.text && last && loading()) {
+          <mat-spinner diameter="24" />
         } @else {
           <div class="bubble-text markdown" [innerHTML]="msg.text | markdown"></div>
         }
 
-        <!-- Meta footer: sources + confidence + cache badge (assistant only) -->
-        @if (msg.role === 'assistant' && ((msg.sources && msg.sources.length > 0) || msg.cached)) {
+        <!-- Document images attached to the answer (assistant only) -->
+        @if (msg.role === 'assistant' && msg.images && msg.images.length > 0) {
+          <div class="bubble-images">
+            @for (img of msg.images; track img.url) {
+              <figure class="doc-image">
+                <a [href]="imageUrl(img)" target="_blank" rel="noopener">
+                  <img [src]="imageUrl(img)" [alt]="img.caption || img.doc_title || 'document image'" loading="lazy" />
+                </a>
+                <figcaption>
+                  {{ img.doc_title }}@if (img.page) { · p.{{ img.page }} }
+                </figcaption>
+              </figure>
+            }
+          </div>
+        }
+
+        <!-- Meta footer: agent + strategy + sources + confidence + relevancy (assistant only) -->
+        @if (msg.role === 'assistant' && (msg.agent || (msg.sources && msg.sources.length > 0) || msg.cached)) {
           <div class="bubble-meta">
+            @if (agentLabel(msg.agent)) {
+              <span class="agent-chip" matTooltip="Agent that handled this query">🤖 {{ agentLabel(msg.agent) }}</span>
+            }
+            @if (strategyLabel(msg.strategy)) {
+              <span class="strategy-chip" matTooltip="Retrieval strategy">{{ strategyLabel(msg.strategy) }}</span>
+            }
             @for (src of msg.sources ?? []; track src) {
               <span class="source-chip">{{ src }}</span>
             }
             @if (msg.confidence && msg.confidence > 0) {
-              <span class="confidence" [matTooltip]="'RAG confidence'">
-                {{ formatConfidence(msg.confidence) }}
+              <span class="confidence" matTooltip="RAG confidence (top chunk)">
+                conf {{ formatConfidence(msg.confidence) }}
+              </span>
+            }
+            @if (msg.relevancy && msg.relevancy > 0) {
+              <span class="confidence" matTooltip="Answer↔query relevancy">
+                rel {{ formatConfidence(msg.relevancy) }}
+              </span>
+            }
+            @if (msg.faithfulness && msg.faithfulness > 0) {
+              <span class="faith-chip" [class.faith-low]="msg.faithfulness < 0.45"
+                    [matTooltip]="msg.faithfulness < 0.45 ? 'Low faithfulness — answer may not be grounded in evidence' : 'Faithfulness — claims grounded in retrieved evidence'">
+                faith {{ formatConfidence(msg.faithfulness) }}
               </span>
             }
             @if (msg.cached) {
@@ -46,12 +83,6 @@
       </div>
     }
 
-    <!-- Typing indicator -->
-    @if (loading()) {
-      <div class="bubble assistant">
-        <mat-spinner diameter="24" />
-      </div>
-    }
   </div>
 
   <!-- HITL pending banner -->

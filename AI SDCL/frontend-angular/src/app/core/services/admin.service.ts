@@ -94,4 +94,82 @@ export class AdminService {
       { params: { project } }
     );
   }
+
+  // ── MCP host: outbound connections to external MCP servers ──────────────────
+  listMcpServers(): Observable<McpServerListItem[]> {
+    return this.http.get<McpServerListItem[]>(`${this.base}/admin/mcp-servers`);
+  }
+
+  addMcpServer(body: McpServerCreate): Observable<McpServerListItem> {
+    return this.http.post<McpServerListItem>(`${this.base}/admin/mcp-servers`, body);
+  }
+
+  updateMcpServer(name: string, body: McpServerUpdate): Observable<McpServerListItem> {
+    return this.http.put<McpServerListItem>(`${this.base}/admin/mcp-servers/${name}`, body);
+  }
+
+  deleteMcpServer(name: string): Observable<void> {
+    return this.http.delete<void>(`${this.base}/admin/mcp-servers/${name}`);
+  }
+
+  testMcpServer(name: string): Observable<McpServerTestResult> {
+    return this.http.post<McpServerTestResult>(`${this.base}/admin/mcp-servers/${name}/test`, {});
+  }
+
+  toggleMcpServerEnabled(name: string): Observable<McpServerToggleResult> {
+    return this.http.post<McpServerToggleResult>(`${this.base}/admin/mcp-servers/${name}/toggle-enabled`, {});
+  }
+
+  listMcpServerTools(name: string): Observable<McpServerToolItem[]> {
+    return this.http.get<McpServerToolItem[]>(`${this.base}/admin/mcp-servers/${name}/tools`);
+  }
+
+  toggleMcpTool(server: string, tool: string): Observable<McpServerToggleResult> {
+    return this.http.post<McpServerToggleResult>(
+      `${this.base}/admin/mcp-servers/${server}/tools/${tool}/toggle`, {});
+  }
+}
+
+// ── MCP host types — match Claude Desktop / Cursor / Antigravity standard ──────
+export interface McpServerListItem {
+  name: string;
+  url: string;
+  transport: string;
+  enabled: boolean;
+  disabled_tool_count: number;
+  tool_count: number | null;
+  status: 'connected' | 'failed' | 'disabled' | 'unknown';
+  is_seed: boolean;
+  error: string | null;
+}
+
+export interface McpServerToolItem {
+  name: string;
+  description: string;
+  is_write: boolean;
+  enabled: boolean;
+}
+
+export interface McpServerToggleResult {
+  name: string;
+  enabled: boolean;
+}
+
+export interface McpServerCreate {
+  name: string;
+  url: string;
+  transport?: string;
+  headers?: Record<string, string>;
+}
+
+export interface McpServerUpdate {
+  url?: string;
+  transport?: string;
+  headers?: Record<string, string>;
+}
+
+export interface McpServerTestResult {
+  ok: boolean;
+  tool_count: number | null;
+  error: string | null;
 }

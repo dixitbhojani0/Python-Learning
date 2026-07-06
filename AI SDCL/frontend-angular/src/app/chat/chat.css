@@ -51,6 +51,33 @@
 }
 .bubble-text.markdown hr { border: none; border-top: 1px solid #ddd; margin: 8px 0; }
 
+/* Document images attached to an answer */
+.bubble-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+}
+.doc-image {
+  margin: 0;
+  max-width: 240px;
+}
+.doc-image img {
+  max-width: 240px;
+  max-height: 200px;
+  width: auto;
+  height: auto;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  cursor: zoom-in;
+  display: block;
+}
+.doc-image figcaption {
+  font-size: 0.72rem;
+  color: #777;
+  margin-top: 3px;
+}
+
 .bubble.user {
   align-self: flex-end;
   background: #1976d2;
@@ -80,6 +107,37 @@
   padding: 2px 8px;
   border-radius: 12px;
   font-size: 0.75rem;
+}
+
+.agent-chip {
+  background: #ede7f6;
+  color: #5e35b1;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.strategy-chip {
+  background: #e8f5e9;
+  color: #2e7d32;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.faith-chip {
+  background: #e8f5e9;
+  color: #2e7d32;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+.faith-chip.faith-low {
+  background: #ffebee;
+  color: #c62828;
 }
 
 .confidence {

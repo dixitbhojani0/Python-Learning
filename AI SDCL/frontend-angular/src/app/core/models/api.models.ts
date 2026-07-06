@@ -13,6 +13,15 @@ export interface ChatRequest {
   message: string;
   project: string;
   session_id?: string;
+  stream_id?: string;
+}
+
+// Document image relevant to an answer — mirrors backend ImageRef
+export interface ImageRef {
+  url: string;          // e.g. "/images/abc.png" — relative to the API base
+  doc_title?: string;
+  page?: number | null;
+  caption?: string;
 }
 
 export interface ChatResponse {
@@ -21,9 +30,13 @@ export interface ChatResponse {
   sources: string[];
   session_id: string;
   strategy: string;
+  agent?: string;        // which agent handled the query (intent)
+  relevancy?: number;    // answer↔query relevancy (0–1)
+  faithfulness?: number; // claims grounded in evidence (0–1)
   hitl_required: boolean;
   hitl_action_id: string | null;
   response_cached: boolean;
+  images?: ImageRef[];
 }
 
 // ── HITL
@@ -107,7 +120,12 @@ export interface ChatMessage {
   sources?: string[];
   confidence?: number;
   cached?: boolean;
+  agent?: string;        // which agent handled it (intent)
+  strategy?: string;     // RAG strategy: first_pass / corrective / full_document / degraded
+  relevancy?: number;    // answer↔query relevancy (0–1)
+  faithfulness?: number; // claims grounded in evidence (0–1)
   hitlRequired?: boolean;
   hitlActionId?: string | null;
   hitlResolved?: boolean;
+  images?: ImageRef[];   // document images attached to an assistant answer
 }

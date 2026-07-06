@@ -1,0 +1,264 @@
+<mat-sidenav-container class="page-container" autosize>
+  <!-- ─────────── Main content ─────────── -->
+  <mat-sidenav-content class="main">
+    <div class="header">
+      <h2>
+        <mat-icon>hub</mat-icon>
+        MCP Servers
+        <span class="subtitle">Outbound connections — click a row to see / toggle tools</span>
+      </h2>
+
+      <div class="header-actions">
+        <button mat-stroked-button (click)="load()" [disabled]="loading()">
+          <mat-icon>refresh</mat-icon> Refresh
+        </button>
+        <button mat-flat-button color="primary" (click)="toggleAddForm()">
+          <mat-icon>{{ showAddForm() ? 'close' : 'add' }}</mat-icon>
+          {{ showAddForm() ? 'Cancel' : 'Add Server' }}
+        </button>
+      </div>
+    </div>
+
+    <!-- Add form -->
+    @if (showAddForm()) {
+      <mat-card class="add-card">
+        <mat-card-header>
+          <mat-card-title>Add MCP server</mat-card-title>
+          <mat-card-subtitle>
+            Standard config shape (Claude Desktop / Cursor / Antigravity) — paste any existing entry, it works unchanged.
+          </mat-card-subtitle>
+        </mat-card-header>
+
+        <mat-card-content class="form-grid">
+          <mat-form-field appearance="outline">
+            <mat-label>Name</mat-label>
+            <input matInput [(ngModel)]="form.name" placeholder="e.g. github-copilot" required>
+            <mat-hint>letters, digits, _ and - only</mat-hint>
+          </mat-form-field>
+
+          <mat-form-field appearance="outline">
+            <mat-label>URL</mat-label>
+            <input matInput [(ngModel)]="form.url" placeholder="https://api.example.com/mcp" required>
+          </mat-form-field>
+
+          <mat-form-field appearance="outline">
+            <mat-label>Transport</mat-label>
+            <mat-select [(ngModel)]="form.transport">
+              <mat-option value="streamable_http">streamable_http</mat-option>
+            </mat-select>
+          </mat-form-field>
+
+          <mat-form-field appearance="outline" class="full-row">
+            <mat-label>Authorization (optional)</mat-label>
+            <input matInput [(ngModel)]="form.authorization" placeholder="Bearer your_token_here">
+            <mat-hint>
+              Leave blank for anonymous / LAN / self-hosted servers.
+              Required by SaaS MCPs — auth is the TARGET server's policy, not ours.
+            </mat-hint>
+          </mat-form-field>
+        </mat-card-content>
+
+        <mat-card-actions align="end">
+          <button mat-button (click)="toggleAddForm()">Cancel</button>
+          <button mat-flat-button color="primary" (click)="submitAdd()" [disabled]="saving()">
+            @if (saving()) { <mat-spinner diameter="20"></mat-spinner> } @else { <span>Save & Test</span> }
+          </button>
+        </mat-card-actions>
+      </mat-card>
+    }
+
+    <!-- Servers table -->
+    @if (loading()) {
+      <div class="centered"><mat-spinner diameter="40"></mat-spinner></div>
+    } @else {
+      <table mat-table [dataSource]="servers()" class="servers-table">
+
+        <ng-container matColumnDef="name">
+          <th mat-header-cell *matHeaderCellDef>Name</th>
+          <td mat-cell *matCellDef="let row" class="clickable" (click)="openDrawer(row)">
+            <div class="name-cell">
+              @if (row.is_seed) {
+                <mat-icon class="seed-icon" matTooltip="Built-in connection — can't be deleted, can only be disabled">lock</mat-icon>
+              }
+              <span>{{ row.name }}</span>
+            </div>
+          </td>
+        </ng-container>
+
+        <ng-container matColumnDef="url">
+          <th mat-header-cell *matHeaderCellDef>URL</th>
+          <td mat-cell *matCellDef="let row" class="url-cell clickable" (click)="openDrawer(row)">{{ row.url }}</td>
+        </ng-container>
+
+        <ng-container matColumnDef="transport">
+          <th mat-header-cell *matHeaderCellDef>Transport</th>
+          <td mat-cell *matCellDef="let row">{{ row.transport }}</td>
+        </ng-container>
+
+        <ng-container matColumnDef="enabled">
+          <th mat-header-cell *matHeaderCellDef>Enabled</th>
+          <td mat-cell *matCellDef="let row">
+            <mat-slide-toggle
+              [checked]="row.enabled"
+              [disabled]="!!togglingServer()[row.name]"
+              (change)="toggleServerEnabled(row)"
+              matTooltip="{{ row.is_seed ? 'Disable: agents fall back to RAG-only' : 'Enable / disable this server' }}">
+            </mat-slide-toggle>
+          </td>
+        </ng-container>
+
+        <ng-container matColumnDef="status">
+          <th mat-header-cell *matHeaderCellDef>Status</th>
+          <td mat-cell *matCellDef="let row">
+            <mat-chip [color]="statusColor(row.status)" [matTooltip]="row.error || ''" selected highlighted>
+              {{ row.status }}
+            </mat-chip>
+          </td>
+        </ng-container>
+
+        <ng-container matColumnDef="tool_count">
+          <th mat-header-cell *matHeaderCellDef>Tools</th>
+          <td mat-cell *matCellDef="let row">
+            {{ row.tool_count ?? '—' }}
+            @if (row.disabled_tool_count > 0) {
+              <span class="muted" matTooltip="{{ row.disabled_tool_count }} tool(s) disabled — click row to manage">
+                ({{ row.disabled_tool_count }} off)
+              </span>
+            }
+          </td>
+        </ng-container>
+
+        <ng-container matColumnDef="actions">
+          <th mat-header-cell *matHeaderCellDef>Actions</th>
+          <td mat-cell *matCellDef="let row">
+            <button mat-icon-button (click)="openDrawer(row)" matTooltip="Show tools">
+              <mat-icon>list</mat-icon>
+            </button>
+            <button mat-icon-button (click)="testServer(row.name)" matTooltip="Test connection"
+                    [disabled]="!!testing()[row.name] || !row.enabled">
+              @if (testing()[row.name]) {
+                <mat-spinner diameter="18"></mat-spinner>
+              } @else {
+                <mat-icon>wifi_tethering</mat-icon>
+              }
+            </button>
+            <button mat-icon-button (click)="deleteServer(row)"
+                    [matTooltip]="row.is_seed ? 'Seed: disable instead (Enabled toggle)' : 'Delete'">
+              <mat-icon>{{ row.is_seed ? 'power_settings_new' : 'delete' }}</mat-icon>
+            </button>
+          </td>
+        </ng-container>
+
+        <tr mat-header-row *matHeaderRowDef="displayedColumns"></tr>
+        <tr mat-row *matRowDef="let row; columns: displayedColumns;"></tr>
+      </table>
+
+      @if (servers().length === 0) {
+        <div class="empty">No MCP servers configured. Click <strong>Add Server</strong> to connect to one.</div>
+      }
+    }
+  </mat-sidenav-content>
+
+  <!-- ─────────── Right drawer: per-server tool list ─────────── -->
+  <mat-sidenav #drawer mode="over" position="end" [opened]="drawerOpen()"
+               (closedStart)="closeDrawer()" class="tools-drawer">
+    @if (drawerServer(); as srv) {
+      <div class="drawer-header">
+        <div>
+          <h3>
+            <mat-icon>extension</mat-icon>
+            Tools — {{ srv.name }}
+          </h3>
+          <div class="drawer-sub">
+            {{ drawerTools().length }} tool(s) — toggle to enable / disable per server
+          </div>
+        </div>
+        <button mat-icon-button (click)="closeDrawer()" matTooltip="Close">
+          <mat-icon>close</mat-icon>
+        </button>
+      </div>
+      <mat-divider></mat-divider>
+
+      @if (drawerLoading()) {
+        <div class="centered drawer-spinner"><mat-spinner diameter="32"></mat-spinner></div>
+      } @else if (drawerTools().length === 0) {
+        <div class="empty">No tools reported by this server.</div>
+      } @else {
+        <ul class="tool-list">
+          @for (t of drawerTools(); track t.name) {
+            <li class="tool-row">
+              <div class="tool-meta">
+                <div class="tool-name">
+                  @if (t.is_write) {
+                    <mat-icon class="write-icon" matTooltip="Write tool — destructiveHint:true">edit</mat-icon>
+                  } @else {
+                    <mat-icon class="read-icon" matTooltip="Read tool — readOnlyHint:true">visibility</mat-icon>
+                  }
+                  <code>{{ t.name }}</code>
+                </div>
+                @if (t.description) {
+                  <div class="tool-desc">{{ t.description }}</div>
+                }
+              </div>
+              <mat-slide-toggle
+                [checked]="t.enabled"
+                [disabled]="!!togglingTool()[srv.name + ':' + t.name]"
+                (change)="toggleTool(t)"
+                matTooltip="{{ t.enabled ? 'Disable this tool (hidden from agents)' : 'Re-enable this tool' }}">
+              </mat-slide-toggle>
+            </li>
+          }
+        </ul>
+      }
+    }
+  </mat-sidenav>
+</mat-sidenav-container>
+
+<style>
+  .page-container { height: calc(100vh - 64px); }
+  .main { padding: 24px; overflow: auto; }
+  .header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 16px;
+  }
+  .header h2 { display: flex; align-items: center; gap: 8px; margin: 0; }
+  .subtitle { font-size: 13px; font-weight: normal; color: #888; margin-left: 8px; }
+  .header-actions { display: flex; gap: 8px; }
+  .add-card { margin-bottom: 16px; }
+  .form-grid {
+    display: grid; grid-template-columns: 1fr 2fr 1fr; gap: 12px; margin-top: 8px;
+  }
+  .form-grid .full-row { grid-column: 1 / -1; }
+  .servers-table { width: 100%; }
+  .clickable { cursor: pointer; }
+  .url-cell {
+    max-width: 360px; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; font-family: monospace; font-size: 13px;
+  }
+  .name-cell { display: flex; align-items: center; gap: 6px; }
+  .seed-icon { font-size: 16px; width: 16px; height: 16px; color: #888; }
+  .muted { color: #888; font-size: 12px; margin-left: 4px; }
+  .centered { display: flex; justify-content: center; padding: 48px 0; }
+  .empty { padding: 32px; text-align: center; color: #888; }
+
+  /* Drawer */
+  .tools-drawer { width: 460px; max-width: 80vw; padding: 0; }
+  .drawer-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 20px;
+  }
+  .drawer-header h3 { display: flex; align-items: center; gap: 8px; margin: 0; }
+  .drawer-sub { font-size: 12px; color: #888; margin-top: 4px; }
+  .drawer-spinner { padding: 64px 0; }
+  .tool-list { list-style: none; padding: 0; margin: 0; }
+  .tool-row {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; padding: 12px 20px; border-bottom: 1px solid #eee;
+  }
+  .tool-meta { flex: 1; min-width: 0; }
+  .tool-name { display: flex; align-items: center; gap: 6px; font-size: 14px; }
+  .tool-name code { background: #f6f8fa; padding: 2px 6px; border-radius: 4px; font-size: 13px; }
+  .tool-desc { color: #666; font-size: 12px; margin-top: 4px; }
+  .read-icon { font-size: 16px; width: 16px; height: 16px; color: #4a90e2; }
+  .write-icon { font-size: 16px; width: 16px; height: 16px; color: #d97706; }
+</style>

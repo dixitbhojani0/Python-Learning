@@ -69,9 +69,10 @@ export class RagManager implements OnInit {
         );
         this.loadChunks();
       },
-      error: () => {
+      error: (err) => {
         this.ingestingConfluence.set(false);
-        this.snack.open('Confluence ingest failed', 'OK', { duration: 3000 });
+        const msg = err.error?.detail || 'Confluence ingest failed';
+        this.snack.open(msg, 'OK', { duration: 5000 });
       },
     });
   }
@@ -87,9 +88,10 @@ export class RagManager implements OnInit {
         );
         this.loadChunks();
       },
-      error: () => {
+      error: (err) => {
         this.ingestingJira.set(false);
-        this.snack.open('Jira ingest failed', 'OK', { duration: 3000 });
+        const msg = err.error?.detail || 'Jira ingest failed';
+        this.snack.open(msg, 'OK', { duration: 5000 });
       },
     });
   }

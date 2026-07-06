@@ -9,10 +9,14 @@
         <button mat-stroked-button color="warn" (click)="reject()">❌ Reject</button>
       }
     </div>
+    @if (error()) {
+      <p class="hitl-error">{{ error() }}</p>
+    }
   </mat-card-content>
 </mat-card>
 
 <style>
   .hitl-card { background: #fff8e1; margin-top: 8px; }
   .hitl-actions { display: flex; gap: 12px; align-items: center; margin-top: 8px; }
+  .hitl-error { color: #b71c1c; margin-top: 10px; white-space: pre-wrap; }
 </style>
