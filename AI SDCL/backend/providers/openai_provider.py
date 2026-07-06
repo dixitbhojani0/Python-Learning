@@ -200,7 +200,12 @@ class OpenAIProvider(BaseLLMProvider):
 
         except Exception as exc:
             logger.warning("OpenAIProvider: JSON mode failed (%s) — falling back to text parse", exc)
-            return await self._generate_structured_fallback(prompt, system, temperature, max_tokens)
+            result = await self._generate_structured_fallback(prompt, system, temperature, max_tokens)
+            logger.info(
+                "OpenAIProvider: fallback result — parse_error=%s structured=%s text=%.300s",
+                result.parse_error, result.structured, result.text,
+            )
+            return result
 
     async def _generate_structured_fallback(self, prompt, system, temperature, max_tokens) -> LLMResponse:
         """Text generation + regex JSON extraction — same as GroqProvider."""

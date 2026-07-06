@@ -22,6 +22,7 @@ Design rule: these routes do real work (Qdrant queries, ingest, DB reads).
 They do NOT call the LangGraph graph or any agent — admin is infrastructure,
 not conversation.
 """
+import asyncio
 import logging
 import os
 import tempfile
@@ -324,18 +325,12 @@ async def admin_ingest_confluence(
         body.space_key, body.project, user.name,
     )
     try:
-        from backend.mcp.connectors.confluence_connector import ConfluenceConnector, _is_system_page
+        import base64
         from backend.rag.pipeline import RAGPipeline
-
-        connector = ConfluenceConnector(name="confluence", connector_config={})
-        if not connector.is_available():
-            raise HTTPException(
-                status_code=400,
-                detail="Confluence credentials are not configured. Please set Confluence credentials in .env to enable Confluence ingestion."
-            )
+        from backend.mcp_client.client import call_mcp_tool
 
         start = time.monotonic()
-        pages = await connector.get_all_page_texts(body.space_key)
+        pages = await call_mcp_tool("confluence_get_all_page_texts", {"space_key": body.space_key})
 
         if not pages:
             return ConfluenceIngestResponse(
@@ -355,7 +350,7 @@ async def admin_ingest_confluence(
 
         total         = 0
         meta          = {"project": body.project, "source": source, "type": "doc"}
-        all_page_meta = await connector.get_pages(body.space_key)
+        all_page_meta = await call_mcp_tool("confluence_get_pages", {"space_key": body.space_key})
 
         # Phase 1: Ingest body text from pages that have content
         for page in pages:
@@ -368,28 +363,36 @@ async def admin_ingest_confluence(
             total += count
             logger.debug("admin/ingest/confluence: '%s' (text) → %d chunks", page["title"], count)
 
-        # Phase 2: Check all non-system pages for PDF attachments
+        # Phase 2: Check all pages for PDF attachments (system page filtering is done server-side
+        # inside confluence_get_all_page_texts; get_pages returns all, so skip system pages here)
+        def _is_system(t: str) -> bool:
+            t = t.lower().strip()
+            return t in ("home", "overview") or t.endswith(" home") or t.startswith("welcome to")
+
         for page_info in all_page_meta:
-            if _is_system_page(page_info["title"]):
+            if _is_system(page_info["title"]):
                 continue
             try:
-                attachments = await connector.get_page_attachments(page_info["id"])
+                attachments = await call_mcp_tool("confluence_get_page_attachments", {"page_id": page_info["id"]})
+                # A page with exactly one attachment returns a bare dict, not a
+                # list — normalize so a single string/dict/None all iterate safely.
+                if isinstance(attachments, dict):
+                    attachments = [attachments]
+                elif not isinstance(attachments, list):
+                    attachments = []
                 for att in attachments:
-                    pdf_bytes = await connector.download_attachment_bytes(att["download_url"])
-                    if not pdf_bytes:
+                    b64 = await call_mcp_tool("confluence_download_attachment", {"download_url": att["download_url"]})
+                    if not b64:
                         continue
+                    pdf_bytes = base64.b64decode(b64)
                     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
                         tmp.write(pdf_bytes)
                         tmp_path = tmp.name
                     try:
                         att_title = att["title"].replace(".pdf", "").replace("_", " ").replace("-", " ")
-                        att_meta  = {**meta, "doc_title": att_title, "url": att["download_url"]}
-                        att_count = pipeline.ingest_file(tmp_path, att_meta)
+                        att_count = pipeline.ingest_file(tmp_path, {**meta, "doc_title": att_title, "url": att["download_url"]})
                         total += att_count
-                        logger.info(
-                            "admin/ingest/confluence: '%s' (PDF attachment) → %d chunks",
-                            att["title"], att_count,
-                        )
+                        logger.info("admin/ingest/confluence: '%s' (PDF) → %d chunks", att["title"], att_count)
                     finally:
                         try:
                             os.unlink(tmp_path)
@@ -589,11 +592,11 @@ async def admin_ingest_jira(
         body.project, body.max_tickets, user.name,
     )
     try:
-        from backend.mcp.connectors.jira_connector import JiraConnector
         from backend.rag.pipeline import RAGPipeline
+        from backend.mcp_client.client import call_mcp_tool
+        from backend.core.settings import settings as _s
 
-        connector = JiraConnector(name="jira", connector_config={})
-        if not connector.is_available():
+        if _s.JIRA_TOKEN == "placeholder":
             raise HTTPException(
                 status_code=400,
                 detail="Jira credentials are not configured. Please set JIRA_TOKEN in .env to enable Jira ingestion."
@@ -601,9 +604,11 @@ async def admin_ingest_jira(
 
         start = time.monotonic()
 
-        sprint_board    = await connector.get_sprint_board(body.project)
-        blocked_tickets = await connector.get_blocked_tickets(body.project)
-        all_tickets     = await connector.search_tickets("", body.project)
+        sprint_board, blocked_tickets, all_tickets = await asyncio.gather(
+            call_mcp_tool("jira_get_sprint_board", {"project": body.project}),
+            call_mcp_tool("jira_get_blocked_tickets", {"project": body.project}),
+            call_mcp_tool("jira_search_tickets", {"query": "", "project": body.project}),
+        )
 
         seen: set[str] = set()
         tickets: list[dict] = []

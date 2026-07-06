@@ -146,7 +146,6 @@ def _role_summary(review_data: dict, user_role: str, total_prs: int) -> str:
     risk      = review_data.get("risk_level", "MEDIUM")
     ci        = review_data.get("ci_status", "unknown")
     concerns  = review_data.get("concerns", "").strip()
-    pending   = sum(1 for p in ([] if total_prs <= 1 else []) if p.get("ci_status") != "passed")
 
     if user_role == "developer":
         action = "can be merged with caution" if risk == "MEDIUM" else ("is safe to merge" if risk == "LOW" else "needs rework before merge")
@@ -205,6 +204,11 @@ def _format_pr_proposal(review_data: dict, all_prs: list[dict] | None = None, us
     summary = review_data.get("summary", "").strip()
     if summary:
         lines += ["", summary]
+
+    violations = review_data.get("standards_violations", [])
+    if violations:
+        lines += ["", "**Standards violations:**"]
+        lines += [f"  - {v}" for v in violations]
 
     # Approve mode: ask to approve the PR itself (not assign a reviewer).
     if action_mode == "approve":
@@ -346,6 +350,7 @@ class PRReviewAgent(BaseAgent):
         )
         standards_chunks, _ = self.retriever.retrieve(
             f"coding standards code review adr {query}", project,
+            doc_types=["doc"],
         )
 
         confidence = version_conf
@@ -360,7 +365,7 @@ class PRReviewAgent(BaseAgent):
             "pr_review_reasoning",
             pr_context=_format_pr_context(prs),
             version_policy_context=_format_rag_context(version_chunks[:4]),
-            standards_context=_format_rag_context(standards_chunks[:3]),
+            standards_context=_format_rag_context(standards_chunks[:6]),
         )
 
         # ── Step 4: LLM call via generate_structured (provider handles JSON extraction) ──

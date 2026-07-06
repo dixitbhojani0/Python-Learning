@@ -25,6 +25,7 @@ class ChatRequest(BaseModel):
     message:    str       = Field(...,          min_length=1, max_length=2000)
     project:    str       = Field(default=settings.DEFAULT_PROJECT)
     session_id: str | None = Field(default=None)
+    stream_id:  str | None = Field(default=None)  # client-supplied so SSE can open before POST returns
 
 
 class ImageRef(BaseModel):

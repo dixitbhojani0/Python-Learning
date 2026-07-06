@@ -83,15 +83,23 @@ def _format_episodic_events(events: list[dict]) -> str:
 
 
 def _format_history(recent_messages: list[dict]) -> str:
-    """Render recent conversation turns (from the memory node) for the prompt."""
+    """
+    Render recent conversation turns (from the memory node) for the prompt.
+
+    The memory node (retrieve_memory_context) returns each turn as
+    {"query": ..., "response": ..., "role": ...} — not {"content": ...}.
+    """
     if not recent_messages:
         return ""
     lines = ["## Recent Conversation"]
     for m in recent_messages:
-        role = m.get("role", "user")
-        content = (m.get("content") or "").strip()
-        if content:
-            lines.append(f"{role}: {content}")
+        role     = m.get("role", "user")
+        query    = (m.get("query") or "").strip()
+        response = (m.get("response") or "").strip()
+        if query:
+            lines.append(f"{role}: {query}")
+        if response:
+            lines.append(f"Assistant: {response}")
     return "\n".join(lines) if len(lines) > 1 else ""
 
 
@@ -116,18 +124,15 @@ class MCPAgent(BaseAgent):
         """
         import re
         import asyncio
-
-        if not self.mcp or not self.mcp.has("jira"):
-            return ""
+        from backend.mcp_client.client import call_mcp_tool
 
         all_text   = " ".join(c.text for c in chunks)
         ticket_ids = list(dict.fromkeys(re.findall(r'\b[A-Z]{2,10}-\d{1,6}\b', all_text)))[:6]
         if not ticket_ids:
             return ""
 
-        jira    = self.mcp.get("jira")
         results = await asyncio.gather(
-            *[jira.get_ticket(tid) for tid in ticket_ids],
+            *[call_mcp_tool("jira_get_ticket", {"ticket_id": tid}) for tid in ticket_ids],
             return_exceptions=True,
         )
 
@@ -168,6 +173,11 @@ class MCPAgent(BaseAgent):
         project   = state.get("project_id", "") or settings.DEFAULT_PROJECT
         user_role = state.get("user_role", "developer")
 
+        # Built early (not just for the synthesis prompt) so the tool-selection
+        # step below can also resolve ambiguous references ("that ticket") to a
+        # concrete target instead of picking a generic tool for lack of one.
+        history_section = _format_history(state.get("recent_messages", []))
+
         # ── 1. RAG (hybrid + corrective-RAG retry on low confidence) ──────────
         chunks, confidence, rag_strategy = await self.retriever.retrieve_with_corrective_rag(
             query, project, self._rewrite_query
@@ -175,7 +185,7 @@ class MCPAgent(BaseAgent):
         logger.info("MCPAgent: %d RAG chunks, confidence=%.3f (%s)", len(chunks), confidence, rag_strategy)
 
         # ── 2. Live data via REAL MCP — the LLM picks/chains tools ────────────
-        gathered = await gather_via_tools(query)
+        gathered = await gather_via_tools(query, history=history_section)
         logger.info("MCPAgent: MCP tools called: %s", gathered.tools_called or "none")
 
         # ── 2b. Enrich ticket IDs mentioned in RAG chunks with live Jira state ─
@@ -248,10 +258,17 @@ class MCPAgent(BaseAgent):
             self.config.get_prompt(f"persona_{user_role}")
             or self.config.get_prompt("persona_developer")
         )
-        history_section = _format_history(state.get("recent_messages", []))
         mcp_section     = gathered.as_context()
         rag_section     = format_rag_context(chunks)
         safe_query      = safety_guard.safe_user_content(query)
+
+        # Older turns compressed by the memory node (nodes.py:_summarize_turns) —
+        # was computed but never reached the prompt; wire it in alongside recent history.
+        _summary = state.get("conversation_summary", "")
+        summary_section = (
+            f"## Conversation History Summary\n{safety_guard.safe_user_content(_summary)}"
+            if _summary else ""
+        )
 
         # Inject long-term semantic facts (B10 fix: was retrieved but never added to prompt)
         # Each fact is sanitized + XML-wrapped before injection (OWASP LLM07)
@@ -280,20 +297,27 @@ class MCPAgent(BaseAgent):
             "**Data precedence (strictly enforced)**: "
             "Live Ticket Statuses section > Live Tool Data section > Document Context. "
             "A ticket listed as DONE or IN_PROGRESS in Live Ticket Statuses is NOT blocked "
-            "— ignore any contradicting status claim in the document content below."
+            "— ignore any contradicting status claim in the document content below.\n"
+            "**Pronoun resolution**: when the query refers to something ambiguously "
+            "(\"that ticket\", \"it\", \"the one you mentioned\"), resolve it using the "
+            "## Recent Conversation section — the ticket/topic from the MOST RECENT prior "
+            "turn always wins. The ## Project Knowledge section is general project facts, "
+            "NOT a record of what this conversation is currently about — never let it "
+            "override what was just discussed."
         )
 
         # I2: enforce token budget — trim RAG if the full prompt would overflow
         rag_section = trim_rag_to_budget(
             rag_section,
-            [persona, output_mode_directive, semantic_section, history_section,
-             mcp_section, live_ticket_section, episodic_section, safe_query],
+            [persona, output_mode_directive, semantic_section, summary_section,
+             history_section, mcp_section, live_ticket_section, episodic_section, safe_query],
         )
 
         prompt = "\n\n".join(filter(None, [
             persona,
             output_mode_directive,
             semantic_section,
+            summary_section,
             history_section,
             mcp_section,
             live_ticket_section,   # live status above RAG — stale doc claims can't win
@@ -330,10 +354,10 @@ class MCPAgent(BaseAgent):
                     + "\n\nIMPORTANT: Your previous draft contained unverified claims. "
                     "Respond ONLY using facts explicitly stated in the retrieved context above."
                 )
-                retry_tokens: list[str] = []
-                async for token in self.llm.generate(grounded_prompt, system_prompt, 0.0, max_tokens):
-                    retry_tokens.append(token)
-                retry_text = "".join(retry_tokens).strip()
+                # generate_text() — the first draft already streamed to the user;
+                # streaming this retry too would show both drafts concatenated.
+                retry_resp = await self.llm.generate_text(grounded_prompt, system_prompt, 0.0, max_tokens)
+                retry_text = retry_resp.text.strip()
                 if retry_text:
                     retry_faith = await faithfulness_score(query, retry_text, chunk_dicts)
                     if retry_faith >= faith:

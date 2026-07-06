@@ -27,7 +27,7 @@ from typing import Any
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from backend.core.config_loader import config
-from backend.mcp_client.client import get_mcp_tools, normalize_tool_result
+from backend.mcp_client.client import ainvoke_tool, get_mcp_tools, normalize_tool_result
 from backend.providers.factory import LLMFactory
 
 logger = logging.getLogger(__name__)
@@ -97,9 +97,15 @@ async def gather_via_tools(
     query: str,
     system: str = _GATHER_SYSTEM,
     max_iters: int = _MAX_ITERS,
+    history: str = "",
 ) -> ToolGatherResult:
     """
     Run the LLM tool-use loop to gather live data for `query`.
+
+    `history` (optional) is recent conversation context — pass it so the model can
+    resolve an ambiguous query ("is that ticket in the current sprint?") to the
+    actual ticket/topic before deciding which tool to call, instead of picking a
+    generic tool (e.g. listing the whole sprint board) for lack of a concrete target.
 
     Returns a ToolGatherResult with the executed calls + their results. Does NOT
     produce a user-facing answer. Safe-degrading: if the MCP server is unreachable
@@ -117,7 +123,12 @@ async def gather_via_tools(
     tools_by_name = {t.name: t for t in tools}
     sem = asyncio.Semaphore(_MAX_PARALLEL)
 
-    messages: list[Any] = [SystemMessage(content=system), HumanMessage(content=query)]
+    messages: list[Any] = [SystemMessage(content=system)]
+    if history:
+        messages.append(SystemMessage(
+            content=f"Recent conversation (resolve ambiguous references like 'that ticket' using this):\n{history}"
+        ))
+    messages.append(HumanMessage(content=query))
     out = ToolGatherResult()
 
     async def _execute(tc: dict) -> tuple[ToolCall, ToolMessage]:
@@ -130,7 +141,7 @@ async def gather_via_tools(
                     ToolMessage(content=f"unknown tool {name}", tool_call_id=tc_id))
         async with sem:
             try:
-                result = normalize_tool_result(await tool.ainvoke(args))
+                result = normalize_tool_result(await ainvoke_tool(tool, args))
                 logger.info("gather_via_tools: %s(%s) ok", name, args)
                 return (ToolCall(name, args, result),
                         ToolMessage(content=_to_text(result), tool_call_id=tc_id))

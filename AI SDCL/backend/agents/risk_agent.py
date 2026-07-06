@@ -73,7 +73,7 @@ def _format_jira_context(sprint_board: dict, blocked_tickets: list[dict]) -> str
         ]
 
     if blocked_tickets:
-        lines.append("\nBlocked tickets (verified live from Jira):")
+        lines.append("\nBlocked tickets — AUTHORITATIVE LIVE LIST (use ONLY these for the blockers field):")
         for t in blocked_tickets:
             raw_blockers  = "; ".join(t.get("blockers", [])) or "reason not specified"
             safe_title    = safety_guard.sanitize(t.get("title", ""))
@@ -83,10 +83,15 @@ def _format_jira_context(sprint_board: dict, blocked_tickets: list[dict]) -> str
                 f"  - [{t['id']}] {safe_title}"
                 f" (assignee: {safe_assignee}, reason: {safe_blockers})"
             )
+        lines.append(
+            "Any ticket ID NOT in this list is NOT currently blocked — "
+            "do NOT add it to the blockers field even if sprint docs mention it."
+        )
     else:
         lines.append(
             "\nBlocked tickets: NONE — no tickets are currently blocked in Jira. "
-            "Sprint documents may reference old resolved blockers; ignore them."
+            "Sprint documents may reference old resolved blockers; ignore them. "
+            "The blockers field in the JSON must be an empty list []."
         )
 
     return "\n".join(lines)
@@ -104,6 +109,45 @@ def _format_pr_context(prs: list[dict]) -> str:
             f"(CI: {pr.get('ci_status', 'unknown')}, reviewers: {reviewers})"
         )
     return "\n".join(lines)
+
+
+# ── Deterministic risk calculator (used when LLM JSON parse fails) ────────────
+
+def _compute_risk_from_jira(sprint_board: dict, blocked_tickets: list[dict]) -> dict:
+    """
+    Compute risk_data dict directly from Jira numbers — no LLM needed.
+
+    Used as fallback when generate_structured returns parse_error=True so the
+    user always gets a real score rather than "no data available" prose.
+    Returns {} only when sprint_board has no ticket data at all.
+    """
+    if not sprint_board:
+        return {}
+    total   = sprint_board.get("total_tickets", 0)
+    if not total:
+        return {}
+    done    = sprint_board.get("done", 0)
+    blocked = sprint_board.get("blocked", len(blocked_tickets))
+    pct     = sprint_board.get("completion_pct", round(done / total * 100))
+    blocker_ratio = blocked / total
+    score   = round(blocker_ratio * 50 + (1 - pct / 100) * 50)
+    level   = "HIGH" if score >= 60 else "MEDIUM" if score >= 30 else "LOW"
+    blockers = [
+        f"[{t.get('id', '?')}] {t.get('title', '')} (assignee: {t.get('assignee', 'unassigned')})"
+        for t in blocked_tickets
+    ]
+    logger.info("RiskAgent: computed risk directly — score=%d level=%s", score, level)
+    return {
+        "risk_score":    score,
+        "risk_level":    level,
+        "completion_pct": pct,
+        "blocked_count": blocked,
+        "total_tickets": total,
+        "days_remaining": sprint_board.get("days_remaining"),
+        "blockers":      blockers,
+        "pr_risks":      [],
+        "recommendation": "",
+    }
 
 
 # ── Response formatter ─────────────────────────────────────────────────────────
@@ -144,12 +188,23 @@ def _format_risk_response(risk_data: dict) -> str:
     if blockers:
         lines += ["", "**Active Blockers:**"]
         for b in blockers:
-            lines.append(f"- {b}")
+            if isinstance(b, dict):
+                tid  = b.get("ticket_id") or b.get("id", "?")
+                desc = b.get("description") or b.get("title", "")
+                lines.append(f"- [{tid}] {desc}")
+            else:
+                lines.append(f"- {b}")
 
     if pr_risks:
         lines += ["", "**PRs adding delivery risk:**"]
         for p in pr_risks:
-            lines.append(f"- {p}")
+            if isinstance(p, dict):
+                pid   = p.get("pr_id") or p.get("id", "?")
+                desc  = p.get("description") or p.get("title", "")
+                issue = p.get("issue", "")
+                lines.append(f"- [{pid}] {desc}" + (f" — {issue}" if issue else ""))
+            else:
+                lines.append(f"- {p}")
 
     if recommend:
         lines += ["", f"**Recommended Action:** {recommend}"]
@@ -199,19 +254,26 @@ class RiskAgent(BaseAgent):
                 call_mcp_tool("jira_get_blocked_tickets", {"project": project}),
                 return_exceptions=True,
             )
-            sprint_board    = results[0] if isinstance(results[0], dict) else {}
-            blocked_tickets = results[1] if isinstance(results[1], list) else []
+            sprint_board = results[0] if isinstance(results[0], dict) else {}
+            # call_mcp_tool may return a dict (single item) or list — normalize to list
+            raw_blocked  = results[1]
+            if isinstance(raw_blocked, list):
+                blocked_tickets = raw_blocked
+            elif isinstance(raw_blocked, dict) and raw_blocked.get("id"):
+                blocked_tickets = [raw_blocked]
+            else:
+                blocked_tickets = []
 
             logger.info(
-                "RiskAgent: sprint board fetched, %d blocked tickets",
-                len(blocked_tickets),
+                "RiskAgent: sprint board=%s | blocked_tickets=%s",
+                sprint_board, blocked_tickets,
             )
             return sprint_board, blocked_tickets
         except Exception:
             logger.exception("RiskAgent: Jira MCP fetch failed — risk score will use RAG only")
             return {}, []
 
-    async def _fetch_open_prs(self, project: str) -> list[dict]:
+    async def _fetch_open_prs(self) -> list[dict]:
         """
         Fetch open PRs from GitHub MCP so the risk reasoning can weigh stalled
         (no reviewer) or failing-CI PRs as additional delivery risk.
@@ -253,7 +315,7 @@ class RiskAgent(BaseAgent):
 
         # ── Step 2: MCP — live Jira data + open PRs ──────────────────────────
         sprint_board, blocked_tickets = await self._fetch_jira_data(project)
-        open_prs = await self._fetch_open_prs(project)
+        open_prs = await self._fetch_open_prs()
 
         # ── Hallucination guard ──────────────────────────────────────────
         # Abort early if no sprint docs AND no Jira data — nothing to reason over.
@@ -274,26 +336,31 @@ class RiskAgent(BaseAgent):
 
         # ── Step 4: Call LLM via generate_structured (provider handles JSON extraction) ──
         temperature = self.config.get_temperature("agent_reasoning")   # 0.1
-        resp      = await self.llm.generate_structured(reasoning_tmpl, system_prompt, temperature, 1000)
+        jira_ctx = _format_jira_context(sprint_board, blocked_tickets)
+        logger.info("RiskAgent: reasoning_tmpl_len=%d jira_context=\n%s", len(reasoning_tmpl), jira_ctx)
+        resp      = await self.llm.generate_structured(reasoning_tmpl, system_prompt, temperature, 2000)
         risk_data = resp.structured if not resp.parse_error else {}
+        logger.info(
+            "RiskAgent: is_empty=%s parse_error=%s structured=%s | raw_text=%.600s",
+            resp.is_empty, resp.parse_error, resp.structured, resp.text,
+        )
 
         # ── Step 5: Handle response ───────────────────────────────────────────
         if resp.is_empty:
             logger.warning("RiskAgent: LLM returned empty response — possible rate limit or quota exhausted")
+            risk_data = _compute_risk_from_jira(sprint_board, blocked_tickets)
             final_response = (
-                "I'm temporarily unavailable — please try again in a moment.\n\n"
-                "If the issue persists, contact your system administrator."
+                _format_risk_response(risk_data) if risk_data
+                else "I'm temporarily unavailable — please try again in a moment.\n\nIf the issue persists, contact your system administrator."
             )
-            risk_data = {}
         elif resp.parse_error or not resp.structured:
-            # LLM responded but not in JSON format — use honest fallback
-            logger.warning("RiskAgent: JSON parse failed — returning fallback response")
+            # LLM responded but not in JSON — compute deterministically from Jira data.
+            logger.warning("RiskAgent: JSON parse failed — computing risk directly from Jira data")
+            risk_data = _compute_risk_from_jira(sprint_board, blocked_tickets)
             final_response = (
-                "I could not compute a precise risk score from the available data.\n\n"
-                "Based on the sprint documentation, this sprint shows signs of delivery risk.\n"
-                "Please check Jira directly for the current blocker status."
+                _format_risk_response(risk_data) if risk_data
+                else "I could not compute a risk score — no sprint data is currently available."
             )
-            risk_data = {}
         else:
             risk_data      = resp.structured
             final_response = _format_risk_response(risk_data)
@@ -310,6 +377,7 @@ class RiskAgent(BaseAgent):
             summary=final_response[:200],
             structured={
                 "final_response":   final_response,
+                "skip_persona":     True,   # risk table already has manager-ready metrics; persona rewrites hallucinate sprint goals
                 "risk_data":        risk_data,
                 "rag_chunks":       [
                     {"text": c.text, "source": c.source, "score": c.score}

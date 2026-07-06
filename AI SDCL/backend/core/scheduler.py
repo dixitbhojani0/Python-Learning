@@ -49,7 +49,6 @@ async def _run_risk_scan():
     risk summary to #engineering-manager channel.
     """
     from backend.agents.risk_agent import RiskAgent
-    from backend.mcp.registry import MCPRegistry
     from backend.orchestrator.nodes import get_retriever, get_provider
     from backend.core.settings import settings
 
@@ -86,11 +85,10 @@ async def _run_risk_scan():
     }
 
     try:
-        registry = MCPRegistry()
-        agent    = RiskAgent(
+        agent = RiskAgent(
             retriever=get_retriever(),
             llm=get_provider(),
-            mcp_registry=registry,
+            mcp_registry=None,
         )
         payload = await agent.run(synthetic_state)
         risk    = payload.structured.get("risk_data", {})
@@ -121,18 +119,9 @@ async def _run_risk_scan():
         )
 
         try:
-            slack_conn  = registry.get("slack")
-            if slack_conn and slack_conn.is_available():
-                posted = await slack_conn.post_message(channel=channel, text=slack_text)
-                if posted:
-                    logger.info("Scheduler: risk report posted to Slack #%s", channel)
-                else:
-                    logger.warning("Scheduler: Slack post_message returned False — check bot permissions")
-            else:
-                logger.info(
-                    "Scheduler: Slack not available (SLACK_USE_MOCK=true or no token) — "
-                    "skipping notification. Risk summary logged above."
-                )
+            from backend.mcp_client.client import call_mcp_tool
+            await call_mcp_tool("slack_send_message", {"channel": channel, "message": slack_text})
+            logger.info("Scheduler: risk report posted to Slack #%s", channel)
         except Exception:
             logger.exception("Scheduler: failed to post risk report to Slack — continuing")
 

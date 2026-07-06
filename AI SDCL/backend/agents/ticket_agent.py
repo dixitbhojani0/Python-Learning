@@ -485,10 +485,13 @@ class TicketAgent(BaseAgent):
         _PLACEHOLDER_TITLES = {
             "ticket", "a ticket", "new ticket", "create ticket", "create a ticket",
             "new jira ticket", "create jira ticket", "open ticket", "open a ticket",
+            "create a new ticket", "a new ticket", "new issue", "create an issue",
         }
         _META_DESC_PREFIXES = (
             "the user wants", "user wants", "the user is asking",
             "the user requested", "user requested", "the user needs",
+            "a request has been made", "further details are needed",
+            "no specific details", "the user did not",
         )
         is_placeholder = (
             _title.lower() in _PLACEHOLDER_TITLES

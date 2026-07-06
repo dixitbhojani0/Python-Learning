@@ -74,6 +74,23 @@ async def _push_token(stream_id: str, text: str) -> None:
         pass  # Redis unavailable — streaming degrades silently
 
 
+async def _clear_stream(stream_id: str) -> None:
+    """Wipe any tokens already pushed for this stream before a retry/fallback attempt.
+
+    Without this, a primary-model attempt that streams a few tokens and then hits
+    a retryable error (e.g. mid-stream rate limit) leaves those tokens in Redis;
+    the next attempt (retry or fallback) then appends its own full output after
+    them, and the user sees several concatenated answers in one chat bubble.
+    """
+    try:
+        from redis.asyncio import Redis
+        client = Redis.from_url(settings.REDIS_URL, decode_responses=True, socket_connect_timeout=1)
+        await client.delete(f"stream:{stream_id}")
+        await client.aclose()
+    except Exception:
+        pass
+
+
 async def write_stream_done(stream_id: str, final_response: str = "") -> None:
     """Called by chat.py after graph.ainvoke() to signal the SSE endpoint to close."""
     try:
@@ -204,6 +221,8 @@ class GroqProvider(BaseLLMProvider):
         # ── Try primary model with retry on transient errors ──────────────────
         for attempt in range(_MAX_RETRIES):
             try:
+                if do_stream and attempt > 0:
+                    await _clear_stream(sid)  # drop the previous (failed) attempt's tokens
                 async for chunk in self._primary_client.astream(
                     messages,
                     temperature=temperature,
@@ -247,6 +266,8 @@ class GroqProvider(BaseLLMProvider):
         # If we're here, primary failed. Try llama-3.1-8b-instant (faster, smaller).
         try:
             logger.info("GroqProvider: using fallback model '%s'", self._fallback_model)
+            if do_stream:
+                await _clear_stream(sid)  # drop tokens from the failed primary attempts
             async for chunk in self._fallback_client.astream(
                 messages,
                 temperature=temperature,

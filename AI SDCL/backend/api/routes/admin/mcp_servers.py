@@ -6,10 +6,10 @@ that connects to external MCP servers — GitHub Copilot, Notion, Antigravity,
 self-hosted, etc.). Backs the Angular `admin/mcp-servers` page.
 
 Routes (all guarded by get_admin_user):
-  GET    /admin/mcp-servers              — list seed + admin-managed servers + tool counts
+  GET    /admin/mcp-servers              — list all configured servers + tool counts
   POST   /admin/mcp-servers              — add a new server entry
   PUT    /admin/mcp-servers/{name}       — partial update (url / transport / headers)
-  DELETE /admin/mcp-servers/{name}       — remove (refuses to delete the 'sdlc' seed)
+  DELETE /admin/mcp-servers/{name}       — remove a server entry
   POST   /admin/mcp-servers/{name}/test  — probe `tools/list` on that server only
 
 Persistence: rewrites `config/mcp_clients.yaml` atomically (write to .tmp, then
@@ -31,7 +31,6 @@ from backend.api.limiter import limiter
 from backend.auth.middleware import UserContext, get_admin_user
 from backend.core.config_loader import CONFIG_DIR
 from backend.mcp_client.client import (
-    SDLC_SEED_NAME,
     list_active_servers,
     list_all_servers_with_enabled,
     reload_servers,
@@ -67,7 +66,6 @@ class MCPServerListItem(BaseModel):
     disabled_tool_count: int = 0
     tool_count: int | None = None       # None when status != "connected"
     status: str = "unknown"             # "connected" | "failed" | "disabled" | "unknown"
-    is_seed: bool = False
     error: str | None = None
 
 
@@ -131,16 +129,6 @@ def _validate_name_format(name: str) -> None:
         )
 
 
-def _reject_if_seed(name: str, action: str) -> None:
-    """Use for actions that should never apply to the seed (e.g. POST a new
-    'sdlc' entry, or PUT/DELETE the seed's url). Toggle-enabled and per-tool
-    toggles are ALLOWED on the seed."""
-    if name == SDLC_SEED_NAME:
-        raise HTTPException(
-            status_code=409,
-            detail=f"'{SDLC_SEED_NAME}' is the built-in seed connection — {action} is not allowed. "
-                   f"Use the enable/disable toggle instead.",
-        )
 
 
 def _validate_url(url: str) -> None:
@@ -194,7 +182,6 @@ async def list_mcp_servers(request: Request, user: UserContext = Depends(get_adm
                 disabled_tool_count=disabled_count,
                 tool_count=None,
                 status="disabled",
-                is_seed=row["is_seed"],
                 error=None,
             ))
             continue
@@ -211,7 +198,6 @@ async def list_mcp_servers(request: Request, user: UserContext = Depends(get_adm
             disabled_tool_count=disabled_count,
             tool_count=count,
             status="connected" if count is not None else "failed",
-            is_seed=row["is_seed"],
             error=err,
         ))
     return out
@@ -226,7 +212,6 @@ async def add_mcp_server(
 ):
     """Add a new outbound MCP server connection."""
     _validate_name_format(body.name)
-    _reject_if_seed(body.name, "create")
     _validate_url(body.url)
     servers = _read_yaml()
     if body.name in servers:
@@ -247,7 +232,6 @@ async def add_mcp_server(
         transport=body.transport,
         tool_count=count,
         status="connected" if count is not None else "failed",
-        is_seed=False,
         error=err,
     )
 
@@ -260,11 +244,8 @@ async def update_mcp_server(
     body: MCPServerUpdate,
     user: UserContext = Depends(get_admin_user),
 ):
-    """Partial update of an existing connection. Refuses to touch the seed
-    (url/transport/headers come from env for the seed; use toggle-enabled or
-    the per-tool toggle for seed customisation)."""
+    """Partial update of an existing connection (url / transport / headers)."""
     _validate_name_format(name)
-    _reject_if_seed(name, "update")
     servers = _read_yaml()
     if name not in servers:
         raise HTTPException(status_code=404, detail=f"server '{name}' not found")
@@ -290,7 +271,6 @@ async def update_mcp_server(
         transport=entry.get("transport", "streamable_http"),
         tool_count=count,
         status="connected" if count is not None else "failed",
-        is_seed=False,
         error=err,
     )
 
@@ -302,25 +282,9 @@ async def delete_mcp_server(
     name: str,
     user: UserContext = Depends(get_admin_user),
 ):
-    """Delete an outbound connection.
-
-    - Non-seed: removes the YAML entry entirely.
-    - Seed (`sdlc`): hard-deleting is impossible (the url comes from env), so we
-      SOFT-DELETE by setting enabled=false. The seed reappears as disabled in
-      the list; the admin can re-enable it via toggle-enabled.
-    """
+    """Delete an outbound connection. Removes the YAML entry entirely."""
     _validate_name_format(name)
     servers = _read_yaml()
-
-    if name == SDLC_SEED_NAME:
-        entry = servers.get(name) or {}
-        entry["enabled"] = False
-        servers[name] = entry
-        _write_yaml(servers)
-        reload_servers()
-        logger.info("admin/mcp-servers disable seed: %s (by %s) — agents will degrade to RAG-only", name, user.name)
-        return None
-
     if name not in servers:
         raise HTTPException(status_code=404, detail=f"server '{name}' not found")
     del servers[name]
@@ -346,7 +310,7 @@ async def toggle_mcp_server_enabled(
     _validate_name_format(name)
     servers = _read_yaml()
     entry: dict[str, Any] = servers.get(name) or {}
-    if name != SDLC_SEED_NAME and not entry.get("url"):
+    if not entry.get("url"):
         raise HTTPException(status_code=404, detail=f"server '{name}' not found")
     new_enabled = not bool(entry.get("enabled", True))
     entry["enabled"] = new_enabled
@@ -378,13 +342,12 @@ async def list_mcp_server_tools(
     active = list_active_servers()
     probe_entry: dict[str, Any] | None = active.get(name)
     if probe_entry is None:
-        # Server is disabled (or unknown) — try to probe via YAML if it has a url.
-        if not yaml_entry.get("url") and name != SDLC_SEED_NAME:
+        # Server is disabled — probe via YAML url directly if available.
+        if not yaml_entry.get("url"):
             raise HTTPException(status_code=404, detail=f"server '{name}' not found")
-        # For a disabled seed we can still probe via the env URL.
         probe_entry = {
             "transport": yaml_entry.get("transport", "streamable_http"),
-            "url":       yaml_entry.get("url") or os.getenv("MCP_SERVER_URL", "http://127.0.0.1:8100/mcp"),
+            "url":       yaml_entry["url"],
             **({"headers": yaml_entry["headers"]} if yaml_entry.get("headers") else {}),
         }
 
@@ -426,8 +389,7 @@ async def toggle_mcp_tool(
     _validate_name_format(name)
     logger.info("admin/mcp-servers tool toggle request: %s/%s (by %s)", name, tool, user.name)
     servers = _read_yaml()
-    # Seed may not have a YAML entry yet (until something is disabled on it).
-    if name != SDLC_SEED_NAME and name not in servers:
+    if name not in servers:
         raise HTTPException(status_code=404, detail=f"server '{name}' not found")
     entry: dict[str, Any] = servers.get(name) or {}
     disabled = list(entry.get("disabled_tools") or [])

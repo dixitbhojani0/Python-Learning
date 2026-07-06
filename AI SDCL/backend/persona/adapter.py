@@ -109,16 +109,17 @@ class PersonaAdapter:
         )
 
         try:
-            tokens: list[str] = []
-            async for token in self.llm.generate(
+            # generate_text() (not generate()) — this is an internal rewrite step,
+            # not the user-facing answer. generate() streams to the active SSE
+            # stream; using it here leaked the pre-rewrite agent answer AND this
+            # rewritten version into the same chat bubble, back to back.
+            resp = await self.llm.generate_text(
                 prompt=user_prompt,
                 system=system_prompt,
                 temperature=temperature,
                 max_tokens=max_tokens,
-            ):
-                tokens.append(token)
-
-            adapted = "".join(tokens).strip()
+            )
+            adapted = resp.text.strip()
             if not adapted:
                 logger.warning("PersonaAdapter: LLM returned empty rewrite — keeping original")
                 return response

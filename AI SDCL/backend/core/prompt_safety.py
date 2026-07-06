@@ -47,7 +47,7 @@ _FALLBACK_PATTERNS: list[str] = [
     r"disregard\s+(all\s+)?(previous|prior|above)",
     r"(reveal|show|print|display|output|repeat)\s+(your\s+)?(system\s+prompt|instructions?|prompt)",
     r"what\s+(is|are)\s+your\s+(system\s+)?instructions?",
-    r"you\s+are\s+now\s+(a\s+)?(different|new|another|evil|uncensored)\s+(ai|assistant|bot|model)",
+    r"you\s+are\s+now\s+(an?\s+)?(different|new|another|evil|uncensored)\s+(ai|assistant|bot|model)",
     r"act\s+as\s+(if\s+you\s+(are|were)\s+)?(an?\s+)?(unrestricted|jailbroken|uncensored)",
     r"\b(dan|jailbreak|developer\s+mode|god\s+mode)\b",
     r"\n\s*(system|assistant|human|user)\s*:",

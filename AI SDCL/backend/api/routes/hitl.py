@@ -25,24 +25,11 @@ from backend.auth.permissions import ALL_ACTIONS, require
 from backend.core.settings import settings as _settings
 from backend.memory.episodic_memory import episodic_memory
 from backend.memory.session_store import session_store
-from backend.mcp.registry import MCPRegistry
 from backend.mcp_client.client import call_mcp_tool
 from backend.orchestrator.hitl import hitl_manager
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
-
-# ── MCPRegistry singleton — created once, reused across all HITL requests ─────
-# Still used for orchestration READS (e.g. fetch active sprint id). All WRITE
-# actions go through the MCP server via _mcp_write (real MCP, B7 Step 4d).
-_registry: MCPRegistry | None = None
-
-
-def _get_registry() -> MCPRegistry:
-    global _registry
-    if _registry is None:
-        _registry = MCPRegistry()
-    return _registry
 
 
 async def _mcp_write(tool: str, args: dict) -> dict:
@@ -151,22 +138,33 @@ async def approve_hitl(
         )
 
     elif action_type == "approve_pr":
-        pr_number = proposal.get("pr_number", "N/A")
-        pr_title  = proposal.get("pr_title", "")
-        approved  = False
+        pr_number   = proposal.get("pr_number", "N/A")
+        pr_title    = proposal.get("pr_title", "")
+        approved    = False
+        fail_reason = ""
         try:
-            result = await _mcp_write("github_approve_pr", {"pr_id": pr_number, "approver": user.name})
+            raw     = await call_mcp_tool("github_approve_pr", {"pr_id": pr_number, "approver": user.name})
+            result  = raw if isinstance(raw, dict) else {}
             approved = str(result.get("status", "")).upper() == "APPROVED"
             logger.info("hitl/approve: PR %s approve via MCP → %s", pr_number, result.get("status"))
-        except Exception:
-            logger.exception("hitl/approve: MCP github_approve_pr failed — logged, returning success")
-        result_text = (
-            f"✅ **{pr_number} approved by {user.name}.**\n\n"
-            f"PR: _{pr_title}_\n\n"
-            f"The PR is marked **approved** (merge remains a manual GitHub action)."
-            if approved else
-            f"⚠️ **Could not approve {pr_number}** — GitHub connector unavailable."
-        )
+        except Exception as exc:
+            fail_reason = str(exc)
+            logger.exception("hitl/approve: MCP github_approve_pr failed for PR %s", pr_number)
+        http_code = result.get("http_code", 0)
+        if approved:
+            result_text = (
+                f"✅ **{pr_number} approved by {user.name}.**\n\n"
+                f"PR: _{pr_title}_\n\n"
+                f"The PR is marked **approved** (merge remains a manual GitHub action)."
+            )
+        elif http_code == 403 or "403" in fail_reason or "forbidden" in fail_reason.lower():
+            result_text = (
+                f"❌ **Cannot approve {pr_number}.**\n\n"
+                f"GitHub does not allow approving your own pull request. "
+                f"Ask a teammate to approve it, or use the GitHub UI directly."
+            )
+        else:
+            result_text = f"⚠️ **Could not approve {pr_number}** — GitHub connector unavailable."
 
     elif action_type == "release_approval":
         release_data = proposal.get("release_data", {})
@@ -279,6 +277,42 @@ async def approve_hitl(
     }
 
 
+async def _dm_assignee(jira_account_id: str, ticket_title: str, ticket_id: str) -> None:
+    """
+    DM the assigned person in Slack after a ticket is created.
+    Reads config/slack_users.yaml to resolve jira_account_id → slack_user_id,
+    then sends the DM via the MCP slack_send_message tool (consistent with all
+    other Slack calls in this file — never direct httpx here).
+    Best-effort: any failure is logged but never raised.
+    """
+    if not jira_account_id:
+        return
+    try:
+        import yaml
+        from pathlib import Path
+        config_path = Path(__file__).parents[3] / "config" / "slack_users.yaml"
+        data   = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        member = next(
+            (m for m in data.get("team", []) if m.get("jira_account_id") == jira_account_id),
+            None,
+        )
+        if not member:
+            logger.info("_dm_assignee: no Slack mapping for jira_account_id=%s", jira_account_id)
+            return
+        slack_user_id = member.get("slack_user_id", "")
+        if not slack_user_id or slack_user_id.startswith("replace_with"):
+            return
+        # Passing a Slack user ID (e.g. "U01ABC") as the channel opens a DM
+        # automatically — Slack's chat.postMessage API supports this natively.
+        await _mcp_write("slack_send_message", {
+            "channel": slack_user_id,
+            "message": f"📋 You've been assigned *{ticket_id}*: {ticket_title}",
+        })
+        logger.info("_dm_assignee: DM sent to slack_user=%s for ticket=%s", slack_user_id, ticket_id)
+    except Exception:
+        logger.exception("_dm_assignee: failed — ticket %s still created", ticket_id)
+
+
 async def _execute_create_ticket(proposal: dict, approver_role: str = "", approver_name: str = "") -> str:
     """
     Create the Jira ticket over MCP (`jira_create_ticket`).
@@ -300,26 +334,24 @@ async def _execute_create_ticket(proposal: dict, approver_role: str = "", approv
     project             = proposal.get("project", _settings.DEFAULT_PROJECT)
     labels              = proposal.get("labels", [])
 
-    # Best-effort READ: fetch the active sprint so the new ticket lands on the board.
+    # sprint_id="" lets jira_create_ticket resolve the active sprint internally
     sprint_id = ""
-    try:
-        jira = _get_registry().get("jira")
-        if hasattr(jira, "get_active_sprint_id"):
-            sid = await jira.get_active_sprint_id(project)
-            sprint_id = str(sid) if sid else ""
-    except Exception:
-        logger.warning("hitl/approve: could not fetch active sprint — ticket will go to backlog")
 
-    result     = await _mcp_write("jira_create_ticket", {
-        "title": title, "description": description, "priority": priority,
-        "issue_type": issue_type, "labels": ",".join(labels) if labels else "",
-        "assignee_account_id": assignee_account_id, "sprint_id": sprint_id,
-    })
+    try:
+        result = await _mcp_write("jira_create_ticket", {
+            "title": title, "description": description, "priority": priority,
+            "issue_type": issue_type, "labels": ",".join(labels) if labels else "",
+            "assignee_account_id": assignee_account_id, "sprint_id": sprint_id,
+        })
+    except Exception:
+        logger.exception("hitl/approve: MCP jira_create_ticket failed")
+        result = {}
     ticket_id  = result.get("id", "")
     ticket_url = result.get("url", "")
     if ticket_id:
         sprint_note = f"Sprint {sprint_id}" if sprint_id else "backlog"
         logger.info("hitl/approve: ticket created via MCP — %s (sprint=%s)", ticket_id, sprint_id)
+        await _dm_assignee(assignee_account_id, title, ticket_id)
         url_line = f"[Open in Jira]({ticket_url})\n\n" if ticket_url else ""
 
         # E2: stakeholder-created ticket → notify the dev team so they triage it.
@@ -445,9 +477,25 @@ async def reject_hitl(
     else:
         reject_text = "❌ Action rejected. No changes were made."
 
+    ctx = action.get("context", {})
+
+    # Episodic memory: record this rejected action too (mirrors the approve path)
+    # so "what's been rejected recently?" has something to find. Best-effort —
+    # a failure here must never affect the user's confirmation response.
+    try:
+        await episodic_memory.record_event(
+            text=f"{user.name} rejected {action_type}: {reject_text[:200]}",
+            event_type=action_type,
+            project_id=proposal.get("project", _settings.DEFAULT_PROJECT),
+            actor=user.name,
+            ref=(proposal.get("ticket_id") or proposal.get("pr_number") or ""),
+            session_id=ctx.get("session_id", ""),
+        )
+    except Exception:
+        logger.exception("hitl/reject: episodic record failed — continuing")
+
     # Retroactively update the corresponding conversational SQLite/PostgreSQL turn
     # replacing the "[Action proposal pending approval]" placeholder with the rejection text.
-    ctx = action.get("context", {})
     session_id = ctx.get("session_id", "")
     if session_id:
         try:

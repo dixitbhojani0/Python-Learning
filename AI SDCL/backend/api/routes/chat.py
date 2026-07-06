@@ -53,7 +53,7 @@ async def chat(
     """
     project    = body.project or user.project
     session_id = body.session_id or str(uuid.uuid4())
-    stream_id  = str(uuid.uuid4())
+    stream_id  = body.stream_id or str(uuid.uuid4())
 
     # ── Security gate — BEFORE any MCP call, graph execution, or RAG ────────
     #

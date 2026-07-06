@@ -2,19 +2,20 @@
 backend/mcp_client/client.py
 
 MCP client integration for the host, built on langchain-mcp-adapters'
-MultiServerMCPClient. Connects to our SDLC MCP server (and, later, official
-vendor servers), discovers tools via `tools/list`, and exposes them as
-LangChain tools the LLM can select and call.
+MultiServerMCPClient. Connects to one or more MCP servers (our own SDLC server
+plus any admin-managed external servers), discovers tools via `tools/list`, and
+exposes them as LangChain tools the LLM can select and call.
 
 Decoupling contract:
     await get_mcp_tools()  ->  list[BaseTool]
 Callers (the tool-use node / agents) get ready-to-bind tools and nothing else —
-no transport, no URLs, no server topology. Add a server here, every agent gains
-its tools with zero agent-code change (the MCP discovery payoff).
+no transport, no URLs, no server topology. Add a server in the Admin UI, every
+agent gains its tools with zero agent-code change (the MCP discovery payoff).
 
-Config is env-driven (no hardcoded URLs):
-    MCP_SERVER_URL   full streamable-HTTP endpoint
-                     (default http://127.0.0.1:8100/mcp, matching mcp_server/server.py)
+All server connection details (url, transport, headers/auth) live in
+config/mcp_clients.yaml and are managed at runtime via the Admin UI
+(/admin/mcp-servers). No server is special-cased in code — the 'sdlc' server
+is just the first entry in YAML, treated identically to any external MCP server.
 
 is_write_tool() is imported from backend.mcp.constants — the shared source of
 truth also used by the MCP server to stamp ToolAnnotations.  Do NOT redefine
@@ -29,21 +30,64 @@ requests. Call `clear_tools_cache()` after the server's tool set changes (e.g. r
 """
 import json
 import logging
-import os
+import time
 from typing import Any
 
+import httpx
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
 logger = logging.getLogger(__name__)
 
-# Outbound MCP server connections.
-#   - The 'sdlc' SEED entry is always present (our own MCP server, env-driven URL).
-#   - Additional entries come from config/mcp_clients.yaml — admin-managed via the
-#     /admin/mcp-servers REST API and the Angular MCP Servers admin page. Shape
-#     matches the Claude Desktop / Cursor / Antigravity standard.
-# transport "streamable_http" (underscore) = streamable-HTTP in langchain-mcp-adapters
-# 0.1.x (our pin). Newer 0.3.x also accepts "http" — change here if we upgrade.
-_SDLC_SEED_NAME = "sdlc"
+# ── Service-account token cache ───────────────────────────────────────────────
+# Stores (token, expiry_unix_ts). Refreshed automatically when within 60s of expiry.
+_service_token: tuple[str, float] | None = None
+
+
+def _get_service_token(base_url: str) -> str | None:
+    """Return a cached (or freshly fetched) short-lived OAuth service token.
+
+    POSTs {client_secret} to <base_url>/oauth/token/service; result is cached
+    until 60s before expiry, then auto-refreshed. `base_url` is the server's
+    URL with the /mcp path stripped — passed from _load_servers() so the token
+    fetch always uses the same host as the MCP connection (local vs Docker).
+    Returns None when MCP_SERVICE_SECRET is unconfigured.
+    """
+    global _service_token
+    from backend.core.settings import settings  # late import avoids circular dep at module init
+
+    secret = settings.MCP_SERVICE_SECRET
+    if not secret or secret == "placeholder":
+        return None
+
+    now = time.time()
+    if _service_token is not None:
+        token, expiry = _service_token
+        if now < expiry - 60:
+            return token  # still valid
+
+    try:
+        resp = httpx.post(
+            f"{base_url}/oauth/token/service",
+            json={"client_secret": secret},
+            timeout=10.0,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        token = data["access_token"]
+        _service_token = (token, now + int(data.get("expires_in", 3600)))
+        logger.info("MCP service token refreshed (expires_in=%s)", data.get("expires_in"))
+        return token
+    except Exception:
+        logger.exception("MCP service token fetch failed — using stale/no token")
+        return _service_token[0] if _service_token else None
+
+
+def _is_service_token_expiring() -> bool:
+    """True when the cached service token is within 60s of expiry (time to rebuild client)."""
+    if _service_token is None:
+        return False
+    _, expiry = _service_token
+    return time.time() >= expiry - 60
 
 
 def _read_yaml_entries() -> dict[str, dict]:
@@ -65,16 +109,15 @@ def _read_yaml_entries() -> dict[str, dict]:
 
 
 def _load_servers() -> dict[str, dict]:
-    """Build the active MCP server dict: seed (sdlc) + admin-managed entries.
+    """Build the active MCP server dict from mcp_clients.yaml.
 
     We read `mcp_clients.yaml` DIRECTLY from disk here rather than via the
     config-loader cache, because the admin REST handler writes the file and
     expects subsequent reads (in the same request cycle) to see the new entries
     — the watchdog reload is ~1 second behind, too slow for that round-trip.
 
-    The seed is non-removable so the local stack always works even when the
-    admin-managed list is empty. For the seed, its url and transport defaults
-    come from YAML and can be overridden by the environment.
+    Every server — including 'sdlc' — is treated identically: url, transport,
+    and headers all come from YAML. No server is special-cased in code.
     """
     yaml_entries = _read_yaml_entries()
     servers: dict[str, dict] = {}
@@ -86,9 +129,6 @@ def _load_servers() -> dict[str, dict]:
             continue   # disabled entries are kept in YAML but not handed to the client
 
         url = entry.get("url")
-        if name == _SDLC_SEED_NAME:
-            url = os.getenv("MCP_SERVER_URL") or url
-
         if not url:
             continue
 
@@ -96,7 +136,14 @@ def _load_servers() -> dict[str, dict]:
             "transport": entry.get("transport", "streamable_http"),
             "url":       url,
         }
-        if isinstance(entry.get("headers"), dict) and entry["headers"]:
+        if entry.get("auth") == "service":
+            # Derive token endpoint from the same URL the client connects to,
+            # so local (127.0.0.1) and Docker (host.docker.internal) both work.
+            base_url = url.removesuffix("/mcp")
+            token = _get_service_token(base_url)
+            if token:
+                out["headers"] = {"Authorization": f"Bearer {token}"}
+        elif isinstance(entry.get("headers"), dict) and entry["headers"]:
             out["headers"] = entry["headers"]
         servers[name] = out
     return servers
@@ -113,9 +160,6 @@ def list_all_servers_with_enabled() -> list[dict]:
             continue
 
         url = entry.get("url")
-        if name == _SDLC_SEED_NAME:
-            url = os.getenv("MCP_SERVER_URL") or url
-
         if not url:
             continue
 
@@ -125,7 +169,6 @@ def list_all_servers_with_enabled() -> list[dict]:
             "transport":      entry.get("transport", "streamable_http"),
             "enabled":        bool(entry.get("enabled", True)),
             "disabled_tools": list(entry.get("disabled_tools") or []),
-            "is_seed":        (name == _SDLC_SEED_NAME),
         })
     return out
 
@@ -155,8 +198,15 @@ _all_tools_cache: list | None = None
 
 
 def _get_client() -> MultiServerMCPClient:
-    """Lazily build the (stateless) MultiServerMCPClient singleton."""
+    """Lazily build the (stateless) MultiServerMCPClient singleton.
+
+    Proactively rebuilds when the service-account token is within 60s of expiry
+    so the new client gets a fresh token injected via _load_servers().
+    """
     global _client
+    if _client is not None and _is_service_token_expiring():
+        logger.info("MCP service token expiring — rebuilding client with fresh token")
+        reload_servers()  # sets _client = None, _all_tools_cache = None
     if _client is None:
         servers = _load_servers()
         _client = MultiServerMCPClient(servers)
@@ -181,13 +231,20 @@ def list_active_servers() -> dict[str, dict]:
     return _load_servers()
 
 
-# Public reference to the seed name so admin code can refuse to delete it.
-SDLC_SEED_NAME = _SDLC_SEED_NAME
 
 
 async def _fetch_all_tools(force_refresh: bool = False) -> list:
-    """Run `tools/list` once and cache every tool (read + write)."""
+    """Run `tools/list` once and cache every tool (read + write).
+
+    _get_client() is called unconditionally (even on a cache hit) because that's
+    where the service-token expiry check lives — it proactively rebuilds the
+    client (and drops _all_tools_cache) when the token is within 60s of expiry.
+    Skipping this call on cache hits was the bug: it let the refresh check go
+    dead the moment tools were first cached, so the token just expired every
+    hour with nothing rechecking it.
+    """
     global _all_tools_cache
+    _get_client()
     if _all_tools_cache is not None and not force_refresh:
         return _all_tools_cache
     tools = await _get_client().get_tools()
@@ -241,6 +298,44 @@ def normalize_tool_result(result: object) -> object:
     return result
 
 
+def _is_auth_error(exc: BaseException) -> bool:
+    """True if exc (or anything nested in an ExceptionGroup) is an HTTP 401.
+
+    The MCP server's token store is Redis-backed with no persistence — a server/Redis
+    restart silently wipes every issued token. Our local _service_token cache only
+    checks its own wall-clock expiry, so it keeps re-sending a token Redis no longer
+    has for up to an hour after such a restart. Detect by status code (not message
+    text) so this survives library/wording changes.
+    """
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code == 401
+    if isinstance(exc, BaseExceptionGroup):
+        return any(_is_auth_error(e) for e in exc.exceptions)
+    return False
+
+
+async def ainvoke_tool(tool, args: dict) -> object:
+    """Invoke an MCP tool; on 401 force a fresh service token + client and retry once.
+
+    Shared by call_mcp_tool() and the gather_via_tools loop (tool_use.py) — the only
+    two places that call tool.ainvoke() — so a token invalidated out from under us
+    (see _is_auth_error) self-heals on the very next call instead of waiting for the
+    stale token's wall-clock expiry.
+    """
+    try:
+        return await tool.ainvoke(args)
+    except BaseException as exc:
+        if not _is_auth_error(exc):
+            raise
+        logger.warning("MCP tool %s got 401 — service token stale, refreshing and retrying once", tool.name)
+        global _service_token
+        _service_token = None
+        reload_servers()
+        tools = await _fetch_all_tools(force_refresh=True)
+        fresh = next((t for t in tools if t.name == tool.name), tool)
+        return await fresh.ainvoke(args)
+
+
 async def call_mcp_tool(name: str, args: dict) -> object:
     """
     Invoke a single MCP tool by name (read OR write) and return its NORMALIZED result.
@@ -253,7 +348,7 @@ async def call_mcp_tool(name: str, args: dict) -> object:
     if tool is None:
         raise KeyError(f"MCP tool {name!r} not found. Available: {[t.name for t in tools]}")
     logger.info("call_mcp_tool: %s(%s)", name, args)
-    return normalize_tool_result(await tool.ainvoke(args))
+    return normalize_tool_result(await ainvoke_tool(tool, args))
 
 
 def clear_tools_cache() -> None:

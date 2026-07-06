@@ -136,13 +136,10 @@ async def _run_agent(agent_class: Type[BaseAgent], state: SDLCState) -> dict:
     Instantiates the agent with shared singletons, calls run(), and converts
     the AgentPayload into graph state fields.
     """
-    from backend.mcp.registry import MCPRegistry
-    registry = MCPRegistry()
-
     agent = agent_class(
         retriever=get_retriever(),
         llm=get_provider(),
-        mcp_registry=registry,
+        mcp_registry=None,
     )
     payload = await agent.run(state)
     return _payload_to_state(payload)
@@ -198,11 +195,11 @@ async def _summarize_turns(turns: list[dict]) -> str:
         prompt = config.get_prompt("conversation_summarizer", conversation_text=conversation_text)
         system = config.get_prompt("system_prompt")
 
-        tokens: list[str] = []
-        async for chunk in get_provider().generate(prompt, system, temperature=0.1, max_tokens=300):
-            tokens.append(chunk)
-
-        summary = "".join(tokens).strip()
+        # generate_text() (not generate()) — this is internal reasoning, not the
+        # user-facing answer. generate() streams to the active SSE stream; using it
+        # here leaked the summary text into the chat UI as if it were the answer.
+        resp    = await get_provider().generate_text(prompt, system, temperature=0.1, max_tokens=300)
+        summary = resp.text.strip()
         logger.info("retrieve_memory: summarized %d older turns → %d chars", len(turns), len(summary))
         return summary
 

@@ -49,22 +49,13 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://localhost:6379"
     REDIS_TTL_SECONDS: int = 3600
 
-    # ── GitHub MCP
-    GITHUB_TOKEN: str = "placeholder"
-    GITHUB_REPO: str = "your-org/your-repo"
-
-    # ── Jira MCP
+    # ── Jira / Confluence credentials — forwarded to sdlc-mcp-server via MCP tool calls.
+    # All Confluence, Jira, GitHub, Slack calls go through sdlc-mcp-server.
     JIRA_BASE_URL: str = "https://your-org.atlassian.net"
     JIRA_EMAIL: str = "your-email@company.com"
     JIRA_TOKEN: str = "placeholder"
     JIRA_PROJECT_KEY: str = "SDLC"
-
-    # ── Confluence (same Atlassian auth as Jira — no extra credentials needed)
     CONFLUENCE_SPACE_KEY: str = "SDLC"
-
-    # ── Slack MCP
-    SLACK_BOT_TOKEN: str = "placeholder"
-    SLACK_USE_MOCK: bool = False
 
     # ── App
     APP_SECRET_KEY: str = "change_this_in_production"
@@ -96,6 +87,19 @@ class Settings(BaseSettings):
 
     # ── Default project
     DEFAULT_PROJECT: str = "SDLC"
+
+    # ── MCP Server — OAuth 2.1 service account
+    # Same secret as OAUTH_SERVICE_SECRET in sdlc-mcp-server/.env.
+    # The client POSTs this to /oauth/token/service to get a short-lived (1hr) token.
+    MCP_SERVICE_SECRET: str = "placeholder"
+    MCP_SERVER_URL: str = "http://127.0.0.1:8100/mcp"
+
+    # ── Slack Webhook (inbound events from Slack)
+    # SLACK_SIGNING_SECRET: from Slack App → Basic Information → App Credentials
+    # SLACK_BOT_TOKEN:      from Slack App → OAuth & Permissions → Bot User OAuth Token (xoxb-...)
+    # Required scopes: app_mentions:read, chat:write, im:write
+    SLACK_SIGNING_SECRET: str = ""
+    SLACK_BOT_TOKEN: str = ""
 
 
 @lru_cache()

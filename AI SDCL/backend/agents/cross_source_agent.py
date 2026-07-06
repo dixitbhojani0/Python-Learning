@@ -265,7 +265,16 @@ def _format_mcp_context(
 
     if jira_tickets:
         lines.append("\n### Jira: Current Tickets")
-        for t in jira_tickets:
+        _status_rank  = {"TO_DO": 0, "IN_PROGRESS": 1, "DONE": 3, "CANCELLED": 4}
+        _priority_rank = {"HIGHEST": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
+        sorted_tickets = sorted(
+            jira_tickets,
+            key=lambda t: (
+                _status_rank.get(t.get("status", ""), 2),
+                _priority_rank.get(t.get("priority", ""), 4),
+            ),
+        )
+        for t in sorted_tickets:
             status        = t.get("status", "UNKNOWN")
             raw_blockers  = "; ".join(t.get("blockers", [])) or "none"
             safe_title    = safety_guard.sanitize(t.get("title", ""))

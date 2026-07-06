@@ -125,10 +125,10 @@ async def rag_and_generate(
                 + "\n\nIMPORTANT: Your previous draft contained unverified claims. "
                 "Respond ONLY using facts explicitly stated in the retrieved context above."
             )
-            retry_tokens: list[str] = []
-            async for token in provider.generate(grounded_prompt, system_prompt, 0.0, max_tokens):
-                retry_tokens.append(token)
-            retry_text = "".join(retry_tokens).strip()
+            # generate_text() — the first draft already streamed to the user;
+            # streaming this retry too would show both drafts concatenated.
+            retry_resp = await provider.generate_text(grounded_prompt, system_prompt, 0.0, max_tokens)
+            retry_text = retry_resp.text.strip()
             if retry_text:
                 retry_faith = await faithfulness_score(query, retry_text, chunk_dicts, provider)
                 if retry_faith >= faith:

@@ -35,11 +35,10 @@ import asyncio
 import json
 import logging
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 
 from backend.api.limiter import limiter
-from backend.auth.middleware import UserContext, get_current_user
 from backend.core.config_loader import config
 from backend.core.settings import settings as _settings
 
@@ -242,32 +241,27 @@ async def _event_generator(stream_id: str):
 async def stream_response(
     request:   Request,
     stream_id: str,
-    user: UserContext = Depends(get_current_user),
 ):
     """
-    SSE streaming endpoint.
+    SSE streaming endpoint — no auth header required.
+
+    EventSource (browser Web API) cannot send custom headers, so x-token
+    cannot be used here. Access control is the stream_id UUID itself — it is
+    only known to the client that made the original POST /api/chat request.
 
     Open this endpoint immediately after calling POST /api/chat.
-    Use the stream_id returned in the ChatResponse.
+    Use the stream_id from the ChatResponse (or supply your own before POSTing).
 
     Example (JavaScript EventSource):
-        const source = new EventSource('/api/stream/abc123', {
-            headers: { 'x-token': 'dev_token_alice' }
-        });
+        const source = new EventSource('/api/stream/abc123');
         source.onmessage = (e) => {
             const data = JSON.parse(e.data);
             if (data.type === 'token') appendToken(data.text);
             if (data.type === 'hitl_request') showHITLButtons(data);
             if (data.type === 'done') source.close();
         };
-
-    The Chainlit frontend (frontend/app.py) uses httpx AsyncClient.stream()
-    which handles SSE natively.
     """
-    logger.info(
-        "stream: opening for stream_id='%s' user='%s'",
-        stream_id, user.name,
-    )
+    logger.info("stream: opening for stream_id='%s'", stream_id)
 
     return StreamingResponse(
         _event_generator(stream_id),

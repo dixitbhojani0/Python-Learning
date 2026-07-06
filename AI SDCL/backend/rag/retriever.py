@@ -248,7 +248,7 @@ class HybridRetriever:
                 if r.payload.get("text")
             ]
             tokenized = [doc["text"].lower().split() for doc in corpus_docs]
-            bm25 = BM25Okapi(tokenized) if tokenized else BM25Okapi([[]])
+            bm25 = BM25Okapi(tokenized) if tokenized else BM25Okapi([["placeholder"]])
             self._bm25_cache[project] = (bm25, corpus_docs)
             logger.info(
                 "HybridRetriever: built BM25 index project='%s' — %d docs",
@@ -320,13 +320,25 @@ class HybridRetriever:
         pairs = [(query, doc["text"]) for doc in fused]
         rerank_scores = reranker.predict(pairs)
 
-        # ── Step 5: Sort by reranker score, take top-k
+        # ── Step 5: Sort by reranker score, dedupe by parent, take top-k
+        # Overlapping sibling child chunks (10% overlap, by design) share the
+        # same parent_text — without this, two siblings can both make top-k
+        # and the LLM sees (and often restates) the same paragraph twice
+        # under different "Source N" labels.
         scored = sorted(
             zip(fused, rerank_scores),
             key=lambda x: x[1],
             reverse=True,
         )
-        top_results = scored[:self.top_k]
+        seen_parents: set[str] = set()
+        deduped = []
+        for doc, score in scored:
+            parent_key = doc.get("parent_text") or doc["text"]
+            if parent_key in seen_parents:
+                continue
+            seen_parents.add(parent_key)
+            deduped.append((doc, score))
+        top_results = deduped[:self.top_k]
 
         # ── Step 6: Build RetrievedChunk objects (use parent_text for LLM context)
         chunks = [
