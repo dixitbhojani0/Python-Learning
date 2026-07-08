@@ -1,0 +1,389 @@
+/* FinAdvisor AI — Advisor Copilot demo. Dark glassmorphism, green accent. */
+
+:root {
+  --bg: #0d1117;
+  --panel: rgba(22, 27, 34, 0.72);
+  --panel-border: rgba(255, 255, 255, 0.08);
+  --text: #e6edf3;
+  --muted: #8b949e;
+  --green: #22c55e;
+  --green-dark: #16a34a;
+  --glow: rgba(34, 197, 94, 0.45);
+  --radius: 14px;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body { height: 100%; }
+
+body {
+  background: radial-gradient(1200px 800px at 30% 20%, #1c2530 0%, var(--bg) 60%);
+  color: var(--text);
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  overflow: hidden;
+}
+
+.hidden { display: none !important; }
+
+/* ---------- Top bar ---------- */
+#topbar {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+  background: rgba(13, 17, 23, 0.65);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--panel-border);
+  z-index: 30;
+}
+
+.brand { font-size: 20px; font-weight: 700; letter-spacing: 0.5px; }
+.brand-ai { color: var(--green); font-weight: 800; }
+.brand-sub { margin-left: 14px; font-size: 13px; font-weight: 400; color: var(--muted); }
+
+.topbar-right { display: flex; align-items: center; gap: 12px; }
+
+.advisor-chip {
+  font-size: 13px;
+  color: var(--muted);
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  padding: 6px 12px;
+  border-radius: 20px;
+}
+
+.ghost-btn {
+  background: transparent;
+  border: 1px solid var(--panel-border);
+  color: var(--muted);
+  border-radius: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.ghost-btn:hover { color: var(--text); border-color: var(--green); }
+
+/* ---------- Stage layout ---------- */
+#stage {
+  display: flex;
+  height: 100vh;
+  padding-top: 56px;
+}
+
+/* ---------- Avatar pane (left ~45%) ---------- */
+#avatar-pane {
+  position: relative;
+  width: 45%;
+  min-width: 420px;
+  background: linear-gradient(180deg, #2a3440 0%, #171c23 100%);
+  overflow: hidden;
+}
+
+#avatar-video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+#dry-placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+}
+.dry-face { font-size: 120px; filter: grayscale(0.2); }
+.dry-label {
+  font-size: 12px;
+  letter-spacing: 2px;
+  color: var(--muted);
+  border: 1px dashed var(--muted);
+  padding: 6px 12px;
+  border-radius: 8px;
+}
+
+/* Advisor's recognized speech */
+#user-bubble {
+  position: absolute;
+  top: 76px;
+  left: 20px;
+  max-width: 75%;
+  background: var(--panel);
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--panel-border);
+  border-radius: 16px 16px 16px 4px;
+  padding: 10px 16px;
+  font-size: 14px;
+  color: var(--text);
+  animation: fade-in 0.25s ease;
+  z-index: 5;
+}
+#user-bubble::before { content: "🎙 "; opacity: 0.7; }
+
+/* Avatar caption (what Penny is saying) */
+#caption {
+  position: absolute;
+  bottom: 110px;
+  left: 20px;
+  right: 20px;
+  text-align: center;
+  font-size: 15px;
+  line-height: 1.45;
+  color: var(--text);
+  background: rgba(13, 17, 23, 0.66);
+  backdrop-filter: blur(8px);
+  border-radius: 10px;
+  padding: 10px 16px;
+  animation: fade-in 0.25s ease;
+  z-index: 5;
+}
+
+/* ---------- Controls ---------- */
+#controls {
+  position: absolute;
+  bottom: 24px;
+  left: 0; right: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  z-index: 6;
+}
+
+#status-pill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--panel);
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--panel-border);
+  border-radius: 20px;
+  padding: 8px 16px;
+  font-size: 13px;
+  min-width: 150px;
+}
+#status-pill .dot {
+  width: 9px; height: 9px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+#status-pill[data-state="listening"] .dot { background: var(--green); animation: pulse 1.4s infinite; }
+#status-pill[data-state="thinking"]  .dot { background: #eab308; animation: pulse 0.8s infinite; }
+#status-pill[data-state="speaking"]  .dot { background: #38bdf8; animation: pulse 1s infinite; }
+#status-pill[data-state="connecting"] .dot { background: #eab308; animation: pulse 0.6s infinite; }
+
+#mic-btn {
+  width: 54px; height: 54px;
+  border-radius: 50%;
+  border: 1px solid var(--panel-border);
+  background: var(--green);
+  font-size: 22px;
+  cursor: pointer;
+  box-shadow: 0 4px 18px var(--glow);
+  transition: transform 0.15s ease;
+}
+#mic-btn:hover { transform: scale(1.08); }
+
+/* Waveform — animates only while speaking */
+#waveform {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 30px;
+  opacity: 0.25;
+  transition: opacity 0.3s ease;
+}
+#waveform i {
+  width: 4px;
+  height: 6px;
+  background: var(--green);
+  border-radius: 2px;
+}
+body.speaking #waveform { opacity: 1; }
+body.speaking #waveform i { animation: wave 0.9s ease-in-out infinite; }
+#waveform i:nth-child(2n) { animation-delay: 0.15s; }
+#waveform i:nth-child(3n) { animation-delay: 0.3s; }
+#waveform i:nth-child(4n) { animation-delay: 0.45s; }
+
+/* ---------- Cards pane (right) ---------- */
+#cards-pane {
+  flex: 1;
+  overflow-y: auto;
+  padding: 28px;
+}
+
+#cards { display: flex; flex-direction: column; gap: 18px; max-width: 640px; }
+
+.card {
+  background: var(--panel);
+  backdrop-filter: blur(14px);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  padding: 20px 22px;
+  animation: slide-in 0.4s ease;
+}
+.card h3 {
+  font-size: 15px;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+}
+.card ul { list-style: none; }
+.card li {
+  font-size: 14px;
+  color: var(--muted);
+  padding: 5px 0 5px 20px;
+  position: relative;
+}
+.card li::before { content: "•"; color: var(--green); position: absolute; left: 4px; }
+.card .kv { display: flex; justify-content: space-between; font-size: 14px; padding: 5px 0; }
+.card .kv span:first-child { color: var(--muted); }
+.card p { font-size: 14px; line-height: 1.55; color: var(--text); }
+
+.card.active {
+  border-color: var(--green);
+  box-shadow: 0 0 0 1px var(--green), 0 0 26px var(--glow);
+}
+
+.chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+.chip {
+  font-size: 12.5px;
+  background: rgba(34, 197, 94, 0.12);
+  color: var(--green);
+  border: 1px solid rgba(34, 197, 94, 0.35);
+  border-radius: 16px;
+  padding: 5px 12px;
+}
+
+.note-draft {
+  font-style: italic;
+  background: rgba(255, 255, 255, 0.04);
+  border-left: 3px solid var(--green);
+  padding: 12px 14px;
+  border-radius: 6px;
+}
+
+.badge {
+  font-size: 11px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--green);
+  background: rgba(34, 197, 94, 0.12);
+  padding: 3px 9px;
+  border-radius: 5px;
+}
+.badge.amber { color: #eab308; background: rgba(234, 179, 8, 0.12); }
+
+/* ---------- Landing overlay ---------- */
+#landing {
+  position: fixed;
+  inset: 0;
+  background:
+    radial-gradient(900px 600px at 70% 40%, rgba(56, 68, 82, 0.5) 0%, transparent 60%),
+    var(--bg);
+  display: flex;
+  align-items: center;
+  z-index: 40;
+}
+
+.landing-card {
+  margin-left: 7vw;
+  width: 400px;
+  background: rgba(60, 66, 74, 0.55);
+  backdrop-filter: blur(16px);
+  border: 1px solid var(--panel-border);
+  border-radius: 16px;
+  padding: 36px 32px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+}
+.landing-brand { font-size: 26px; margin-bottom: 26px; }
+.landing-card h1 { font-size: 34px; font-weight: 600; margin-bottom: 8px; }
+.landing-sub { color: var(--muted); font-size: 15px; margin-bottom: 28px; }
+
+.cta {
+  width: 100%;
+  background: var(--green);
+  color: #06220f;
+  font-size: 17px;
+  font-weight: 600;
+  border: none;
+  border-radius: 26px;
+  padding: 13px 0;
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+.cta:hover { background: var(--green-dark); transform: translateY(-1px); }
+
+.landing-note { margin-top: 16px; font-size: 12.5px; color: var(--muted); min-height: 1em; }
+
+/* ---------- Closing value screen ---------- */
+#closing {
+  position: fixed;
+  inset: 0;
+  background: rgba(13, 17, 23, 0.94);
+  backdrop-filter: blur(10px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 40px;
+  z-index: 50;
+  animation: fade-in 0.6s ease;
+}
+#closing h2 { font-size: 30px; font-weight: 700; }
+
+.value-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(260px, 320px));
+  gap: 22px;
+}
+.value-tile {
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  padding: 26px;
+  font-size: 30px;
+  text-align: center;
+}
+.value-tile h3 { font-size: 17px; margin: 12px 0 8px; }
+.value-tile p { font-size: 13.5px; color: var(--muted); line-height: 1.5; }
+
+/* ---------- Scene-jump list (discreet, bottom-left) ---------- */
+#scene-list {
+  position: fixed;
+  bottom: 12px;
+  left: 12px;
+  display: flex;
+  gap: 6px;
+  list-style: none;
+  z-index: 35;
+  opacity: 0.35;
+  transition: opacity 0.2s ease;
+}
+#scene-list:hover { opacity: 1; }
+#scene-list li {
+  width: 26px; height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  color: var(--muted);
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+#scene-list li.played { color: var(--green); border-color: var(--green); }
+
+/* ---------- Animations ---------- */
+@keyframes pulse { 50% { opacity: 0.35; } }
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes slide-in { from { opacity: 0; transform: translateX(24px); } to { opacity: 1; transform: none; } }
+@keyframes wave { 0%, 100% { height: 6px; } 50% { height: 26px; } }
