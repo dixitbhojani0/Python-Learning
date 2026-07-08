@@ -44,5 +44,11 @@ npm run build
 | `?debug=1` | Shows the scene-jump counter (hidden for clean recordings) |
 
 Always available: keys **1–6** jump to a scene, **Space**/mic-click advances, ⟳ Reconnect
-appears if the free-tier 3-minute session cap hits. Scene count served is set by
-`ACTIVE_SCENES` in `backend/.env` (2 of 6 currently active).
+appears if the free-tier 3-minute session cap hits.
+
+## Editing the questions & answers
+
+Everything the avatar says lives in **`backend/scenes.json`** — plain JSON, editable by
+anyone, re-read on every browser refresh (no restart). Each scene has an
+`"enabled": true/false` switch (2 of 6 currently enabled). Plain-language guide:
+[backend/HOW_TO_ADD_QUESTIONS.md](backend/HOW_TO_ADD_QUESTIONS.md).

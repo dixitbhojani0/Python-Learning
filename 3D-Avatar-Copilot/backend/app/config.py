@@ -10,7 +10,6 @@ class Settings(BaseSettings):
 
     avatar_provider: str = "anam"  # which provider /api/v1/session hands out
     persona_name: str = "Deniel"
-    active_scenes: int = 2  # how many of the scripted scenes the demo serves
 
     anam_api_key: str = ""
     anam_avatar_id: str = ""
