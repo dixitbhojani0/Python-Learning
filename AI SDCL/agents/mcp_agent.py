@@ -173,6 +173,11 @@ class MCPAgent(BaseAgent):
         project   = state.get("project_id", "") or settings.DEFAULT_PROJECT
         user_role = state.get("user_role", "developer")
 
+        # Built early (not just for the synthesis prompt) so the tool-selection
+        # step below can also resolve ambiguous references ("that ticket") to a
+        # concrete target instead of picking a generic tool for lack of one.
+        history_section = _format_history(state.get("recent_messages", []))
+
         # ── 1. RAG (hybrid + corrective-RAG retry on low confidence) ──────────
         chunks, confidence, rag_strategy = await self.retriever.retrieve_with_corrective_rag(
             query, project, self._rewrite_query
@@ -180,7 +185,7 @@ class MCPAgent(BaseAgent):
         logger.info("MCPAgent: %d RAG chunks, confidence=%.3f (%s)", len(chunks), confidence, rag_strategy)
 
         # ── 2. Live data via REAL MCP — the LLM picks/chains tools ────────────
-        gathered = await gather_via_tools(query)
+        gathered = await gather_via_tools(query, history=history_section)
         logger.info("MCPAgent: MCP tools called: %s", gathered.tools_called or "none")
 
         # ── 2b. Enrich ticket IDs mentioned in RAG chunks with live Jira state ─
@@ -253,7 +258,6 @@ class MCPAgent(BaseAgent):
             self.config.get_prompt(f"persona_{user_role}")
             or self.config.get_prompt("persona_developer")
         )
-        history_section = _format_history(state.get("recent_messages", []))
         mcp_section     = gathered.as_context()
         rag_section     = format_rag_context(chunks)
         safe_query      = safety_guard.safe_user_content(query)
@@ -293,7 +297,13 @@ class MCPAgent(BaseAgent):
             "**Data precedence (strictly enforced)**: "
             "Live Ticket Statuses section > Live Tool Data section > Document Context. "
             "A ticket listed as DONE or IN_PROGRESS in Live Ticket Statuses is NOT blocked "
-            "— ignore any contradicting status claim in the document content below."
+            "— ignore any contradicting status claim in the document content below.\n"
+            "**Pronoun resolution**: when the query refers to something ambiguously "
+            "(\"that ticket\", \"it\", \"the one you mentioned\"), resolve it using the "
+            "## Recent Conversation section — the ticket/topic from the MOST RECENT prior "
+            "turn always wins. The ## Project Knowledge section is general project facts, "
+            "NOT a record of what this conversation is currently about — never let it "
+            "override what was just discussed."
         )
 
         # I2: enforce token budget — trim RAG if the full prompt would overflow
@@ -344,10 +354,10 @@ class MCPAgent(BaseAgent):
                     + "\n\nIMPORTANT: Your previous draft contained unverified claims. "
                     "Respond ONLY using facts explicitly stated in the retrieved context above."
                 )
-                retry_tokens: list[str] = []
-                async for token in self.llm.generate(grounded_prompt, system_prompt, 0.0, max_tokens):
-                    retry_tokens.append(token)
-                retry_text = "".join(retry_tokens).strip()
+                # generate_text() — the first draft already streamed to the user;
+                # streaming this retry too would show both drafts concatenated.
+                retry_resp = await self.llm.generate_text(grounded_prompt, system_prompt, 0.0, max_tokens)
+                retry_text = retry_resp.text.strip()
                 if retry_text:
                     retry_faith = await faithfulness_score(query, retry_text, chunk_dicts)
                     if retry_faith >= faith:

@@ -8,13 +8,22 @@ Flow:
      LLM owns intent, not a hardcoded keyword list). An explicit "#channel" token
      in the raw query overrides the extracted channel since it is unambiguous.
   2. If the intent is a sprint status with no explicit body, the agent composes
-     one from live MCP sprint-board + PR data.
-  3. Surface a HITL preview; on approve, send via slack.send_message().
+     one from live MCP sprint-board + PR data (fast, deterministic — no extra
+     LLM call needed for this one well-known case).
+  3. For anything else with no literal message given (e.g. "notify X about the
+     blocked tickets"), run the SAME dynamic tool-gathering loop MCPAgent uses
+     for investigative questions (gather_via_tools — read-only tools, so it can
+     never send anything itself), then compose a message from whatever it
+     found. Only if gathering finds nothing relevant does the agent fall back
+     to asking the user for explicit text — this is what makes "any kind of
+     message" possible instead of a fixed list of hardcoded topics.
+  4. Surface a HITL preview; on approve, send via slack.send_message().
 
 Example queries (any phrasing works — the LLM interprets, no fixed patterns):
   "notify the managers that the sprint is at risk"
   "send sprint status to #engineering-manager"
   "notify #backend: PR-5 needs review"
+  "notify the managers about the blocked tickets"          (dynamic gather)
 """
 import asyncio
 import logging
@@ -29,7 +38,8 @@ except ImportError:
 from backend.agents.base_agent import AgentPayload, BaseAgent
 from backend.core.config_loader import config as _default_config
 from backend.core.settings import settings as _settings
-from backend.mcp_client.client import call_mcp_tool
+from backend.mcp_client.client import as_list, call_mcp_tool
+from backend.mcp_client.tool_use import ToolGatherResult, gather_via_tools
 from backend.orchestrator.state import SDLCState
 from backend.rag.retriever import HybridRetriever
 
@@ -38,6 +48,13 @@ logger = logging.getLogger(__name__)
 # Default channel comes from config/agents.yaml notify_agent.slack_channel (single
 # source of truth). Hardcoded "general" is the last-resort fallback only.
 _FALLBACK_CHANNEL = "general"
+
+# gather_via_tools' default system prompt is written for answering investigative
+# questions, so left to it, the model treats "notify the managers" as something
+# to INVESTIGATE (verified live: it burned several calls searching Slack message
+# history for "manager", all of which failed) instead of just the audience —
+# which is already resolved separately via channel extraction, not gathering.
+# Prompt text lives in config/prompts.yaml under "notify_gather_system".
 
 
 def _format_sprint_status(board: dict, prs: list[dict]) -> str:
@@ -137,11 +154,58 @@ class NotifyAgent(BaseAgent):
             return ""
 
         board = results[0] if isinstance(results[0], dict) else {}
-        prs   = results[1] if isinstance(results[1], list) else []
+        prs   = as_list(results[1])
         if not board:
             logger.warning("NotifyAgent: sprint board empty — cannot auto-compose status")
             return ""
         return _format_sprint_status(board, prs)
+
+    async def _compose_from_gathered(self, query: str) -> str:
+        """
+        Dynamic fallback for any topic that isn't sprint_status: run the SAME
+        tool-gathering loop MCPAgent uses (read-only tools — this can fetch
+        blocked tickets, PR status, ticket details, etc. but can never itself
+        send anything), then compose a Slack message from whatever it found.
+
+        Returns "" if gathering found nothing relevant, so the caller falls back
+        to asking the user for explicit text rather than fabricating a message
+        from no data.
+        """
+        gathered = await gather_via_tools(query, system=self.config.get_prompt("notify_gather_system"))
+
+        # Keep only calls that returned something USEFUL. A call can succeed at
+        # the transport level (no exception -> ToolCall.error is empty) but still
+        # come back with a domain-level failure dict like {"error": "channel not
+        # found"} — every connector in this app signals failure that way. Verified
+        # live: "notify the managers about the blocked tickets" gathered ONE real,
+        # relevant result (a blocked ticket) alongside several failed Slack-search
+        # attempts at resolving "managers" as a search term — and having that noise
+        # sitting next to the real result made the compose step decline entirely,
+        # even though there was something genuinely worth notifying about.
+        useful = [
+            c for c in gathered.calls
+            if not c.error and not (isinstance(c.result, dict) and c.result.get("error"))
+        ]
+        if not useful:
+            return ""
+        prompt = self.config.get_prompt(
+            "notify_compose", query=query, gathered_context=ToolGatherResult(calls=useful).as_context(),
+        )
+        if not prompt:
+            return ""
+        try:
+            resp = await self.llm.generate_text(prompt, self.config.get_prompt("system_prompt"), temperature=0.2, max_tokens=300)
+            text = (resp.text or "").strip()
+            # The prompt asks the model to say NONE when the gathered data doesn't
+            # actually support composing a real notification (e.g. it only found a
+            # tool error) — without this, it tends to write ABOUT the failure
+            # instead of declining (verified live: "I'm unable to find the channel...").
+            if text.upper() == "NONE":
+                return ""
+            return text
+        except Exception:
+            logger.exception("NotifyAgent: compose-from-gathered failed")
+            return ""
 
     @traceable(name="notify_agent", run_type="chain")
     async def run(self, state: SDLCState) -> AgentPayload:
@@ -170,6 +234,14 @@ class NotifyAgent(BaseAgent):
         # Auto-compose a sprint status when that's the intent and no body was given.
         if not message_text and intent == "sprint_status":
             message_text = await self._compose_sprint_status(project)
+
+        # Anything else with a described topic but no literal words ("notify X
+        # about the blocked tickets") — gather live data dynamically and compose
+        # from it, instead of only ever asking for clarification. This is what
+        # makes "any kind of message" possible without one hardcoded compose
+        # function per topic.
+        if not message_text:
+            message_text = await self._compose_from_gathered(query)
 
         if not message_text:
             clarification = (

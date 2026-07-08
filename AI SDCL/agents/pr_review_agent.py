@@ -39,6 +39,10 @@ _DOC_PR_PAT = re.compile(
 # broad list query → list mode, no LLM deep review, no HITL.
 _PR_ID_PAT = re.compile(r'\bPR[-\s]?(\d+)\b', re.IGNORECASE)
 _PR_APPROVE_PAT = re.compile(r'\b(approve|merge|sign[\s-]?off|lgtm)\b', re.IGNORECASE)
+# "request changes" intent — a GitHub REQUEST_CHANGES review, distinct from approve/merge.
+_PR_REQUEST_CHANGES_PAT = re.compile(
+    r'\b(request changes?|reject|needs? changes?|changes? requested|request-changes)\b', re.IGNORECASE,
+)
 # Explicit reviewer name: "assign reviewer <name>", "add <name> as reviewer", "assign <name> to PR"
 _EXPLICIT_REVIEWER_PAT = re.compile(
     r'(?:assign|add)\s+(?:reviewer\s+)?([a-zA-Z0-9_-]+)(?:\s+as\s+reviewer|\s+to\s+PR)?',
@@ -97,7 +101,7 @@ def _is_code_pr(pr: dict) -> bool:
 
 from backend.agents.base_agent import AgentPayload, BaseAgent
 from backend.core.config_loader import config as _default_config
-from backend.mcp_client.client import call_mcp_tool
+from backend.mcp_client.client import as_list, call_mcp_tool
 from backend.orchestrator.state import SDLCState
 from backend.rag.retriever import HybridRetriever, RetrievedChunk
 
@@ -160,11 +164,54 @@ def _role_summary(review_data: dict, user_role: str, total_prs: int) -> str:
     return f"**Release signal — {pr_num}:** This change {release_signal}. CI: {ci}."
 
 
-def _format_pr_proposal(review_data: dict, all_prs: list[dict] | None = None, user_role: str = "developer", action_mode: str = "assign") -> str:
+def _format_pr_proposal(
+    review_data: dict, all_prs: list[dict] | None = None, user_role: str = "developer",
+    action_mode: str = "assign", already_assigned: bool = False, not_a_collaborator: bool = False,
+    concise: bool = False,
+) -> str:
     """
     Build the human-readable PR review card.
     Role-specific summary line on top; structured review table is identical for all roles.
     """
+    pr_num   = review_data.get("pr_number", "this PR")
+    pr_title = review_data.get("pr_title", "N/A")
+    reviewer = review_data.get("suggested_reviewer", "unassigned")
+
+    # concise: the user gave an explicit action verb (approve/request-changes/assign
+    # a NAMED reviewer) — a direct action request, not a review request. The full
+    # standards/CI/risk table and LLM summary are noise here; show only what's
+    # needed to judge THAT action. approve_pr/reject_pr action_types are only ever
+    # reached via an explicit "approve"/"reject" verb in the query (never from a
+    # bare "review PR-X"), so they're unconditionally concise — see run()'s call site.
+    if concise:
+        if action_mode == "approve":
+            return (
+                f"## Approve — {pr_num}: {pr_title}\n\n"
+                f"_Shall I approve **{pr_num}**? (This approves the PR — it does not merge it.)_\n\n"
+                f"_Click **Approve** to approve, or **Reject** to cancel._"
+            )
+        if action_mode == "reject":
+            body = review_data.get("concerns", "").strip() or "Automated review found issues that need addressing before merge."
+            return (
+                f"## Request Changes — {pr_num}: {pr_title}\n\n"
+                f"_Shall I submit a **request changes** review on **{pr_num}**?_\n\n"
+                f"> {body}\n\n"
+                f"_Click **Approve** to submit this review, or **Reject** to cancel._"
+            )
+        header = f"## Assign Reviewer — {pr_num}: {pr_title}"
+        if already_assigned:
+            return f"{header}\n\n✅ **`{reviewer}`** is already the requested reviewer on this PR — no action needed."
+        if not_a_collaborator:
+            return (
+                f"{header}\n\n⚠️ **`{reviewer}`** is not a collaborator on this repository, "
+                f"so they can't be requested as a reviewer. Add them as a collaborator first, "
+                f"or choose someone else."
+            )
+        return (
+            f"{header}\n\n_Shall I assign `{reviewer}` as reviewer for this PR?_\n\n"
+            f"_Click **Approve** to assign, or **Reject** to cancel._"
+        )
+
     risk_emoji = {"LOW": "🟢", "MEDIUM": "🟡", "HIGH": "🔴"}.get(
         review_data.get("risk_level", "MEDIUM"), "🟡"
     )
@@ -210,19 +257,28 @@ def _format_pr_proposal(review_data: dict, all_prs: list[dict] | None = None, us
         lines += ["", "**Standards violations:**"]
         lines += [f"  - {v}" for v in violations]
 
-    # Approve mode: ask to approve the PR itself (not assign a reviewer).
-    if action_mode == "approve":
-        pr_num = review_data.get("pr_number", "this PR")
+    # action_mode is always "assign" here — approve/reject are always concise
+    # (handled above) since they're only ever reached via an explicit verb.
+    if already_assigned:
+        # Still show the full review analysis above — "review PR-X" is a request for
+        # the review itself, not just for a reviewer-assignment decision. Only the
+        # call-to-action changes when there's nothing left to assign.
         lines += [
             "",
-            "---",
-            f"_Shall I approve **{pr_num}**? (This approves the PR — it does not merge it.)_",
-            "_Click **Approve** to approve, or **Reject** to cancel._",
+            f"✅ **`{reviewer}`** is already the requested reviewer on this PR — no action needed.",
         ]
-        return "\n".join(lines)
-
-    reviewer = review_data.get("suggested_reviewer", "unassigned")
-    if reviewer and reviewer != "unassigned":
+    elif not_a_collaborator:
+        # Same principle: don't hide the review behind a proposal that's guaranteed
+        # to fail — GitHub silently ignores a non-collaborator reviewer request
+        # instead of erroring (see github_connector.assign_reviewer), so this check
+        # runs BEFORE proposing rather than only surfacing after a doomed Approve.
+        lines += [
+            "",
+            f"⚠️ **`{reviewer}`** is not a collaborator on this repository, so they can't "
+            f"be requested as a reviewer. Add them as a collaborator first, or choose "
+            f"someone else.",
+        ]
+    elif reviewer and reviewer != "unassigned":
         lines += [
             "",
             f"**Suggested reviewer:** `{reviewer}` (based on file ownership)",
@@ -270,8 +326,8 @@ class PRReviewAgent(BaseAgent):
                 call_mcp_tool("github_list_open_prs", {}),
                 return_exceptions=True,
             )
-            searched = results[0] if isinstance(results[0], list) else []
-            all_open = results[1] if isinstance(results[1], list) else []
+            searched = as_list(results[0])
+            all_open = as_list(results[1])
 
             # Merge: searched first, then any open PRs not already in results
             seen_ids = {pr["id"] for pr in searched}
@@ -304,10 +360,11 @@ class PRReviewAgent(BaseAgent):
         # Broad query ("show me open PRs", no PR-N named, no approve/merge verb) →
         # list mode: one row per PR, no LLM deep review, no HITL. Matches GitHub's
         # "review requests" UX — the user picks a PR, then asks for a deep review.
-        target_id         = _query_target_pr_id(query)
-        wants_approve      = bool(_PR_APPROVE_PAT.search(query))
-        explicit_reviewer  = _query_explicit_reviewer(query)   # e.g. "dixitbhojani-blip"
-        broad_query        = not target_id and not wants_approve and not explicit_reviewer
+        target_id             = _query_target_pr_id(query)
+        wants_approve         = bool(_PR_APPROVE_PAT.search(query))
+        wants_request_changes = bool(_PR_REQUEST_CHANGES_PAT.search(query))
+        explicit_reviewer     = _query_explicit_reviewer(query)   # e.g. "dixitbhojani-blip"
+        broad_query           = not target_id and not wants_approve and not wants_request_changes and not explicit_reviewer
 
         if broad_query:
             logger.info("PRReviewAgent: broad list query — %d PRs, skipping deep review", len(prs))
@@ -321,6 +378,29 @@ class PRReviewAgent(BaseAgent):
                     "skip_persona":   True,   # the list card is structured data, not prose
                 },
                 sources=["github_live"] if prs else [],
+                hitl_required=False,
+            )
+
+        # An action request (approve/request-changes/assign a NAMED reviewer) with no
+        # PR number, when multiple PRs are open, is ambiguous — silently letting the
+        # LLM pick one from the whole batch risks approving/rejecting/assigning the
+        # WRONG PR. Ask instead of guessing (same principle as ticket_agent's "which
+        # ticket?" guard when an edit request names no ticket ID).
+        wants_specific_action = wants_approve or wants_request_changes or bool(explicit_reviewer)
+        if wants_specific_action and not target_id and len(prs) > 1:
+            open_ids = ", ".join(p["id"] for p in prs)
+            example  = prs[0]["id"]
+            msg = (
+                f"Which PR did you mean? There are {len(prs)} open: {open_ids}.\n\n"
+                f"Please include the PR number, e.g. \"assign {explicit_reviewer or 'alice'} "
+                f"as reviewer to {example}\"."
+            )
+            return AgentPayload(
+                agent_name="pr_review_agent",
+                confidence=0.0,
+                summary="ambiguous PR target — asked for clarification",
+                structured={"final_response": msg, "skip_persona": True},
+                sources=["github_live"],
                 hitl_required=False,
             )
 
@@ -441,17 +521,61 @@ class PRReviewAgent(BaseAgent):
         # Did the user ask to approve/merge the PR, or just to review/assign a reviewer?
         wants_approval = wants_approve   # detected once at the top of run()
 
+        already_assigned   = False
+        not_a_collaborator = False
         if wants_approval and pr_number:
             action_type   = "approve_pr"
             hitl_required = True
+        elif wants_request_changes and pr_number:
+            action_type   = "reject_pr"
+            hitl_required = True
         else:
-            action_type   = "assign_reviewer"
-            hitl_required = bool(suggested_reviewer and suggested_reviewer != "unassigned")
+            action_type = "assign_reviewer"
+            # Scenario: already the requested reviewer on this PR — no action needed.
+            # Mirrors ticket_agent._run_assignment's identical guard for Jira tickets.
+            # This must NOT short-circuit the whole response: "review PR-X" is a
+            # request for the review itself (standards/CI/risk), and a reviewer
+            # happening to already be assigned doesn't mean there's nothing to show —
+            # only the assign-reviewer call-to-action becomes unnecessary.
+            chosen_pr = next((p for p in prs if p["id"] == pr_number), prs[0] if prs else None)
+            current_reviewers = [r.lower() for r in (chosen_pr.get("reviewers") or [])] if chosen_pr else []
+            already_assigned = suggested_reviewer != "unassigned" and suggested_reviewer.lower() in current_reviewers
+
+            # Validate BEFORE proposing — GitHub's assign-reviewer API silently ignores
+            # a nonexistent/unreachable username instead of erroring (confirmed live),
+            # so without this check the user gets a "Click Approve" card for something
+            # guaranteed to fail, and only finds out after clicking it.
+            if suggested_reviewer != "unassigned" and not already_assigned:
+                try:
+                    check = await call_mcp_tool("github_is_collaborator", {"username": suggested_reviewer})
+                    not_a_collaborator = isinstance(check, dict) and not check.get("is_collaborator", True)
+                except Exception:
+                    logger.exception("PRReviewAgent: collaborator check failed for '%s' — proceeding without it", suggested_reviewer)
+
+            hitl_required = (
+                bool(suggested_reviewer and suggested_reviewer != "unassigned")
+                and not already_assigned and not not_a_collaborator
+            )
 
         final_response = _format_pr_proposal(
             review_data, all_prs=prs,
             user_role=state.get("user_role", "developer"),
-            action_mode="approve" if action_type == "approve_pr" else "assign",
+            not_a_collaborator=not_a_collaborator,
+            action_mode=(
+                "approve" if action_type == "approve_pr" else
+                "reject" if action_type == "reject_pr" else
+                "assign"
+            ),
+            already_assigned=already_assigned,
+            # approve_pr/reject_pr are only ever reached via an explicit "approve"/
+            # "request changes" verb (never from a bare "review PR-X") — always
+            # concise. assign_reviewer is concise only when the user named a specific
+            # reviewer; with no name given, the reviewer is auto-suggested and the
+            # full review is what justifies that suggestion, so keep it.
+            concise=(
+                action_type in ("approve_pr", "reject_pr")
+                or (action_type == "assign_reviewer" and bool(explicit_reviewer))
+            ),
         )
 
         proposal = {
