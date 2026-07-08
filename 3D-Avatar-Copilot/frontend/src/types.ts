@@ -16,12 +16,16 @@ export interface CardData {
   note?: string;
 }
 
+/** One question→answer pair from backend/scenes.json (human-editable field names). */
 export interface Scene {
   id: number;
-  label: string;
-  advisorLine: string;
-  triggers: string[];
-  spokenText: string;
+  topic: string;
+  /** The advisor's question — shown as a speech bubble in autoplay. */
+  question: string;
+  /** Exactly what the avatar speaks. */
+  answer: string;
+  /** Lowercase words that route recognized advisor speech to this scene. */
+  keywords: string[];
   searching?: boolean;
   closing?: boolean;
   card?: CardData;

@@ -13,7 +13,7 @@ export function SceneJumpList({
   return (
     <ol id="scene-list" title="Jump to scene (or press 1–6)">
       {scenes.map((s, i) => (
-        <li key={s.id} className={playedOrder.includes(i) ? "played" : ""} title={s.label} onClick={() => onJump(i)}>
+        <li key={s.id} className={playedOrder.includes(i) ? "played" : ""} title={s.topic} onClick={() => onJump(i)}>
           {i + 1}
         </li>
       ))}

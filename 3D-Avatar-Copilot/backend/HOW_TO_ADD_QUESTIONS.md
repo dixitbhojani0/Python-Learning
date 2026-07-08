@@ -17,10 +17,10 @@ and change these fields:
 {
   "id": 7,
   "enabled": true,
-  "label": "Portfolio risk",
-  "advisorLine": "How is his portfolio positioned?",
-  "triggers": ["portfolio", "positioned", "risk"],
-  "spokenText": "John's portfolio is balanced, with sixty percent in equities...",
+  "topic": "Portfolio risk",
+  "question": "How is his portfolio positioned?",
+  "answer": "John's portfolio is balanced, with sixty percent in equities...",
+  "keywords": ["portfolio", "positioned", "risk"],
   "card": {
     "icon": "book",
     "title": "Portfolio Position",
@@ -36,11 +36,11 @@ What each field means:
 |---|---|
 | `id` | Any unique number |
 | `enabled` | `true` = part of the demo, `false` = skipped |
-| `label` | Internal name (shown only in the ?debug=1 scene list) |
-| `advisorLine` | The advisor's question — shown as a speech bubble in autoplay |
-| `triggers` | Lowercase words — if the advisor's spoken question contains one, this answer plays |
-| `spokenText` | Exactly what the avatar says out loud |
-| `searching` | Optional: `true` shows a "Searching knowledge base…" moment first |
+| `topic` | Short internal name (shown only in the ?debug=1 scene list) |
+| `question` | **The advisor's question** — shown as a speech bubble in autoplay |
+| `answer` | **Exactly what the avatar says out loud** |
+| `keywords` | Lowercase words — if the advisor's spoken question contains one, this answer plays |
+| `searching` | Optional: `true` shows a "Searching knowledge base…" moment before the answer |
 | `card` | Optional: the panel shown on the right (delete the whole `"card"` part for no panel) |
 
 Card options — use any mix: `keyValues` (label/value rows), `bullets` (list),

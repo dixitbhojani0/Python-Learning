@@ -36,10 +36,10 @@ export class SceneEngine {
     return this.played.findIndex((p) => !p);
   }
 
-  /** Advisor speech → first unplayed scene whose trigger matches; no match → next unplayed (linear script never stalls). */
+  /** Advisor speech → first unplayed scene whose keyword matches; no match → next unplayed (linear script never stalls). */
   routeTranscript(transcript: string): void {
     const t = transcript.toLowerCase();
-    let idx = this.scenes.findIndex((s, i) => !this.played[i] && s.triggers.some((k) => t.includes(k)));
+    let idx = this.scenes.findIndex((s, i) => !this.played[i] && s.keywords.some((k) => t.includes(k)));
     if (idx === -1) idx = this.nextUnplayed();
     if (idx !== -1) void this.playScene(idx);
   }
@@ -58,9 +58,9 @@ export class SceneEngine {
       this.callbacks.onScenePlayed(index);
 
       this.callbacks.onStatus("speaking");
-      this.callbacks.onCaption(scene.spokenText);
+      this.callbacks.onCaption(scene.answer);
       try {
-        await this.provider.speak(scene.spokenText);
+        await this.provider.speak(scene.answer);
       } finally {
         this.callbacks.onCaption(null);
         this.callbacks.onStatus("listening");
@@ -74,10 +74,10 @@ export class SceneEngine {
     }
   }
 
-  /** The script runs itself: advisor bubble → answer → gap → next scene. */
+  /** The script runs itself: advisor question bubble → answer → gap → next scene. */
   async runAutoplay(gapMs: number): Promise<void> {
     for (let i = 0; i < this.scenes.length; i++) {
-      this.callbacks.onBubble(this.scenes[i].advisorLine);
+      this.callbacks.onBubble(this.scenes[i].question);
       await delay(1600); // let the audience read the advisor's question
       await this.playScene(i);
       await delay(gapMs);

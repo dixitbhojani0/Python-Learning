@@ -2,10 +2,10 @@
   {
     "id": 1,
     "enabled": true,
-    "label": "Greeting",
-    "advisorLine": "Help me prepare for my meeting with John Davies.",
-    "triggers": ["john", "davies", "prepare", "meeting"],
-    "spokenText": "Good morning. I found John Davies' annual review meeting scheduled for tomorrow. I can help you review client context, identify key planning areas, and prepare follow-up notes.",
+    "topic": "Greeting",
+    "question": "Help me prepare for my meeting with John Davies.",
+    "answer": "Good morning. I found John Davies' annual review meeting scheduled for tomorrow. I can help you review client context, identify key planning areas, and prepare follow-up notes.",
+    "keywords": ["john", "davies", "prepare", "meeting"],
     "card": {
       "icon": "calendar",
       "title": "Meeting Found",
@@ -20,10 +20,10 @@
   {
     "id": 2,
     "enabled": true,
-    "label": "Client summary",
-    "advisorLine": "Give me a quick overview.",
-    "triggers": ["overview", "summary", "quick", "snapshot"],
-    "spokenText": "John Davies is 58 and planning to retire at 62. His key review areas are pension contributions, retirement income readiness, ISA utilisation, investment risk alignment, and inheritance planning.",
+    "topic": "Client summary",
+    "question": "Give me a quick overview.",
+    "answer": "John Davies is 58 and planning to retire at 62. His key review areas are pension contributions, retirement income readiness, ISA utilisation, investment risk alignment, and inheritance planning.",
+    "keywords": ["overview", "summary", "quick", "snapshot"],
     "card": {
       "icon": "user",
       "title": "Client Snapshot",
@@ -43,11 +43,11 @@
   {
     "id": 3,
     "enabled": false,
-    "label": "Knowledge retrieval",
-    "advisorLine": "What should I consider before discussing pension contributions and retirement income?",
-    "triggers": ["pension", "contribution", "consider", "income", "discussing"],
+    "topic": "Knowledge retrieval",
+    "question": "What should I consider before discussing pension contributions and retirement income?",
+    "answer": "Based on approved planning guidance, consider current pension contribution levels, annual allowance position, retirement income target, tax position, and portfolio risk alignment. Also confirm whether there have been any changes in employment income, family circumstances, or retirement timeline.",
+    "keywords": ["pension", "contribution", "consider", "income", "discussing"],
     "searching": true,
-    "spokenText": "Based on approved planning guidance, consider current pension contribution levels, annual allowance position, retirement income target, tax position, and portfolio risk alignment. Also confirm whether there have been any changes in employment income, family circumstances, or retirement timeline.",
     "card": {
       "icon": "book",
       "title": "Retrieved from Approved Knowledge Base",
@@ -63,10 +63,10 @@
   {
     "id": 4,
     "enabled": false,
-    "label": "Compliance",
-    "advisorLine": "Are there any compliance points I should keep in mind?",
-    "triggers": ["compliance", "keep in mind", "regulation", "points"],
-    "spokenText": "Yes. Please confirm updated client objectives, risk profile, capacity for loss, tax position, and retirement timeline. I can support meeting preparation — but the final recommendation must be reviewed and confirmed by you, the qualified advisor.",
+    "topic": "Compliance",
+    "question": "Are there any compliance points I should keep in mind?",
+    "answer": "Yes. Please confirm updated client objectives, risk profile, capacity for loss, tax position, and retirement timeline. I can support meeting preparation — but the final recommendation must be reviewed and confirmed by you, the qualified advisor.",
+    "keywords": ["compliance", "keep in mind", "regulation", "points"],
     "card": {
       "icon": "scale",
       "title": "Compliance Checklist",
@@ -84,10 +84,10 @@
   {
     "id": 5,
     "enabled": false,
-    "label": "Follow-up note",
-    "advisorLine": "Draft a short follow-up note I can refine after the meeting.",
-    "triggers": ["draft", "note", "follow", "refine"],
-    "spokenText": "Of course. I have prepared a draft follow-up note for your review.",
+    "topic": "Follow-up note",
+    "question": "Draft a short follow-up note I can refine after the meeting.",
+    "answer": "Of course. I have prepared a draft follow-up note for your review.",
+    "keywords": ["draft", "note", "follow", "refine"],
     "card": {
       "icon": "mail",
       "title": "Draft Follow-up Note",
@@ -98,10 +98,10 @@
   {
     "id": 6,
     "enabled": false,
-    "label": "Closing",
-    "advisorLine": "Thanks, that's all for now.",
-    "triggers": ["thank", "thanks", "done", "that's all", "finish"],
-    "closing": true,
-    "spokenText": "You're welcome. Good luck with the meeting tomorrow — I'll be here when you need me."
+    "topic": "Closing",
+    "question": "Thanks, that's all for now.",
+    "answer": "You're welcome. Good luck with the meeting tomorrow — I'll be here when you need me.",
+    "keywords": ["thank", "thanks", "done", "that's all", "finish"],
+    "closing": true
   }
 ]
