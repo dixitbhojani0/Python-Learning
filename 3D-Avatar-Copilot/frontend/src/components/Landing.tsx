@@ -1,4 +1,4 @@
-export function Landing({ note, onStart }: { note: string; onStart: () => void }) {
+export function Landing({ note, error, onStart }: { note: string; error: string | null; onStart: () => void }) {
   return (
     <div id="landing">
       <div className="landing-card">
@@ -10,6 +10,7 @@ export function Landing({ note, onStart }: { note: string; onStart: () => void }
         <button id="start-btn" className="cta" onClick={onStart}>
           Start
         </button>
+        {error && <p className="landing-error">⚠ {error}</p>}
         <p className="landing-note">{note}</p>
       </div>
     </div>

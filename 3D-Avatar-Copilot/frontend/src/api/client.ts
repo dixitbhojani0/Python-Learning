@@ -1,7 +1,8 @@
 /** The ONLY place backend URLs live. Control plane is JSON over /api/v1. */
 import type { Scene, SessionInfo } from "../types";
 
-const BASE = "/api/v1";
+/** Same-origin by default; set VITE_API_BASE when the backend lives on another host. */
+const BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? "/api/v1";
 
 export async function fetchScript(): Promise<Scene[]> {
   const resp = await fetch(`${BASE}/script`);

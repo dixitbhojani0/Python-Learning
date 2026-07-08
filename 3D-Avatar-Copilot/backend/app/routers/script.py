@@ -21,7 +21,8 @@ SCENES = [
             "I can help you review client context, identify key planning areas, and prepare follow-up notes."
         ),
         "card": {
-            "title": "📅 Meeting Found",
+            "icon": "calendar",
+            "title": "Meeting Found",
             "badge": "Tomorrow",
             "keyValues": [
                 {"label": "Client", "value": "John Davies"},
@@ -40,7 +41,8 @@ SCENES = [
             "retirement income readiness, ISA utilisation, investment risk alignment, and inheritance planning."
         ),
         "card": {
-            "title": "👤 Client Snapshot",
+            "icon": "user",
+            "title": "Client Snapshot",
             "keyValues": [
                 {"label": "Age", "value": "58"},
                 {"label": "Retirement target", "value": "62"},
@@ -66,7 +68,8 @@ SCENES = [
             "there have been any changes in employment income, family circumstances, or retirement timeline."
         ),
         "card": {
-            "title": "📚 Retrieved from Approved Knowledge Base",
+            "icon": "book",
+            "title": "Retrieved from Approved Knowledge Base",
             "badge": "Grounded",
             "chips": [
                 "Retirement Planning Guidance",
@@ -87,7 +90,8 @@ SCENES = [
             "reviewed and confirmed by you, the qualified advisor."
         ),
         "card": {
-            "title": "⚖️ Compliance Checklist",
+            "icon": "scale",
+            "title": "Compliance Checklist",
             "badge": "Advisor confirms",
             "badgeTone": "amber",
             "bullets": [
@@ -106,7 +110,8 @@ SCENES = [
         "triggers": ["draft", "note", "follow", "refine"],
         "spokenText": "Of course. I have prepared a draft follow-up note for your review.",
         "card": {
-            "title": "✉️ Draft Follow-up Note",
+            "icon": "mail",
+            "title": "Draft Follow-up Note",
             "badge": "Editable",
             "note": (
                 "Hi John, thank you for meeting today. We reviewed your retirement timeline, pension position, "

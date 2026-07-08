@@ -5,6 +5,8 @@ export interface KeyValue {
 
 /** Structured card data from GET /api/v1/script — rendered by CardRenderer, never raw HTML. */
 export interface CardData {
+  /** Icon name from the backend; mapped to an SVG in CardRenderer. */
+  icon?: string;
   title: string;
   badge?: string;
   badgeTone?: "green" | "amber";

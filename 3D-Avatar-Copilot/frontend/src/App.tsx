@@ -1,3 +1,4 @@
+import { UserRound } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { createSession, fetchScript, logToServer } from "./api/client";
@@ -14,6 +15,7 @@ import type { Scene, Status } from "./types";
 
 export default function App() {
   const [scenes, setScenes] = useState<Scene[]>([]);
+  const [scriptError, setScriptError] = useState<string | null>(null);
   const [started, setStarted] = useState(false);
   const [status, setStatus] = useState<Status>("idle");
   const [caption, setCaption] = useState<string | null>(null);
@@ -37,7 +39,10 @@ export default function App() {
   useEffect(() => {
     fetchScript()
       .then(setScenes)
-      .catch((e) => logToServer("script fetch failed:", e));
+      .catch((e) => {
+        logToServer("script fetch failed:", e);
+        setScriptError("Couldn't load the demo script from the backend.");
+      });
     const onError = (e: ErrorEvent) => logToServer("window.error:", e.message, `${e.filename}:${e.lineno}`);
     const onRejection = (e: PromiseRejectionEvent) => logToServer("unhandledrejection:", e.reason);
     window.addEventListener("error", onError);
@@ -113,9 +118,22 @@ export default function App() {
   );
 
   const start = useCallback(async () => {
+    let sceneList = scenes;
+    if (sceneList.length === 0) {
+      // script failed to load earlier — retry before starting
+      try {
+        sceneList = await fetchScript();
+        setScenes(sceneList);
+        setScriptError(null);
+      } catch (e) {
+        logToServer("script retry failed:", e);
+        setScriptError("Couldn't load the demo script — is the backend running? Click Start to retry.");
+        return;
+      }
+    }
     setStarted(true);
     setCanReconnect(false);
-    const engine = await connect(scenes);
+    const engine = await connect(sceneList);
     if (config.autoplay) void engine.runAutoplay(config.autoplayGapMs);
   }, [connect, scenes]);
 
@@ -165,7 +183,10 @@ export default function App() {
               ⟳ Reconnect
             </button>
           )}
-          <span className="advisor-chip">👤 Advisor</span>
+          <span className="advisor-chip">
+            <UserRound className="icon" size={14} />
+            Advisor
+          </span>
         </div>
       </header>
 
@@ -182,7 +203,7 @@ export default function App() {
         />
       )}
 
-      {!started && <Landing note={landingNote} onStart={() => void start()} />}
+      {!started && <Landing note={landingNote} error={scriptError} onStart={() => void start()} />}
       {closing && <ClosingScreen />}
       {config.debug && started && (
         <SceneJumpList scenes={scenes} playedOrder={playedOrder} onJump={(i) => void engineRef.current?.playScene(i)} />

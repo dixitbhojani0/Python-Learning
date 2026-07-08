@@ -1,3 +1,4 @@
+import { Mic, UserRoundSearch } from "lucide-react";
 import type { RefObject } from "react";
 
 import type { Scene, Status } from "../types";
@@ -30,12 +31,19 @@ export function Stage({ videoRef, showVideo, status, caption, bubble, scenes, pl
         <video id="avatar-video" ref={videoRef} autoPlay playsInline />
         {!showVideo && (
           <div id="dry-placeholder">
-            <div className="dry-face">👩‍💼</div>
+            <div className="dry-face">
+              <UserRoundSearch className="icon" size={110} strokeWidth={1.2} />
+            </div>
             <div className="dry-label">DRY RUN — avatar not connected</div>
           </div>
         )}
 
-        {bubble && <div id="user-bubble">{bubble}</div>}
+        {bubble && (
+          <div id="user-bubble">
+            <Mic className="icon" size={14} />
+            {bubble}
+          </div>
+        )}
         {caption && <div id="caption">{caption}</div>}
 
         <div id="controls">
@@ -49,7 +57,7 @@ export function Stage({ videoRef, showVideo, status, caption, bubble, scenes, pl
             ))}
           </div>
           <button id="mic-btn" title="Speak — or click to advance to the next step" onClick={onMicClick}>
-            🎤
+            <Mic size={24} />
           </button>
         </div>
       </section>
