@@ -2,8 +2,11 @@
 
 :root {
   --bg: #0d1117;
-  --panel: rgba(22, 27, 34, 0.72);
-  --panel-border: rgba(255, 255, 255, 0.08);
+  /* frosted glass tokens */
+  --panel: rgba(30, 38, 48, 0.42);
+  --panel-border: rgba(255, 255, 255, 0.1);
+  --glass-blur: blur(18px) saturate(150%);
+  --glass-edge: inset 0 1px 0 rgba(255, 255, 255, 0.06);
   --text: #e6edf3;
   --muted: #8b949e;
   --green: #22c55e;
@@ -23,6 +26,20 @@ body {
   overflow: hidden;
 }
 
+/* soft color glows behind the glass surfaces (what the blur refracts) */
+body::before,
+body::after {
+  content: "";
+  position: fixed;
+  border-radius: 50%;
+  filter: blur(130px);
+  pointer-events: none;
+  z-index: 0;
+}
+body::before { width: 540px; height: 540px; background: rgba(34, 197, 94, 0.13); top: -140px; right: 6%; }
+body::after { width: 640px; height: 640px; background: rgba(59, 130, 246, 0.11); bottom: -220px; left: 34%; }
+#stage { position: relative; z-index: 1; } /* keeps content above the glow blobs */
+
 .hidden { display: none !important; }
 
 /* ---------- Top bar ---------- */
@@ -34,9 +51,10 @@ body {
   align-items: center;
   justify-content: space-between;
   padding: 0 24px;
-  background: rgba(13, 17, 23, 0.65);
-  backdrop-filter: blur(12px);
+  background: rgba(20, 26, 34, 0.5);
+  backdrop-filter: var(--glass-blur);
   border-bottom: 1px solid var(--panel-border);
+  box-shadow: var(--glass-edge);
   z-index: 30;
 }
 
@@ -118,11 +136,12 @@ body {
   flex-direction: column;
   align-items: center;
   gap: 8px;
-  background: rgba(13, 17, 23, 0.55);
-  backdrop-filter: blur(12px);
+  background: var(--panel);
+  backdrop-filter: var(--glass-blur);
   border: 1px solid var(--panel-border);
   border-radius: 14px;
   padding: 12px 20px;
+  box-shadow: var(--glass-edge), 0 8px 24px rgba(0, 0, 0, 0.3);
   z-index: 6;
 }
 .speak-label { font-size: 13px; color: var(--text); letter-spacing: 0.3px; }
@@ -146,6 +165,9 @@ body {
 }
 #speak-overlay[data-state="speaking"] .waveform { opacity: 1; }
 #speak-overlay[data-state="speaking"] .waveform i { animation: wave 0.9s ease-in-out infinite; }
+/* live analyser drives heights via JS — disable the mock keyframes */
+#speak-overlay .waveform.live { opacity: 1; }
+#speak-overlay .waveform.live i { animation: none !important; transition: height 0.06s linear; }
 #speak-overlay .waveform i:nth-child(2n) { animation-delay: 0.15s; }
 #speak-overlay .waveform i:nth-child(3n) { animation-delay: 0.3s; }
 #speak-overlay .waveform i:nth-child(4n) { animation-delay: 0.45s; }
@@ -213,12 +235,13 @@ body {
 
 .msg-bubble {
   background: var(--panel);
-  backdrop-filter: blur(10px);
+  backdrop-filter: var(--glass-blur);
   border: 1px solid var(--panel-border);
   padding: 11px 15px;
   font-size: 14px;
   line-height: 1.5;
   color: var(--text);
+  box-shadow: var(--glass-edge);
 }
 .msg-you .msg-bubble {
   border-radius: 14px 14px 4px 14px;
@@ -241,11 +264,12 @@ body {
 
 .card {
   background: var(--panel);
-  backdrop-filter: blur(14px);
+  backdrop-filter: var(--glass-blur);
   border: 1px solid var(--panel-border);
   border-radius: var(--radius);
   padding: 20px 22px;
   animation: slide-in 0.4s ease;
+  box-shadow: var(--glass-edge), 0 8px 24px rgba(0, 0, 0, 0.3);
 }
 .card h3 {
   font-size: 15px;
@@ -316,12 +340,12 @@ body {
 .landing-card {
   margin-left: 7vw;
   width: 400px;
-  background: rgba(60, 66, 74, 0.55);
-  backdrop-filter: blur(16px);
+  background: rgba(50, 58, 68, 0.45);
+  backdrop-filter: var(--glass-blur);
   border: 1px solid var(--panel-border);
   border-radius: 16px;
   padding: 36px 32px;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--glass-edge), 0 20px 60px rgba(0, 0, 0, 0.45);
 }
 .landing-brand { font-size: 26px; margin-bottom: 26px; }
 .landing-card h1 { font-size: 34px; font-weight: 600; margin-bottom: 8px; }
@@ -374,11 +398,13 @@ body {
 }
 .value-tile {
   background: var(--panel);
+  backdrop-filter: var(--glass-blur);
   border: 1px solid var(--panel-border);
   border-radius: var(--radius);
   padding: 26px;
   font-size: 30px;
   text-align: center;
+  box-shadow: var(--glass-edge), 0 8px 24px rgba(0, 0, 0, 0.3);
 }
 .value-tile h3 { font-size: 17px; margin: 12px 0 8px; }
 .value-tile p { font-size: 13.5px; color: var(--muted); line-height: 1.5; }

@@ -3,6 +3,7 @@ import type { RefObject } from "react";
 
 import type { ChatMessage, Status } from "../types";
 import { ConversationPanel } from "./ConversationPanel";
+import { LiveWaveform } from "./LiveWaveform";
 
 interface StageProps {
   videoRef: RefObject<HTMLVideoElement | null>;
@@ -45,11 +46,7 @@ export function Stage({ videoRef, showVideo, status, personaName, messages, onMi
         {/* speaking overlay: status + waveform, lower third of the avatar */}
         <div id="speak-overlay" data-state={status}>
           <span className="speak-label">{statusLabel(status, personaName)}</span>
-          <div className="waveform" aria-hidden="true">
-            {Array.from({ length: 24 }, (_, i) => (
-              <i key={i} />
-            ))}
-          </div>
+          <LiveWaveform videoRef={videoRef} live={showVideo} />
         </div>
 
         <button id="mic-btn" title="Speak — or click to advance to the next step" onClick={onMicClick}>
