@@ -1,0 +1,129 @@
+# ─────────────────────────────────────────────────────────────────────
+#  config/llm.yaml
+#
+#  LLM provider configuration. Switch models without changing code.
+#  The LLM provider class reads this file at startup.
+# ─────────────────────────────────────────────────────────────────────
+
+# ── Active provider ───────────────────────────────────────────────────────────
+# Change this ONE word to switch the entire system to a different LLM.
+# LLMFactory reads this key and instantiates the matching registered provider.
+# To add a new provider: create backend/providers/<name>_provider.py,
+# call LLMFactory.register('<name>', ...) at the bottom, add to __init__.py.
+# provider: openai                            # groq | gemini | openai
+provider: openai
+
+primary:
+  provider: openai
+  model: gpt-4o                       # 128k context, best tool calling + JSON output
+  api_key_env: OPENAI_API_KEY         # reads from .env
+
+# ── Groq config — active ──────────────────────────────────────────────────────
+# llama-3.1-70b-versatile is DECOMMISSIONED — don't use.
+# primary:
+#   provider: groq
+#   model: openai/gpt-oss-120b        # Groq's current flagship — OpenAI reasoning model, tool calling, 131K context
+#   # model: llama-3.3-70b-versatile  # general-purpose alt, same 131K context
+#   # model: llama-3.1-8b-instant     # small/fast fallback if 120b TPD exhausted
+#   api_key_env: GROQ_API_KEY
+#   known_models:
+#     - openai/gpt-oss-120b
+#     - openai/gpt-oss-20b
+#     - llama-3.3-70b-versatile
+#     - llama-3.1-8b-instant
+
+  # Temperature profiles per task type
+  # Lower = more deterministic, Higher = more creative
+  temperatures:
+    agent_reasoning: 0.1              # Agents making decisions — stay grounded
+    response_generation: 0.4          # Final answer — some natural language variety
+    chunk_contextualization: 0.0      # Prepend context to chunk — fully deterministic
+    persona_rewriting: 0.3            # Rewrite per persona — slight variation OK
+    summarization: 0.0                # Compress conversation — fully deterministic
+
+  max_tokens:
+    response: 1280                    # Max tokens in a normal final answer
+    response_full_document: 2400      # Larger cap when recalling a whole document (checklists, policies)
+    chunk_context: 100                # Max tokens for chunk context prefix
+    summary: 300                      # Max tokens for conversation summary
+
+  context_budget:
+    total_input_tokens: 32000         # GPT-4o has 128k context - 32k is a safe working budget
+    max_recent_messages: 5            # Max raw messages kept in "recent" slot
+    max_rag_chunks: 7                 # Max RAG chunks passed to context builder
+    slot_budgets:                     # Guidelines per slot (not hard caps)
+      system: 200
+      persona: 100
+      summary: 300
+      recent: 400
+      rag: 1500
+      tools: 500
+
+# ── Gemini config (commented out — switch back by setting provider: gemini above) ──
+# Free tier via https://aistudio.google.com/apikey — check that page for current
+# RPM/RPD/TPM limits before relying on it, they change per model version.
+# primary:
+#   provider: gemini
+#   model: gemini-2.5-flash-lite      # 1M context, native JSON mode + tool calling
+#   # model: gemini-3.5-flash         # newest gen, separate quota bucket — untested
+#   # 2.0-flash / 2.0-flash-lite are SHUT DOWN — don't use
+#   api_key_env: GEMINI_API_KEY
+
+fallback:
+  provider: groq
+  model: llama-3.3-70b-versatile      # Groq as fallback if OpenAI is down
+  api_key_env: GROQ_API_KEY
+
+# ── Routing & Tool-Gathering Tuning ──────────────────────────────────────────
+# Read by:
+#   semantic_router.py  — min_score / margin
+#   tool_use.py         — max_iterations / max_parallel
+#
+# semantic_router thresholds are EMPIRICAL — cosine scores depend on the
+# embedding encoder and phrasing. Re-calibrate against a validation set if
+# routing accuracy drifts; don't treat these as universal constants.
+routing:
+  semantic_router:
+    min_score: 0.42     # minimum cosine similarity to route deterministically
+    margin: 0.12        # winner must beat runner-up by at least this margin
+  tool_gathering:
+    max_iterations: 5   # hard cap on LLM ↔ tool round-trips per query
+    max_parallel: 4     # max concurrent tool calls within one LLM turn
+
+# ── Memory / Session Tuning ───────────────────────────────────────────────────
+# Read by:
+#   orchestrator/nodes.py — retrieve_memory_context node
+memory:
+  recent_window: 5        # last N turns always passed as raw messages to LLM
+  summary_threshold: 6    # if session has > this many turns, summarize the older ones
+
+# ── Faithfulness Evaluation ───────────────────────────────────────────────────
+# Read by:
+#   orchestrator/nodes.py — adapt_persona node (reflection retry gate)
+evaluation:
+  reflect_faithfulness_threshold: 0.45   # below this score, trigger self-critique retry
+
+# ── Input Guardrails ─────────────────────────────────────────────────────────
+# Read by:
+#   orchestrator/nodes.py — _run_input_guard() called at the top of classify_intent
+# Llama Guard 3 runs on the same Groq account — zero extra cost or dependencies.
+guardrails:
+  enabled: true
+  # Uses the same primary 70B model with a safety-check prompt — Llama Guard 3 was
+  # decommissioned on Groq (2025-07). No separate model needed.
+  input_guard_model: ""   # empty = use primary model via LLM-judge safety prompt
+
+# ── Ingestion Throttle ───────────────────────────────────────────────────────
+# Read by:
+#   rag/pipeline.py — contextual prefix batch loop
+# Tune per provider: Groq free tier ≈ 30 req/min, so batch_size=10 + sleep=2s ≈ 25/min
+ingestion:
+  batch_size: 10          # LLM prefix calls per batch before sleeping
+  batch_sleep_sec: 2.0    # seconds to sleep between batches
+
+# ─────────────────────────────────────────────────────────────────────
+#  config/rag_sources.yaml
+#
+#  RAG pipeline configuration — chunking strategy, retrieval settings.
+#  Change thresholds here without modifying Python code.
+# ─────────────────────────────────────────────────────────────────────

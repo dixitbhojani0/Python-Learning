@@ -1,0 +1,75 @@
+# config/chunking.yaml
+#
+# All chunking strategy definitions live here.
+# Add a new strategy: define it under `strategies`, add a routing entry.
+# Tune sizes: edit numbers here — hot-reloaded, no restart needed.
+#
+# Resolution order in ChunkingStrategyFactory.resolve():
+#   1. extension_routing  — file extension wins (e.g. .pdf always → rich_document)
+#   2. content_type_routing — doc_type metadata (e.g. doc_type="adr" → markdown_document)
+#   3. fallback → "markdown_document"
+
+strategies:
+
+  markdown_document:
+    # Plain text and markdown files: sprint docs, ADRs, release notes, incident reports.
+    # Paragraph-aware split preserves sentence/paragraph boundaries.
+    split_method: paragraph_aware
+    parent_size_tokens: 2000      # ~8000 chars — what the LLM reads for full context
+    child_size_tokens: 512        # ~2048 chars — what gets embedded and searched
+    overlap_tokens: 50            # ~200 chars — ~10% of child, prevents split sentences
+    min_words_per_chunk: 5
+
+  rich_document:
+    # PDF, DOCX, HTML, PPTX parsed by unstructured.io.
+    # Element-aware split respects Title boundaries and isolates Tables.
+    split_method: element_aware
+    parent_size_tokens: 2000
+    child_size_tokens: 512
+    overlap_tokens: 50
+    min_words_per_chunk: 5
+
+  ticket:
+    # Jira / GitHub tickets: field-based chunking.
+    # Parent = full ticket (title + description + all comments).
+    # Children = description chunk + one chunk per comment.
+    # metadata carries ticket_id, status, assignee, priority, sprint (all filterable).
+    split_method: field_based
+    parent_size_tokens: 2000
+    child_size_tokens: 512
+    overlap_tokens: 50
+    include_comments: true
+    max_comment_tokens: 300
+    min_words_per_chunk: 5
+
+  chat:
+    # Slack / Teams message history.
+    # Parent = full thread; each message = its own child chunk.
+    split_method: message_per_chunk
+    include_thread_parent: true
+    min_words_per_chunk: 5
+
+
+# doc_type value (from metadata) → strategy name
+# Add new doc types here without touching Python code.
+content_type_routing:
+  doc:              markdown_document
+  adr:              markdown_document
+  release_note:     markdown_document
+  incident_report:  markdown_document
+  version_policy:   rich_document
+  coding_standards: rich_document
+  ticket:           ticket
+  chat:             chat
+
+
+# File extension → strategy (takes precedence over content_type_routing).
+# Ensures .pdf is always element_aware even if metadata says doc_type="doc".
+extension_routing:
+  .pdf:   rich_document
+  .docx:  rich_document
+  .html:  rich_document
+  .pptx:  rich_document
+  .json:  chat
+  .md:    markdown_document
+  .txt:   markdown_document

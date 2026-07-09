@@ -1,0 +1,238 @@
+# ─────────────────────────────────────────────────────────────────────
+#  config/agents.yaml
+#
+#  Agent routing configuration.
+#  The orchestrator reads this file to decide which agent handles
+#  which query — without any hardcoded routing logic in Python.
+#
+#  Adding a new agent = add a block here. Zero Python changes.
+# ─────────────────────────────────────────────────────────────────────
+
+agents:
+
+  # ── Cross-Source Correlation Agent
+  cross_source_agent:
+    enabled: true
+    routing_description: >
+      Use for ANY investigative or informational question — what is happening, what caused
+      something, what is the status of a feature or ticket, how was an issue resolved,
+      tell me about X, explain X. This includes all error investigation queries (CORS, 500,
+      nginx, auth, payment, dashboard) that ask WHAT or WHY rather than requesting an action.
+      Also use for any question about coding standards, checklists, guides, best practices,
+      policies, ADRs, version policies, or other knowledge-base documents — these live in
+      the RAG store, not in live tools, so they belong to this agent (NOT pr_review).
+      Also use for direct ticket/blocker LOOKUPS — "what is blocked", "which tickets are
+      blocked", "show me blockers", "current delivery blockers" — these are informational
+      queries, not risk-analysis requests (those go to risk_agent).
+      Also use for release notes CONTENT questions: "what does the release notes say",
+      "what is in v2.1.0", "show me release notes", "release notes content" — these ask
+      for document content, not go/no-go decisions.
+      This is the safe default for everything that is a question, not an action request.
+    trigger_keywords:
+      - "status of"
+      - "what happened"
+      - "what caused"
+      - "how was"
+      - "update on"
+      - "tell me about"
+      - "explain"
+      - "dashboard"
+      - "payment"
+      # Blocker / ticket lookup anchors (direct lookup, not risk analysis)
+      - "what is blocked"
+      - "which tickets are blocked"
+      - "show me blockers"
+      - "current blockers"
+      - "delivery blockers"
+      - "blocked tickets"
+      # Documentation / knowledge-base anchors (route checklist/guide/standards queries here)
+      - "clean code"
+      - "code checklist"
+      - "review checklist"
+      - "best practices"
+      - "coding standards"
+      - "git practices"
+      - "show me the guide"
+      - "what does the doc"
+      - "what does the release notes"
+      - "release notes say"
+      - "release notes content"
+      - "what is in v"
+      - "documentation for"
+      - "the policy"
+    mcp_tools:
+      - jira
+      - github
+      - slack
+    requires_hitl: false
+
+  # ── Sprint Risk Detection Agent
+  # Also triggered automatically at 5pm daily via scheduler
+  risk_agent:
+    enabled: true
+    routing_description: >
+      Use when the user asks for a RISK ANALYSIS or HEALTH ASSESSMENT of the sprint —
+      whether the team will hit the deadline, sprint completion percentage, overall
+      delivery risk score, or velocity trends. This agent runs analysis, not lookup.
+      Do NOT use for simple "what is blocked?" or "which tickets are blocked?" queries —
+      those are informational lookups that belong to cross_source.
+      Triggered by: sprint risk, sprint health, delivery risk, will we make it, on track,
+      velocity, are we at risk, sprint health check.
+    trigger_keywords:
+      - "sprint risk"
+      - "sprint status"
+      - "sprint health"
+      - "delivery risk"
+      - "will we make"
+      - "on track"
+      - "velocity"
+      - "at risk"
+      - "health check"
+    mcp_tools:
+      - jira
+      - slack
+    requires_hitl: false
+    scheduled:
+      enabled: true
+      cron: "0 17 * * 1-5"         # 5pm every weekday
+      output_channel: "slack:#engineering-manager"
+
+  # ── Ticket Creation Agent (with HITL)
+  # For ticket creation AND ticket assignment requests
+  ticket_agent:
+    enabled: true
+    routing_description: >
+      Use when the user wants to take a direct ACTION on a Jira ticket — assigning,
+      creating, or editing one.
+      (1) ASSIGN or REASSIGN an existing ticket to a team member — e.g. "assign SDLC-4",
+      "assign SDLC-4 to alice", "reassign SDLC-2", "I want to assign SDLC-4",
+      "update assignee for SDLC-3", "who should own SDLC-5" if asking to set ownership.
+      (2) CREATE, LOG, RAISE, FILE, or OPEN a new Jira ticket, bug report, or issue —
+      e.g. "create a ticket", "log a ticket", "raise a bug", "file an issue",
+      "report a bug", "open a ticket for this error".
+      (3) UPDATE, EDIT, or CHANGE an existing ticket's description, title, or summary —
+      e.g. "update SDLC-7 description from 2.1 to 2.2", "change the title of SDLC-3",
+      "edit SDLC-5 description to ...". This is a WRITE on ticket content, NOT a
+      question about it — do not confuse with cross_source lookups.
+      (4) ADD A COMMENT or note to an existing ticket — e.g. "add a comment to SDLC-5:
+      ...", "log a note on SDLC-5 saying ...". This is a WRITE (posts to Jira), not
+      an investigative question — do not route this to cross_source even if the
+      comment text itself contains words like "investigated" or "found that".
+      Do NOT use for questions or investigations about existing errors — those go to
+      cross_source. Only use when the user is requesting an action (assign, create, edit, or comment).
+    trigger_keywords:
+      - "create ticket"
+      - "create a ticket"
+      - "create a new ticket"
+      - "log a ticket"
+      - "raise a ticket"
+      - "open a ticket"
+      - "file a ticket"
+      - "create an issue"
+      - "open an issue"
+      - "report a bug"
+      - "raise a bug"
+      - "file a bug"
+      - "create a bug"
+      - "log this issue"
+      - "assign"
+      - "reassign"
+      - "assign ticket"
+      - "assign to"
+      - "update assignee"
+      - "add comment"
+      - "add a comment"
+      - "add a note"
+      - "log a comment"
+      - "comment on ticket"
+      - "update description"
+      - "update title"
+      - "edit description"
+      - "edit title"
+      - "change description"
+      - "change title"
+      - "update summary"
+      - "edit summary"
+    mcp_tools:
+      - jira
+    requires_hitl: true             # ALWAYS requires human approval before creating ticket
+
+  # ── PR Review Agent (with HITL)
+  # Triggered by user query OR automatically by GitHub webhook on PR open
+  pr_agent:
+    enabled: true
+    intent: pr_review                # explicit — convention (strip _agent) would give 'pr'
+    routing_description: >
+      Use when the user asks to review pull requests, check open PRs, assign a reviewer,
+      approve/merge a PR, request changes on a PR, or get a PR review summary. Triggered
+      by: review PR, pull request, open PRs, reviewer, code review, merge request,
+      check PRs, what PRs are open, request changes, reject PR, needs changes.
+    trigger_keywords:
+      - "pull request"
+      - "code review"
+      - "reviewer"
+      - "review pr"
+      - "open prs"
+      - "request changes"
+      - "request change"
+      - "reject pr"
+      - "needs changes"
+      - "changes requested"
+    mcp_tools:
+      - github
+    requires_hitl: true             # Reviewer assignment requires human approval
+    webhook_trigger:
+      event: "pull_request"
+      action: "opened"
+
+  # ── Release Readiness Agent (with HITL — releasing is high-stakes)
+  release_readiness_agent:
+    enabled: true
+    intent: release_readiness        # explicit — convention would give 'release_readiness' (same, but kept for clarity)
+    routing_description: >
+      Use ONLY when the user wants a go/no-go release decision: "is the project ready to release",
+      "can we ship", "release readiness check", "are we ready to go live".
+      NOT for: "what does the release notes say", "what is in v2.1.0", "release notes content" —
+      those are informational content retrieval, handled by cross_source.
+      Triggered by: ready to release, can we release, go/no-go, ship it, release check,
+      release now, are we ready to ship, release today, go live.
+    trigger_keywords:
+      - "ready to release"
+      - "can we release"
+      - "go/no-go"
+      - "release readiness"
+      - "release status"
+      - "release now"
+      - "are we ready"
+      - "ship"
+      - "go live"
+    mcp_tools:
+      - jira
+      - github
+    requires_hitl: true             # Release is always a high-stakes action
+
+  # ── Notification Agent
+  # Called by users to send Slack messages, and internally by other agents.
+  notify_agent:
+    enabled: true
+    routing_description: >
+      Use for any request to send a Slack message or notification.
+      Triggered when the user says: notify, send message, send slack, alert team,
+      message channel, or similar. Parses channel and message from the query
+      and posts via Slack MCP.
+    trigger_keywords:
+      - notify
+      - send message
+      - send slack
+      - slack message
+      - alert team
+      - message channel
+      - post to slack
+    internal_triggers:
+      - release_approved             # ReleaseReadinessAgent calls after GO
+      - daily_risk_summary           # Scheduler calls at 5pm weekdays
+      - critical_blocker_alert       # RiskAgent calls when new critical blocker
+    slack_channel: "#engineering-manager"
+    mcp_tools:
+      - slack
+    requires_hitl: false

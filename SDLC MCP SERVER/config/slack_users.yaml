@@ -1,0 +1,32 @@
+# config/slack_users.yaml
+#
+# Team registry: maps each person across Jira, Slack, and GitHub.
+# Used by the backend to:
+#   - DM the assignee in Slack after a ticket is created
+#   - Resolve Jira account_id ↔ Slack user_id for notifications
+#
+# How to fill this in:
+#   jira_account_id  → Jira Cloud: click a user's avatar → "Profile" → copy ID from URL
+#   slack_user_id    → Slack: right-click username → "View profile" → "⋯" → "Copy member ID"
+#   github_username  → GitHub username (for future reviewer assignment)
+#
+# Read fresh on every DM send — edit here, no restart needed.
+
+team:
+  - display_name: "Bhojani Dixit"
+    jira_account_id: "62b1c7f984d73c7201677a58"
+    slack_user_id: "U0BCHKAHZ8E"
+    github_username: "dixitbhojani0"
+    email: "dixitbhojani0@gmail.com"
+
+  # - display_name: "Bob Manager"
+  #   jira_account_id: "replace_with_jira_account_id"
+  #   slack_user_id: "replace_with_slack_user_id"
+  #   github_username: "bob-mgr"
+  #   email: "bob@company.com"
+
+  # - display_name: "Carol Tech Lead"
+  #   jira_account_id: "replace_with_jira_account_id"
+  #   slack_user_id: "replace_with_slack_user_id"
+  #   github_username: "carol-tl"
+  #   email: "carol@company.com"
