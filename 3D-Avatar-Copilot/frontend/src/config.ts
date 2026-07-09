@@ -13,4 +13,6 @@ export const config = {
   auto: params.get("auto"),
   /** Re-enable the end-of-demo value screen when needed. */
   showClosing: false,
+  /** Show info cards inline in the conversation. Off for now — question/answer only. */
+  showCards: false,
 };

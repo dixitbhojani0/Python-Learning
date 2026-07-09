@@ -1,6 +1,7 @@
 import { Sparkles } from "lucide-react";
 import { useEffect, useRef } from "react";
 
+import { config } from "../config";
 import type { ChatMessage } from "../types";
 import { CardRenderer } from "./CardRenderer";
 
@@ -36,7 +37,7 @@ export function ConversationPanel({ messages, personaName }: { messages: ChatMes
                 <span className="msg-time">{m.time}</span>
               </div>
               <div className="msg-bubble">{m.text}</div>
-              {m.card && <CardRenderer card={m.card} active={m.id === lastCardId} />}
+              {config.showCards && m.card && <CardRenderer card={m.card} active={m.id === lastCardId} />}
             </div>
           );
         })}
