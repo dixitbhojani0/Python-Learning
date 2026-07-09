@@ -31,25 +31,11 @@
   word-break: break-word;
 }
 
-/* Markdown content inside assistant bubbles */
-.bubble-text.markdown { white-space: normal; }
-.bubble-text.markdown h1,
-.bubble-text.markdown h2,
-.bubble-text.markdown h3,
-.bubble-text.markdown h4 { margin: 8px 0 4px; font-size: 1rem; }
-.bubble-text.markdown p  { margin: 4px 0; }
-.bubble-text.markdown ul,
-.bubble-text.markdown ol { margin: 4px 0 4px 18px; padding: 0; }
-.bubble-text.markdown li { margin: 2px 0; }
-.bubble-text.markdown strong { font-weight: 600; }
-.bubble-text.markdown code {
-  background: #f0f0f0;
-  padding: 1px 5px;
-  border-radius: 3px;
-  font-family: monospace;
-  font-size: 0.85em;
-}
-.bubble-text.markdown hr { border: none; border-top: 1px solid #ddd; margin: 8px 0; }
+/* Markdown content styling lives in src/styles.css (global), NOT here — this component
+   uses [innerHTML] to inject the markdown pipe's output, and Angular's default
+   ViewEncapsulation.Emulated only stamps its scoping attribute onto elements the
+   template compiler renders itself. Raw innerHTML content never gets that attribute,
+   so scoped rules here would silently never match it. See src/styles.css. */
 
 /* Document images attached to an answer */
 .bubble-images {

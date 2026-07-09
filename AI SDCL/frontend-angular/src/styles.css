@@ -17,3 +17,58 @@ html, body {
   font-weight: 600;
   color: #1976d2 !important;
 }
+
+/* Markdown content inside assistant chat bubbles. Lives here (global), not in
+   chat.css (component-scoped) — chat.html injects the markdown pipe's output via
+   [innerHTML], and Angular's default ViewEncapsulation.Emulated only scopes rules
+   to elements the template compiler renders itself. Raw innerHTML content never
+   gets that scoping attribute, so a component-scoped rule here would never match it. */
+.bubble-text.markdown { white-space: normal; }
+.bubble-text.markdown h1,
+.bubble-text.markdown h2,
+.bubble-text.markdown h3,
+.bubble-text.markdown h4 { margin: 8px 0 4px; font-size: 1rem; }
+.bubble-text.markdown p  { margin: 4px 0; }
+.bubble-text.markdown ul,
+.bubble-text.markdown ol { margin: 4px 0 4px 18px; padding: 0; }
+.bubble-text.markdown li { margin: 2px 0; }
+.bubble-text.markdown strong { font-weight: 600; }
+.bubble-text.markdown code {
+  background: #f0f0f0;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-family: monospace;
+  font-size: 0.85em;
+}
+.bubble-text.markdown pre {
+  background: #f0f0f0;
+  padding: 10px 12px;
+  border-radius: 4px;
+  overflow-x: auto;
+  margin: 6px 0;
+}
+.bubble-text.markdown pre code {
+  background: none;
+  padding: 0;
+  border-radius: 0;
+  white-space: pre;
+}
+.bubble-text.markdown hr { border: none; border-top: 1px solid #ddd; margin: 8px 0; }
+/* table-layout: fixed + a first-column width share stop a short label like "Current"/
+   "New" from being squeezed down to its per-character wrap width by the browser's
+   default auto-layout algorithm when the other column's content is much longer.
+   A % (not a fixed px) so it still works for longer labels like "Current Assignee"
+   in the assign-ticket proposal card, which reuses these same table rules. */
+.bubble-text.markdown table { border-collapse: collapse; margin: 8px 0; width: 100%; table-layout: fixed; }
+.bubble-text.markdown th,
+.bubble-text.markdown td { border: 1px solid #ddd; padding: 6px 10px; text-align: left; word-wrap: break-word; }
+.bubble-text.markdown th { background: #f5f5f5; font-weight: 600; }
+.bubble-text.markdown th:first-child,
+.bubble-text.markdown td:first-child { width: 30%; }
+.bubble-text.markdown blockquote {
+  margin: 6px 0;
+  padding: 2px 12px;
+  border-left: 3px solid #ccc;
+  color: #555;
+}
+.bubble-text.markdown blockquote p { margin: 2px 0; }
