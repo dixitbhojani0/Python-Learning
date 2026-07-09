@@ -43,4 +43,8 @@ async def _anam_session() -> dict:
     if resp.status_code != 200:
         raise HTTPException(resp.status_code, f"Anam token request failed: {resp.text}")
 
-    return {"provider": "anam", "sessionToken": resp.json()["sessionToken"]}
+    return {
+        "provider": "anam",
+        "personaName": settings.persona_name,
+        "sessionToken": resp.json()["sessionToken"],
+    }

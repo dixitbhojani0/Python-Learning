@@ -33,6 +33,15 @@ export interface Scene {
 
 export type Status = "idle" | "connecting" | "listening" | "thinking" | "speaking";
 
+/** One entry in the conversation side panel. */
+export interface ChatMessage {
+  id: number;
+  role: "you" | "assistant" | "system";
+  text: string;
+  time: string;
+  card?: CardData;
+}
+
 export interface SessionInfo {
   provider: string;
   sessionToken?: string;

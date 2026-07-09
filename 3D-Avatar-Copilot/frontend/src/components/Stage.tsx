@@ -1,30 +1,34 @@
 import { Mic, UserRoundSearch } from "lucide-react";
 import type { RefObject } from "react";
 
-import type { Scene, Status } from "../types";
-import { CardRenderer } from "./CardRenderer";
-
-const STATUS_LABEL: Record<Status, string> = {
-  idle: "Idle",
-  connecting: "Connecting…",
-  listening: "Listening…",
-  thinking: "Searching knowledge base…",
-  speaking: "Speaking",
-};
+import type { ChatMessage, Status } from "../types";
+import { ConversationPanel } from "./ConversationPanel";
 
 interface StageProps {
   videoRef: RefObject<HTMLVideoElement | null>;
   showVideo: boolean;
   status: Status;
-  caption: string | null;
-  bubble: string | null;
-  scenes: Scene[];
-  playedOrder: number[];
+  personaName: string;
+  messages: ChatMessage[];
   onMicClick: () => void;
 }
 
-export function Stage({ videoRef, showVideo, status, caption, bubble, scenes, playedOrder, onMicClick }: StageProps) {
-  const activeIdx = playedOrder[playedOrder.length - 1];
+function statusLabel(status: Status, personaName: string): string {
+  switch (status) {
+    case "connecting":
+      return "Connecting…";
+    case "listening":
+      return "Listening…";
+    case "thinking":
+      return "Searching knowledge base…";
+    case "speaking":
+      return `${personaName} is speaking`;
+    default:
+      return "Idle";
+  }
+}
+
+export function Stage({ videoRef, showVideo, status, personaName, messages, onMicClick }: StageProps) {
   return (
     <main id="stage">
       <section id="avatar-pane">
@@ -38,38 +42,22 @@ export function Stage({ videoRef, showVideo, status, caption, bubble, scenes, pl
           </div>
         )}
 
-        {bubble && (
-          <div id="user-bubble">
-            <Mic className="icon" size={14} />
-            {bubble}
-          </div>
-        )}
-        {caption && <div id="caption">{caption}</div>}
-
-        <div id="controls">
-          <div id="status-pill" data-state={status}>
-            <span className="dot" />
-            <span>{STATUS_LABEL[status]}</span>
-          </div>
-          <div id="waveform" aria-hidden="true">
-            {Array.from({ length: 9 }, (_, i) => (
+        {/* speaking overlay: status + waveform, lower third of the avatar */}
+        <div id="speak-overlay" data-state={status}>
+          <span className="speak-label">{statusLabel(status, personaName)}</span>
+          <div className="waveform" aria-hidden="true">
+            {Array.from({ length: 24 }, (_, i) => (
               <i key={i} />
             ))}
           </div>
-          <button id="mic-btn" title="Speak — or click to advance to the next step" onClick={onMicClick}>
-            <Mic size={24} />
-          </button>
         </div>
+
+        <button id="mic-btn" title="Speak — or click to advance to the next step" onClick={onMicClick}>
+          <Mic size={24} />
+        </button>
       </section>
 
-      <aside id="cards-pane">
-        <div id="cards">
-          {playedOrder.map(
-            (idx) =>
-              scenes[idx]?.card && <CardRenderer key={idx} card={scenes[idx].card} active={idx === activeIdx} />,
-          )}
-        </div>
-      </aside>
+      <ConversationPanel messages={messages} personaName={personaName} />
     </main>
   );
 }

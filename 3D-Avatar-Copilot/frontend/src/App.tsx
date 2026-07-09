@@ -11,16 +11,19 @@ import { SceneEngine } from "./engine/SceneEngine";
 import { createProvider } from "./providers";
 import type { AvatarProvider } from "./providers/AvatarProvider";
 import { DryRunProvider } from "./providers/DryRunProvider";
-import type { Scene, Status } from "./types";
+import type { ChatMessage, Scene, Status } from "./types";
+
+const now = () => new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+let msgId = 0;
 
 export default function App() {
   const [scenes, setScenes] = useState<Scene[]>([]);
   const [scriptError, setScriptError] = useState<string | null>(null);
   const [started, setStarted] = useState(false);
   const [status, setStatus] = useState<Status>("idle");
-  const [caption, setCaption] = useState<string | null>(null);
-  const [bubble, setBubble] = useState<string | null>(null);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [playedOrder, setPlayedOrder] = useState<number[]>([]);
+  const [personaName, setPersonaName] = useState("Penny");
   const [closing, setClosing] = useState(false);
   const [hasVideo, setHasVideo] = useState(false);
   const [canReconnect, setCanReconnect] = useState(false);
@@ -28,12 +31,9 @@ export default function App() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const providerRef = useRef<AvatarProvider | null>(null);
   const engineRef = useRef<SceneEngine | null>(null);
-  const bubbleTimer = useRef<number | undefined>(undefined);
 
-  const showBubble = useCallback((text: string) => {
-    setBubble(text);
-    clearTimeout(bubbleTimer.current);
-    bubbleTimer.current = window.setTimeout(() => setBubble(null), 6000);
+  const addMessage = useCallback((role: ChatMessage["role"], text: string, card?: ChatMessage["card"]) => {
+    setMessages((prev) => [...prev, { id: ++msgId, role, text, time: now(), card }]);
   }, []);
 
   useEffect(() => {
@@ -53,11 +53,6 @@ export default function App() {
     };
   }, []);
 
-  // the waveform animates via body.speaking (see global.css)
-  useEffect(() => {
-    document.body.classList.toggle("speaking", status === "speaking");
-  }, [status]);
-
   const buildEngine = useCallback(
     (provider: AvatarProvider, sceneList: Scene[]) => {
       const engine = new SceneEngine(
@@ -65,9 +60,12 @@ export default function App() {
         provider,
         {
           onStatus: setStatus,
-          onCaption: setCaption,
-          onBubble: showBubble,
-          onScenePlayed: (i) => setPlayedOrder((prev) => [...prev, i]),
+          onCaption: () => {}, // conversation panel shows the text; no subtitle overlay
+          onBubble: (question) => addMessage("you", question),
+          onScenePlayed: (i) => {
+            setPlayedOrder((prev) => [...prev, i]);
+            addMessage("assistant", sceneList[i].answer, sceneList[i].card);
+          },
           onClosing: () => {
             setClosing(true);
             provider.disconnect(); // stop billing avatar minutes
@@ -79,7 +77,7 @@ export default function App() {
       providerRef.current = provider;
       provider.on("userSpeech", (transcript) => {
         if (config.autoplay) return; // autoplay drives the script; mic input is ignored
-        showBubble(transcript);
+        addMessage("you", transcript);
         engine.routeTranscript(transcript);
       });
       provider.on("disconnected", () => {
@@ -88,7 +86,7 @@ export default function App() {
       });
       return engine;
     },
-    [showBubble],
+    [addMessage],
   );
 
   const connect = useCallback(
@@ -97,6 +95,7 @@ export default function App() {
       let provider: AvatarProvider;
       try {
         const session = config.forcedProvider ? { provider: config.forcedProvider } : await createSession();
+        if (typeof session.personaName === "string") setPersonaName(session.personaName);
         provider = createProvider(session.provider);
         const engine = buildEngine(provider, sceneList);
         await provider.connect(videoRef.current!, session.sessionToken ? session : undefined);
@@ -105,8 +104,7 @@ export default function App() {
         return engine;
       } catch (e) {
         logToServer("avatar connection failed:", e);
-        setCaption(`⚠ Avatar error: ${e instanceof Error ? e.message : e} — continuing without avatar.`);
-        setTimeout(() => setCaption(null), 5000);
+        addMessage("system", `Avatar unavailable (${e instanceof Error ? e.message : e}) — continuing without it.`);
         provider = new DryRunProvider();
         const engine = buildEngine(provider, sceneList);
         setHasVideo(false);
@@ -114,7 +112,7 @@ export default function App() {
         return engine;
       }
     },
-    [buildEngine],
+    [buildEngine, addMessage],
   );
 
   const start = useCallback(async () => {
@@ -195,10 +193,8 @@ export default function App() {
           videoRef={videoRef}
           showVideo={hasVideo}
           status={status}
-          caption={caption}
-          bubble={bubble}
-          scenes={scenes}
-          playedOrder={playedOrder}
+          personaName={personaName}
+          messages={messages}
           onMicClick={() => void engineRef.current?.playScene(engineRef.current.nextUnplayed())}
         />
       )}
