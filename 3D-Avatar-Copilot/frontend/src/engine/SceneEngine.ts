@@ -9,7 +9,8 @@ import type { Scene, Status } from "../types";
 export interface EngineCallbacks {
   onStatus: (status: Status) => void;
   onCaption: (text: string | null) => void;
-  onBubble: (text: string) => void;
+  /** Autoplay awaits this — return a promise that resolves when the question has been presented (e.g. spoken). */
+  onBubble: (text: string) => void | Promise<void>;
   onScenePlayed: (index: number) => void;
   onClosing: () => void;
 }
@@ -74,11 +75,11 @@ export class SceneEngine {
     }
   }
 
-  /** The script runs itself: advisor question bubble → answer → gap → next scene. */
+  /** The script runs itself: question (spoken + streamed) → beat → answer → gap → next scene. */
   async runAutoplay(gapMs: number): Promise<void> {
     for (let i = 0; i < this.scenes.length; i++) {
-      this.callbacks.onBubble(this.scenes[i].question);
-      await delay(1600); // let the audience read the advisor's question
+      await this.callbacks.onBubble(this.scenes[i].question);
+      await delay(600); // beat between question and answer
       await this.playScene(i);
       await delay(gapMs);
     }

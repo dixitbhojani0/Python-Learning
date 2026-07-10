@@ -19,6 +19,8 @@ export interface CardData {
 /** One question→answer pair from backend/scenes.json (human-editable field names). */
 export interface Scene {
   id: number;
+  /** Present when fetched with ?all=1 (admin); the demo endpoint filters these out. */
+  enabled?: boolean;
   topic: string;
   /** The advisor's question — shown as a speech bubble in autoplay. */
   question: string;
@@ -32,6 +34,23 @@ export interface Scene {
 }
 
 export type Status = "idle" | "connecting" | "listening" | "thinking" | "speaking";
+
+/** One document in the approved knowledge base registry (GET /api/v1/knowledge). */
+export interface KnowledgeDoc {
+  id: number;
+  name: string;
+  category: string;
+  sizeKb: number;
+  chunks: number;
+  indexedAt: string;
+  status: "indexed" | "processing";
+}
+
+export interface KnowledgeInfo {
+  documents: KnowledgeDoc[];
+  embeddingModel: string;
+  totalChunks: number;
+}
 
 /** One entry in the conversation side panel. */
 export interface ChatMessage {

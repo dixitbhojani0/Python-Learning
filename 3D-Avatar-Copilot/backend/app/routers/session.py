@@ -4,6 +4,7 @@ The response's `provider` field tells the frontend which media adapter to use.
 Adding Azure or Unreal pixel-streaming later = new branch here + new settings;
 the frontend contract stays identical.
 """
+
 import httpx
 from fastapi import APIRouter, HTTPException
 
@@ -11,7 +12,7 @@ from ..config import settings
 
 router = APIRouter()
 
-ANAM_TOKEN_URL = "https://api.anam.ai/v1/auth/session-token"
+ANAM_TOKEN_URL = "https://api.anam.ai/v1/auth/session-token"  # noqa: S105 — public URL, not a secret
 
 
 @router.post("/session")

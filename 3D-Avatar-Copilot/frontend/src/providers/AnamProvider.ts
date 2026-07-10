@@ -32,6 +32,19 @@ export class AnamProvider extends ProviderEventEmitter implements AvatarProvider
 
     if (!videoEl.id) videoEl.id = "avatar-video";
     await this.client.streamToVideoElement(videoEl.id);
+
+    // graceful start: resolve only when the avatar video is actually playing,
+    // so the conversation never begins against a black/loading pane
+    await new Promise<void>((resolve) => {
+      if (videoEl.readyState >= 3 && !videoEl.paused) return resolve();
+      const done = () => {
+        videoEl.removeEventListener("playing", done);
+        clearTimeout(cap);
+        resolve();
+      };
+      const cap = window.setTimeout(done, 15000); // never hang the demo on a stuck stream
+      videoEl.addEventListener("playing", done);
+    });
   }
 
   async speak(text: string): Promise<void> {

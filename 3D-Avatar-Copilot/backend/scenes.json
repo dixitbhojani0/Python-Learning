@@ -5,15 +5,29 @@
     "topic": "Greeting",
     "question": "Help me prepare for my meeting with John Davies.",
     "answer": "Good morning. I found John Davies' annual review meeting scheduled for tomorrow. I can help you review client context, identify key planning areas, and prepare follow-up notes.",
-    "keywords": ["john", "davies", "prepare", "meeting"],
+    "keywords": [
+      "john",
+      "davies",
+      "prepare",
+      "meeting"
+    ],
     "card": {
       "icon": "calendar",
       "title": "Meeting Found",
       "badge": "Tomorrow",
       "keyValues": [
-        { "label": "Client", "value": "John Davies" },
-        { "label": "Type", "value": "Annual financial planning review" },
-        { "label": "Prepared by", "value": "FinAdvisor AI Copilot" }
+        {
+          "label": "Client",
+          "value": "John Davies"
+        },
+        {
+          "label": "Type",
+          "value": "Annual financial planning review"
+        },
+        {
+          "label": "Prepared by",
+          "value": "FinAdvisor AI Copilot"
+        }
       ]
     }
   },
@@ -23,14 +37,28 @@
     "topic": "Client summary",
     "question": "Give me a quick overview.",
     "answer": "John Davies is 58 and planning to retire at 62. His key review areas are pension contributions, retirement income readiness, ISA utilisation, investment risk alignment, and inheritance planning.",
-    "keywords": ["overview", "summary", "quick", "snapshot"],
+    "keywords": [
+      "overview",
+      "summary",
+      "quick",
+      "snapshot"
+    ],
     "card": {
       "icon": "user",
       "title": "Client Snapshot",
       "keyValues": [
-        { "label": "Age", "value": "58" },
-        { "label": "Retirement target", "value": "62" },
-        { "label": "Review type", "value": "Annual financial planning review" }
+        {
+          "label": "Age",
+          "value": "58"
+        },
+        {
+          "label": "Retirement target",
+          "value": "62"
+        },
+        {
+          "label": "Review type",
+          "value": "Annual financial planning review"
+        }
       ],
       "bullets": [
         "Pension contributions",
@@ -42,11 +70,17 @@
   },
   {
     "id": 3,
-    "enabled": false,
+    "enabled": true,
     "topic": "Knowledge retrieval",
     "question": "What should I consider before discussing pension contributions and retirement income?",
     "answer": "Based on approved planning guidance, consider current pension contribution levels, annual allowance position, retirement income target, tax position, and portfolio risk alignment. Also confirm whether there have been any changes in employment income, family circumstances, or retirement timeline.",
-    "keywords": ["pension", "contribution", "consider", "income", "discussing"],
+    "keywords": [
+      "pension",
+      "contribution",
+      "consider",
+      "income",
+      "discussing"
+    ],
     "searching": true,
     "card": {
       "icon": "book",
@@ -62,11 +96,16 @@
   },
   {
     "id": 4,
-    "enabled": false,
+    "enabled": true,
     "topic": "Compliance",
     "question": "Are there any compliance points I should keep in mind?",
-    "answer": "Yes. Please confirm updated client objectives, risk profile, capacity for loss, tax position, and retirement timeline. I can support meeting preparation — but the final recommendation must be reviewed and confirmed by you, the qualified advisor.",
-    "keywords": ["compliance", "keep in mind", "regulation", "points"],
+    "answer": "Yes. Please confirm updated client objectives, risk profile, capacity for loss, tax position, and retirement timeline. I can support meeting preparation, but the final recommendation must be reviewed and confirmed by you, the qualified advisor.",
+    "keywords": [
+      "compliance",
+      "keep in mind",
+      "regulation",
+      "points"
+    ],
     "card": {
       "icon": "scale",
       "title": "Compliance Checklist",
@@ -83,11 +122,16 @@
   },
   {
     "id": 5,
-    "enabled": false,
+    "enabled": true,
     "topic": "Follow-up note",
     "question": "Draft a short follow-up note I can refine after the meeting.",
     "answer": "Of course. I have prepared a draft follow-up note for your review.",
-    "keywords": ["draft", "note", "follow", "refine"],
+    "keywords": [
+      "draft",
+      "note",
+      "follow",
+      "refine"
+    ],
     "card": {
       "icon": "mail",
       "title": "Draft Follow-up Note",
@@ -97,11 +141,17 @@
   },
   {
     "id": 6,
-    "enabled": false,
+    "enabled": true,
     "topic": "Closing",
     "question": "Thanks, that's all for now.",
-    "answer": "You're welcome. Good luck with the meeting tomorrow — I'll be here when you need me.",
-    "keywords": ["thank", "thanks", "done", "that's all", "finish"],
+    "answer": "You're welcome. Good luck with the meeting tomorrow. I'll be here when you need me.",
+    "keywords": [
+      "thank",
+      "thanks",
+      "done",
+      "that's all",
+      "finish"
+    ],
     "closing": true
   }
 ]

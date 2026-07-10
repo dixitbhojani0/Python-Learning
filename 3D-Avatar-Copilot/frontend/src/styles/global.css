@@ -115,6 +115,8 @@ h1, h2, h3, .brand { font-family: "Space Grotesk", "Inter", sans-serif; }
   gap: 14px;
 }
 .dry-face { font-size: 120px; filter: grayscale(0.2); }
+.dry-face.pulse { animation: pulse 1.6s ease-in-out infinite; }
+.connecting-label { font-size: 13px; letter-spacing: 1px; color: var(--muted); }
 .dry-label {
   font-size: 12px;
   letter-spacing: 2px;
@@ -250,6 +252,28 @@ h1, h2, h3, .brand { font-family: "Space Grotesk", "Inter", sans-serif; }
 .msg-assistant .msg-bubble { border-radius: 14px 14px 14px 4px; }
 
 .msg .card { margin-top: 10px; }
+
+/* typing indicator: three bouncing dots while a reply is pending */
+.msg-bubble.typing {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 15px 18px;
+}
+.msg-bubble.typing i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--muted);
+  animation: typing-bounce 1.2s ease-in-out infinite;
+}
+.msg-bubble.typing i:nth-child(2) { animation-delay: 0.15s; }
+.msg-bubble.typing i:nth-child(3) { animation-delay: 0.3s; }
+
+@keyframes typing-bounce {
+  0%, 60%, 100% { transform: none; opacity: 0.4; }
+  30% { transform: translateY(-5px); opacity: 1; }
+}
 
 .msg-system {
   align-self: center;
@@ -434,6 +458,148 @@ h1, h2, h3, .brand { font-family: "Space Grotesk", "Inter", sans-serif; }
   cursor: pointer;
 }
 #scene-list li.played { color: var(--accent); border-color: var(--accent); }
+
+/* ---------- Admin panel (?admin=1) ---------- */
+#admin {
+  height: 100vh;
+  padding: 80px 8vw 24px;
+  overflow-y: auto;
+}
+
+.admin-tabs { display: flex; gap: 8px; margin-bottom: 24px; }
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  background: transparent;
+  border: 1px solid var(--panel-border);
+  color: var(--muted);
+  border-radius: 10px;
+  padding: 9px 16px;
+  font-size: 13.5px;
+  cursor: pointer;
+}
+.tab.active {
+  background: rgba(56, 189, 248, 0.1);
+  border-color: rgba(56, 189, 248, 0.35);
+  color: var(--accent);
+}
+
+/* Knowledge base */
+.kb-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 18px; }
+.kb-tile {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--panel);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  padding: 14px 18px;
+  box-shadow: var(--glass-edge);
+}
+.kb-tile .icon { color: var(--accent); flex-shrink: 0; }
+.kb-tile-value { font-size: 16px; font-weight: 600; }
+.kb-tile-label { font-size: 11.5px; letter-spacing: 0.5px; text-transform: uppercase; color: var(--muted); }
+
+.kb-toolbar { display: flex; justify-content: space-between; margin-bottom: 14px; }
+.kb-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  padding: 0 12px;
+  width: 340px;
+}
+.kb-search input { border: none !important; background: transparent !important; padding: 9px 0 !important; }
+
+.kb-table-card { padding: 6px 4px; }
+.kb-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+.kb-table th {
+  text-align: left;
+  font-size: 11px;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--panel-border);
+}
+.kb-table td { padding: 11px 14px; border-bottom: 1px solid rgba(255, 255, 255, 0.04); color: var(--text); }
+.kb-table tr:last-child td { border-bottom: none; }
+.kb-name { display: flex; align-items: center; gap: 9px; font-weight: 500; }
+.kb-name .icon { color: var(--accent); flex-shrink: 0; }
+.kb-actions { display: flex; gap: 6px; justify-content: flex-end; }
+.kb-actions .ghost-btn { padding: 6px 8px; }
+.kb-empty { text-align: center; color: var(--muted); padding: 26px 0 !important; }
+
+.badge.success { color: var(--success); background: rgba(52, 211, 153, 0.12); }
+.kb-processing { animation: pulse 1.2s ease-in-out infinite; }
+
+.admin-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 20px;
+  margin-bottom: 18px;
+}
+.admin-head h2 { font-size: 24px; }
+.admin-sub { color: var(--muted); font-size: 13.5px; margin-top: 4px; }
+.admin-sub code { color: var(--accent); font-size: 12.5px; }
+
+.admin-actions { display: flex; gap: 10px; align-items: center; }
+.admin-actions .ghost-btn { display: flex; align-items: center; gap: 6px; padding: 9px 14px; }
+.cta.admin-save {
+  width: auto;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 18px;
+  font-size: 14px;
+  border-radius: 10px;
+}
+.cta.admin-save:disabled { opacity: 0.6; cursor: default; }
+
+.admin-banner {
+  border-radius: 10px;
+  padding: 10px 16px;
+  font-size: 13.5px;
+  margin-bottom: 16px;
+}
+.admin-banner.ok { color: var(--success); background: rgba(52, 211, 153, 0.1); border: 1px solid rgba(52, 211, 153, 0.3); }
+.admin-banner.error { color: #f87171; background: rgba(248, 113, 113, 0.08); border: 1px solid rgba(248, 113, 113, 0.3); }
+
+.admin-list { display: flex; flex-direction: column; gap: 16px; padding-bottom: 40px; }
+
+.admin-row.disabled { opacity: 0.55; }
+
+.admin-row-top { display: flex; align-items: center; gap: 14px; margin-bottom: 10px; }
+.admin-topic {
+  flex: 1;
+  font-weight: 600;
+  font-size: 15px;
+}
+.admin-toggle { display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--muted); cursor: pointer; }
+.admin-toggle input { accent-color: var(--accent); width: 15px; height: 15px; }
+.ghost-btn.danger:hover { color: #f87171; border-color: #f87171; }
+
+.admin-label { display: block; font-size: 11.5px; letter-spacing: 0.5px; text-transform: uppercase; color: var(--muted); margin: 10px 0 5px; }
+
+#admin input, #admin textarea {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 14px;
+  padding: 9px 12px;
+  resize: vertical;
+}
+#admin input:focus, #admin textarea:focus { outline: none; border-color: var(--accent); }
+#admin input[type="checkbox"] { width: auto; }
 
 /* ---------- Animations ---------- */
 @keyframes pulse { 50% { opacity: 0.35; } }

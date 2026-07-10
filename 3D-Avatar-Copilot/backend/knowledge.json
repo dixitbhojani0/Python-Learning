@@ -1,0 +1,58 @@
+[
+  {
+    "id": 1,
+    "name": "Retirement Planning Guidance.pdf",
+    "category": "Planning Policies",
+    "sizeKb": 2340,
+    "chunks": 48,
+    "indexedAt": "2026-06-12T09:41:00Z"
+  },
+  {
+    "id": 2,
+    "name": "Pension Contribution Checklist.pdf",
+    "category": "Checklists",
+    "sizeKb": 412,
+    "chunks": 12,
+    "indexedAt": "2026-06-12T09:44:00Z"
+  },
+  {
+    "id": 3,
+    "name": "Annual Review Framework.docx",
+    "category": "Advisory Process",
+    "sizeKb": 1180,
+    "chunks": 33,
+    "indexedAt": "2026-07-10T07:54:11.643930Z"
+  },
+  {
+    "id": 4,
+    "name": "Suitability Review Notes.pdf",
+    "category": "Compliance",
+    "sizeKb": 890,
+    "chunks": 21,
+    "indexedAt": "2026-06-24T11:18:00Z"
+  },
+  {
+    "id": 5,
+    "name": "ISA Allowance Guide 2026-27.pdf",
+    "category": "Tax & Allowances",
+    "sizeKb": 640,
+    "chunks": 17,
+    "indexedAt": "2026-07-01T08:52:00Z"
+  },
+  {
+    "id": 6,
+    "name": "Inheritance Tax Planning Handbook.pdf",
+    "category": "Estate Planning",
+    "sizeKb": 3120,
+    "chunks": 64,
+    "indexedAt": "2026-07-03T16:27:00Z"
+  },
+  {
+    "id": 7,
+    "name": "FCA Consumer Duty Summary.pdf",
+    "category": "Compliance",
+    "sizeKb": 1475,
+    "chunks": 29,
+    "indexedAt": "2026-07-07T10:09:00Z"
+  }
+]

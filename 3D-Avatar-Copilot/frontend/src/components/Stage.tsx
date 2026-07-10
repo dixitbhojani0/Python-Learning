@@ -8,6 +8,8 @@ import { LiveWaveform } from "./LiveWaveform";
 interface StageProps {
   videoRef: RefObject<HTMLVideoElement | null>;
   showVideo: boolean;
+  connecting: boolean;
+  dryMode: boolean;
   status: Status;
   personaName: string;
   messages: ChatMessage[];
@@ -29,17 +31,21 @@ function statusLabel(status: Status, personaName: string): string {
   }
 }
 
-export function Stage({ videoRef, showVideo, status, personaName, messages, onMicClick }: StageProps) {
+export function Stage({ videoRef, showVideo, connecting, dryMode, status, personaName, messages, onMicClick }: StageProps) {
   return (
     <main id="stage">
       <section id="avatar-pane">
         <video id="avatar-video" ref={videoRef} autoPlay playsInline />
         {!showVideo && (
           <div id="dry-placeholder">
-            <div className="dry-face">
+            <div className={connecting ? "dry-face pulse" : "dry-face"}>
               <UserRoundSearch className="icon" size={110} strokeWidth={1.2} />
             </div>
-            <div className="dry-label">DRY RUN — avatar not connected</div>
+            {connecting ? (
+              <div className="connecting-label">Connecting your copilot…</div>
+            ) : dryMode ? (
+              <div className="dry-label">DRY RUN — avatar not connected</div>
+            ) : null}
           </div>
         )}
 
@@ -54,7 +60,7 @@ export function Stage({ videoRef, showVideo, status, personaName, messages, onMi
         </button>
       </section>
 
-      <ConversationPanel messages={messages} personaName={personaName} />
+      <ConversationPanel messages={messages} personaName={personaName} status={status} />
     </main>
   );
 }

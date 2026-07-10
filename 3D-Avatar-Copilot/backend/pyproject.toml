@@ -1,0 +1,8 @@
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+# E/W pycodestyle, F pyflakes, I isort, B bugbear, C4 comprehensions,
+# UP pyupgrade, S bandit security, N pep8-naming
+select = ["E", "W", "F", "I", "B", "C4", "UP", "S", "N"]

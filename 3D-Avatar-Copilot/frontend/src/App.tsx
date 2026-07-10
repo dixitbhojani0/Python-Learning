@@ -2,6 +2,7 @@ import { UserRound } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { createSession, fetchScript, logToServer } from "./api/client";
+import { AdminPanel } from "./components/AdminPanel";
 import { ClosingScreen } from "./components/ClosingScreen";
 import { Landing } from "./components/Landing";
 import { SceneJumpList } from "./components/SceneJumpList";
@@ -12,6 +13,7 @@ import { createProvider } from "./providers";
 import type { AvatarProvider } from "./providers/AvatarProvider";
 import { DryRunProvider } from "./providers/DryRunProvider";
 import type { ChatMessage, Scene, Status } from "./types";
+import { speakText } from "./utils/speech";
 
 const now = () => new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 let msgId = 0;
@@ -23,9 +25,10 @@ export default function App() {
   const [status, setStatus] = useState<Status>("idle");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [playedOrder, setPlayedOrder] = useState<number[]>([]);
-  const [personaName, setPersonaName] = useState("Penny");
+  const [personaName, setPersonaName] = useState("Sterling");
   const [closing, setClosing] = useState(false);
   const [hasVideo, setHasVideo] = useState(false);
+  const [dryMode, setDryMode] = useState(false);
   const [canReconnect, setCanReconnect] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -61,7 +64,11 @@ export default function App() {
         {
           onStatus: setStatus,
           onCaption: () => {}, // conversation panel shows the text; no subtitle overlay
-          onBubble: (question) => addMessage("you", question),
+          onBubble: (question) => {
+            addMessage("you", question);
+            // autoplay: a second (browser) voice asks the question aloud; avatar voice answers
+            if (config.autoplay) return speakText(question);
+          },
           onScenePlayed: (i) => {
             setPlayedOrder((prev) => [...prev, i]);
             addMessage("assistant", sceneList[i].answer, sceneList[i].card);
@@ -100,6 +107,7 @@ export default function App() {
         const engine = buildEngine(provider, sceneList);
         await provider.connect(videoRef.current!, session.sessionToken ? session : undefined);
         setHasVideo(provider.capabilities.video);
+        setDryMode(!provider.capabilities.video);
         setStatus("listening");
         return engine;
       } catch (e) {
@@ -108,6 +116,7 @@ export default function App() {
         provider = new DryRunProvider();
         const engine = buildEngine(provider, sceneList);
         setHasVideo(false);
+        setDryMode(true);
         setStatus("listening");
         return engine;
       }
@@ -161,12 +170,8 @@ export default function App() {
     });
   }, [scenes, start]);
 
-  const landingNote = [
-    config.forcedProvider === "dry" ? "Dry run — avatar disconnected, no free minutes used." : "",
-    config.autoplay ? "Autoplay — the script runs itself after Start." : "",
-  ]
-    .join(" ")
-    .trim();
+  // recording-safe: nothing on the landing screen may reveal autoplay/scripted modes
+  const landingNote = config.forcedProvider === "dry" ? "Dry run — avatar disconnected, no free minutes used." : "";
 
   return (
     <>
@@ -188,10 +193,14 @@ export default function App() {
         </div>
       </header>
 
-      {started && (
+      {config.admin && <AdminPanel />}
+
+      {!config.admin && started && (
         <Stage
           videoRef={videoRef}
           showVideo={hasVideo}
+          connecting={status === "connecting"}
+          dryMode={dryMode}
           status={status}
           personaName={personaName}
           messages={messages}
@@ -199,7 +208,7 @@ export default function App() {
         />
       )}
 
-      {!started && <Landing note={landingNote} error={scriptError} onStart={() => void start()} />}
+      {!config.admin && !started && <Landing note={landingNote} error={scriptError} onStart={() => void start()} />}
       {closing && <ClosingScreen />}
       {config.debug && started && (
         <SceneJumpList scenes={scenes} playedOrder={playedOrder} onJump={(i) => void engineRef.current?.playScene(i)} />

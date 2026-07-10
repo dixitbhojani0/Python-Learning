@@ -1,4 +1,5 @@
 """POST /api/v1/log — client-side error reporting (appends backend/demo.log)."""
+
 from fastapi import APIRouter, Request
 
 from ..config import BACKEND_DIR
