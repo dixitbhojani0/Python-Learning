@@ -1,0 +1,42 @@
+<h2>Config Viewer</h2>
+
+<div class="toolbar">
+  <mat-form-field appearance="outline">
+    <mat-label>Config Section</mat-label>
+    <mat-select [(ngModel)]="selectedKey" (ngModelChange)="loadConfig()">
+      @for (key of configKeys; track key) {
+        <mat-option [value]="key">{{ key }}</mat-option>
+      }
+    </mat-select>
+  </mat-form-field>
+
+  <button mat-raised-button color="warn" (click)="reloadAll()" [disabled]="reloading()">
+    @if (reloading()) {
+      <mat-spinner diameter="18" style="display:inline-block" />
+    } @else {
+      <mat-icon>refresh</mat-icon>
+    }
+    Reload All Configs
+  </button>
+</div>
+
+@if (loading()) {
+  <mat-spinner />
+} @else {
+  <pre class="config-block">{{ configJson() }}</pre>
+}
+
+<style>
+  .toolbar { display: flex; gap: 16px; align-items: center; margin-bottom: 16px; }
+  .config-block {
+    background: #1e1e1e;
+    color: #d4d4d4;
+    padding: 20px;
+    border-radius: 8px;
+    overflow-x: auto;
+    font-size: 0.85rem;
+    line-height: 1.6;
+    max-height: calc(100vh - 260px);
+    overflow-y: auto;
+  }
+</style>

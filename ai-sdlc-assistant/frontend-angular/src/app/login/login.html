@@ -1,0 +1,21 @@
+<div class="login-page">
+  <h1>🤖 AI SDLC Assistant</h1>
+  <p class="subtitle">Select your role to get started</p>
+
+  <div class="role-cards">
+    @for (r of roles; track r.token) {
+      <mat-card class="role-card" (click)="selectRole(r)">
+        <mat-card-header>
+          <mat-card-title>{{ r.icon }} {{ r.name }}</mat-card-title>
+          <mat-card-subtitle>{{ r.role | titlecase }}</mat-card-subtitle>
+        </mat-card-header>
+        <mat-card-content>
+          <p>{{ r.description }}</p>
+        </mat-card-content>
+        <mat-card-actions>
+          <button mat-raised-button color="primary">Enter as {{ r.name }}</button>
+        </mat-card-actions>
+      </mat-card>
+    }
+  </div>
+</div>

@@ -1,0 +1,86 @@
+<h2>Long-Term Memory</h2>
+<p style="color:#666; font-size:0.9rem; margin-bottom:16px">
+  Semantic facts extracted from past conversations — persisted across sessions, never expire.
+  Used by agents to recall project context (owner, decisions, resolutions).
+</p>
+
+<div class="toolbar">
+  <mat-form-field appearance="outline">
+    <mat-label>Project</mat-label>
+    <input matInput [(ngModel)]="project" />
+  </mat-form-field>
+
+  <button mat-stroked-button (click)="loadFacts()">
+    <mat-icon>refresh</mat-icon> Refresh
+  </button>
+
+  <button mat-raised-button color="warn" (click)="clearMemory()" [disabled]="clearing()">
+    @if (clearing()) {
+      <mat-spinner diameter="18" style="display:inline-block" />
+    } @else {
+      <mat-icon>delete</mat-icon>
+    }
+    Clear Memory
+  </button>
+</div>
+
+@if (loading()) {
+  <mat-spinner />
+} @else {
+  <p class="fact-count">{{ facts().length }} facts stored</p>
+
+  @if (facts().length === 0) {
+    <p style="color:#999; margin-top:32px; text-align:center">
+      No semantic facts yet. Ask a few questions in chat and they will appear here.
+    </p>
+  } @else {
+    <table mat-table [dataSource]="facts()" class="fact-table">
+
+      <ng-container matColumnDef="category">
+        <th mat-header-cell *matHeaderCellDef>Category</th>
+        <td mat-cell *matCellDef="let f">
+          <span class="cat-chip" [style.background]="categoryColor(f.category)">
+            {{ f.category || 'general' }}
+          </span>
+        </td>
+      </ng-container>
+
+      <ng-container matColumnDef="text">
+        <th mat-header-cell *matHeaderCellDef>Fact</th>
+        <td mat-cell *matCellDef="let f" class="fact-cell">{{ f.text }}</td>
+      </ng-container>
+
+      <ng-container matColumnDef="source_query">
+        <th mat-header-cell *matHeaderCellDef>From Query</th>
+        <td mat-cell *matCellDef="let f" class="query-cell">{{ f.source_query }}</td>
+      </ng-container>
+
+      <ng-container matColumnDef="created_at">
+        <th mat-header-cell *matHeaderCellDef>When</th>
+        <td mat-cell *matCellDef="let f" style="white-space:nowrap; font-size:0.8rem; color:#777">
+          {{ f.created_at | date:'MMM d, HH:mm' }}
+        </td>
+      </ng-container>
+
+      <tr mat-header-row *matHeaderRowDef="displayedColumns"></tr>
+      <tr mat-row *matRowDef="let row; columns: displayedColumns;"></tr>
+    </table>
+  }
+}
+
+<style>
+  .toolbar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
+  .fact-count { color: #666; font-size: 0.9rem; margin-bottom: 8px; }
+  .fact-table { width: 100%; background: #fff; }
+  .fact-cell { max-width: 360px; font-size: 0.88rem; }
+  .query-cell { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.8rem; color: #555; }
+  .cat-chip {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 12px;
+    color: #fff;
+    font-size: 0.75rem;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+</style>

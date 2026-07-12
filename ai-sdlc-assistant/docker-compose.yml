@@ -1,0 +1,171 @@
+# ─────────────────────────────────────────────
+#  AI SDLC Assistant — Docker Compose
+#
+#  Active services:
+#    qdrant     → vector database       http://localhost:6333/dashboard
+#    redis      → cache + HITL state    (internal)
+#    backend    → FastAPI + Tesseract   http://localhost:8000
+#    frontend   → Angular 20 dev server http://localhost:4200
+#
+#  MCP server is a SEPARATE project (../sdlc-mcp-server).
+#  Start it first, then start this stack:
+#    cd ../sdlc-mcp-server && docker compose up -d
+#    cd ../ai-sdlc-assistant && docker compose up -d
+#
+#  Set MCP_SERVER_URL in .env to wherever the MCP server is running.
+#  Default for Docker Desktop (Windows/Mac): http://host.docker.internal:8100/mcp
+#
+#  Rebuild (after requirements.txt change): docker compose build backend
+#  Rebuild (after package.json change):     docker compose build frontend
+#
+#  All code is volume-mounted — edits hot-reload without rebuilding.
+# ─────────────────────────────────────────────
+
+services:
+
+  # ── Qdrant Vector Database
+  # Dashboard UI: http://localhost:6333/dashboard
+  qdrant:
+    image: qdrant/qdrant:v1.14.0
+    container_name: sdlc-qdrant
+    ports:
+      - "6333:6333"                             # REST API
+      - "6334:6334"                             # gRPC
+    volumes:
+      - ./data/qdrant_storage:/qdrant/storage
+    environment:
+      QDRANT__SERVICE__HTTP_PORT: 6333
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/6333'"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ── Redis Cache (HITL state + semantic cache + session fast path)
+  redis:
+    image: redis:7.4-alpine
+    container_name: sdlc-redis
+    ports:
+      - "6380:6379"
+    command: >
+      redis-server
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lfu
+      --save ""
+      --loglevel warning
+    volumes:
+      - ./data/redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ── FastAPI Backend  (http://localhost:8000)
+  # Includes Tesseract OCR — no host install needed.
+  # Code is volume-mounted so uvicorn --reload picks up changes instantly.
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sdlc-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app                  # live code reload
+      - /app/.venv              # keep container venv, don't override with host
+    env_file:
+      - .env
+    environment:
+      PYTHONPATH: /app
+      QDRANT_URL: http://qdrant:6333
+      REDIS_URL: redis://redis:6379/0
+      # MCP server runs in ../sdlc-mcp-server — set MCP_SERVER_URL in .env
+      # Docker Desktop default: host.docker.internal resolves to the host machine
+      # sdlc-mcp-server reachable by container name via shared sdlc-net network
+      MCP_SERVER_URL: http://sdlc-mcp-server:8100/mcp
+      MCP_SERVICE_SECRET: ${MCP_SERVICE_SECRET:-placeholder}
+    depends_on:
+      qdrant:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks: [default, sdlc-net]
+    restart: unless-stopped
+
+  # ── Angular Frontend  (http://localhost:4200)
+  # Active UI — replaces Chainlit (chat) and Streamlit (admin).
+  # Uses Node 22 image — no Node install needed on the host.
+  # node_modules stays inside the container (anonymous volume)
+  # so the host filesystem never gets polluted.
+  frontend:
+    image: node:22-alpine
+    container_name: sdlc-frontend
+    working_dir: /app
+    ports:
+      - "4200:4200"
+    volumes:
+      - ./frontend-angular:/app       # live code — Angular CLI watches for changes
+      - /app/node_modules             # keep node_modules inside container
+    command: sh -c "npm install && npx ng serve --host 0.0.0.0 --port 4200 --poll 500"
+    environment:
+      NODE_ENV: development
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  # ── Chainlit Chat UI  (http://localhost:8080)
+  # Kept for reference — Angular frontend (frontend-angular/) is the active UI.
+  # Uncomment to run Chainlit alongside Angular if needed for comparison.
+  # chainlit:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile
+  #   container_name: sdlc-chainlit
+  #   ports:
+  #     - "8080:8080"
+  #   volumes:
+  #     - .:/app
+  #     - /app/.venv
+  #   env_file:
+  #     - .env
+  #   environment:
+  #     PYTHONPATH: /app
+  #     QDRANT_URL: http://qdrant:6333
+  #     REDIS_URL: redis://redis:6379/0
+  #   command: ["chainlit", "run", "frontend/app.py", "--host", "0.0.0.0", "--port", "8080"]
+  #   depends_on:
+  #     - backend
+  #   restart: unless-stopped
+
+  # ── Streamlit Admin Panel  (http://localhost:8501)
+  # Kept for reference — Angular admin panel (/admin routes) is the active admin UI.
+  # Uncomment to run Streamlit alongside Angular if needed for comparison.
+  # admin:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile
+  #   container_name: sdlc-admin
+  #   ports:
+  #     - "8501:8501"
+  #   volumes:
+  #     - .:/app
+  #     - /app/.venv
+  #   env_file:
+  #     - .env
+  #   environment:
+  #     PYTHONPATH: /app
+  #     QDRANT_URL: http://qdrant:6333
+  #     REDIS_URL: redis://redis:6379/0
+  #   command: ["streamlit", "run", "admin/app.py", "--server.port", "8501", "--server.address", "0.0.0.0"]
+  #   depends_on:
+  #     - backend
+  #   restart: unless-stopped
+
+# Data persists on host filesystem — survives container restarts.
+
+networks:
+  sdlc-net:
+    external: true    # shared with sdlc-mcp-server — create once: docker network create sdlc-net

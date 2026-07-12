@@ -1,0 +1,229 @@
+[
+  {
+    "id": "eval_001",
+    "category": "blocker_lookup",
+    "intent": "cross_source",
+    "project": "SDLC",
+    "query": "What is blocking the dashboard feature?",
+    "expected_keywords": [
+      "nginx",
+      "CORS",
+      "SDLC-1038",
+      "Alice",
+      "dashboard"
+    ],
+    "expected_response_keywords": [
+      "blocked",
+      "nginx",
+      "dashboard",
+      "CORS"
+    ]
+  },
+  {
+    "id": "eval_002",
+    "category": "blocker_lookup",
+    "intent": "cross_source",
+    "project": "SDLC",
+    "query": "What is the status of the payment gateway integration?",
+    "expected_keywords": [
+      "payment",
+      "Stripe",
+      "SSL",
+      "SDLC-1031",
+      "Bob"
+    ],
+    "expected_response_keywords": [
+      "payment",
+      "blocked",
+      "SSL",
+      "certificate"
+    ]
+  },
+  {
+    "id": "eval_003",
+    "category": "team_lookup",
+    "intent": "cross_source",
+    "project": "SDLC",
+    "query": "Who owns the auth service?",
+    "expected_keywords": [
+      "Alice",
+      "auth",
+      "SDLC-1025",
+      "JWT"
+    ],
+    "expected_response_keywords": [
+      "Alice",
+      "auth"
+    ]
+  },
+  {
+    "id": "eval_004",
+    "category": "incident_lookup",
+    "intent": "cross_source",
+    "project": "SDLC",
+    "query": "What caused the CORS error on the nginx change?",
+    "expected_keywords": [
+      "nginx",
+      "CORS",
+      "Access-Control-Allow-Origin",
+      "preflight",
+      "Charlie"
+    ],
+    "expected_response_keywords": [
+      "nginx",
+      "CORS",
+      "header",
+      "Charlie"
+    ]
+  },
+  {
+    "id": "eval_005",
+    "category": "sprint_status",
+    "intent": "risk",
+    "project": "SDLC",
+    "query": "What is the sprint risk for Sprint 12?",
+    "expected_keywords": [
+      "sprint",
+      "blocked",
+      "risk",
+      "velocity"
+    ],
+    "expected_response_keywords": [
+      "risk",
+      "blocked",
+      "sprint"
+    ]
+  },
+  {
+    "id": "eval_006",
+    "category": "ticket_status",
+    "intent": "cross_source",
+    "project": "SDLC",
+    "query": "Which tickets are currently blocked?",
+    "expected_keywords": [
+      "SDLC-1031",
+      "SDLC-1038",
+      "blocked",
+      "payment",
+      "dashboard"
+    ],
+    "expected_response_keywords": [
+      "blocked",
+      "SDLC"
+    ]
+  },
+  {
+    "id": "eval_007",
+    "category": "incident_resolution",
+    "intent": "cross_source",
+    "project": "SDLC",
+    "query": "How was the auth CORS incident resolved?",
+    "expected_keywords": [
+      "nginx",
+      "CORS",
+      "resolved",
+      "Charlie",
+      "nginx.conf"
+    ],
+    "expected_response_keywords": [
+      "resolved",
+      "nginx",
+      "CORS"
+    ]
+  },
+  {
+    "id": "eval_008",
+    "category": "infrastructure",
+    "intent": "cross_source",
+    "project": "SDLC",
+    "query": "What is the status of the CI/CD pipeline migration?",
+    "expected_keywords": [
+      "Jenkins",
+      "GitHub Actions",
+      "Charlie",
+      "SDLC-1040",
+      "pipeline"
+    ],
+    "expected_response_keywords": [
+      "CI",
+      "pipeline",
+      "Charlie"
+    ]
+  },
+  {
+    "id": "eval_009",
+    "category": "adr_lookup",
+    "intent": "cross_source",
+    "project": "SDLC",
+    "query": "What nginx configuration decisions were made for the SDLC services?",
+    "expected_keywords": [
+      "nginx",
+      "reverse proxy",
+      "auth-service",
+      "ADR-001",
+      "Charlie"
+    ],
+    "expected_response_keywords": [
+      "nginx",
+      "proxy",
+      "configuration"
+    ]
+  },
+  {
+    "id": "eval_010",
+    "category": "team_status",
+    "intent": "cross_source",
+    "project": "SDLC",
+    "query": "What is the DB connection pool issue that occurred?",
+    "expected_keywords": [
+      "QueuePool",
+      "connection pool",
+      "auth-service",
+      "exhausted",
+      "5 connections"
+    ],
+    "expected_response_keywords": [
+      "connection pool",
+      "DB"
+    ]
+  },
+  {
+    "id": "eval_011",
+    "category": "ticket_creation",
+    "intent": "ticket",
+    "project": "SDLC",
+    "query": "CORS error on /api/v2/auth after nginx change, users are getting 500",
+    "expected_keywords": [
+      "nginx",
+      "CORS",
+      "auth",
+      "500"
+    ],
+    "expected_response_keywords": [
+      "ticket",
+      "CORS",
+      "nginx",
+      "500"
+    ]
+  },
+  {
+    "id": "eval_012",
+    "category": "sprint_summary",
+    "intent": "cross_source",
+    "project": "SDLC",
+    "query": "Summarize the current sprint status and team capacity",
+    "expected_keywords": [
+      "Sprint 12",
+      "dashboard",
+      "payment",
+      "Alice",
+      "Bob",
+      "Charlie"
+    ],
+    "expected_response_keywords": [
+      "sprint",
+      "team",
+      "status"
+    ]
+  }
+]

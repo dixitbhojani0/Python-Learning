@@ -1,0 +1,64 @@
+# ─────────────────────────────────────────────────────────────────────
+#  config/mcp_registry.yaml
+#
+#  Connector enable/disable flags and settings.
+#  Adding a new connector = add a block here. Zero Python changes needed.
+# ─────────────────────────────────────────────────────────────────────
+
+# asyncio.Semaphore cap across ALL connectors (thundering-herd protection)
+max_concurrent_calls: 3
+
+connectors:
+
+  github:
+    enabled: true
+    type: github
+    description: "GitHub REST API — PRs, issues, repos"
+    base_url: "https://api.github.com"
+    token_env: GITHUB_TOKEN
+    timeout_seconds: 10
+    max_retries: 3
+
+  jira:
+    enabled: true
+    type: jira
+    description: "Jira Cloud REST API — tickets, sprints, boards"
+    base_url_env: JIRA_BASE_URL
+    email_env: JIRA_EMAIL
+    token_env: JIRA_TOKEN
+    project_key_env: JIRA_PROJECT_KEY
+    timeout_seconds: 15
+    max_retries: 3
+
+  slack:
+    enabled: true
+    type: slack
+    description: "Slack API — channel messages, notifications"
+    token_env: SLACK_BOT_TOKEN
+    timeout_seconds: 10
+    max_retries: 2
+
+  confluence:
+    enabled: true
+    type: confluence
+    description: "Confluence pages (Atlassian REST) — fetch wiki content"
+    timeout_seconds: 15
+    max_retries: 2
+
+  # DISABLED — flip enabled: true and provide Azure AD creds to re-enable
+  teams:
+    enabled: false
+    type: teams
+    description: "Microsoft Teams (Graph API) — channel messages"
+    team_id: ""
+    timeout_seconds: 15
+    max_retries: 2
+
+  # DISABLED — flip enabled: true and provide GDRIVE creds to re-enable
+  drive:
+    enabled: false
+    type: drive
+    description: "Google Drive API — list and read documents"
+    api_key_env: GDRIVE_API_KEY
+    timeout_seconds: 15
+    max_retries: 2

@@ -1,0 +1,116 @@
+"""
+backend/persona/adapter.py
+
+PersonaAdapter — rewrites an agent's technical answer in role-appropriate language.
+
+Why two LLM calls instead of one?
+  The CrossSourceAgent's first LLM call has to do two hard things simultaneously:
+    1. Reason over 7+ RAG chunks of technical content
+    2. Write the answer in the right tone for the user's role
+
+  When those two jobs compete, the LLM tends to produce a hybrid — partially
+  technical, partially plain — rather than fully committing to one style.
+
+  The PersonaAdapter's second call has ONLY one job: rewrite in the right tone.
+  It never sees the RAG chunks, only the finished answer. This produces cleaner
+  role-specific language, especially for stakeholders (who need zero technical terms).
+
+  Tradeoff: +3-5 seconds latency per request. Acceptable for this demo.
+  Phase 9 optimization: cache persona-rewritten responses with a short TTL.
+"""
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+class PersonaAdapter:
+    """
+    Rewrites a final LLM response for a specific user role.
+
+    Depends on:
+      llm           — any BaseLLMProvider (GroqProvider in production)
+      config_loader — ConfigLoader singleton (reads prompts.yaml)
+
+    Usage in graph.py adapt_persona node:
+        adapter = PersonaAdapter(llm=_get_provider(), config_loader=config)
+        adapted = await adapter.adapt(original_response, persona_key="stakeholder")
+    """
+
+    def __init__(self, llm, config_loader) -> None:
+        self.llm    = llm
+        self.config = config_loader
+
+    async def adapt(self, response: str, persona_key: str, query: str = "") -> str:
+        """
+        Rewrite `response` in the style of `persona_key`.
+
+        Args:
+            response:    the original answer from an agent (technical, multi-source)
+            persona_key: one of "developer", "manager", "technical_leader", "stakeholder"
+            query:       the original user question. Forwarded to the persona prompt so
+                         rules can be context-aware — e.g. the stakeholder persona names
+                         people only when the user explicitly asked WHO. Empty = no query
+                         signal (callers that don't have it, like reflection, can omit it).
+
+        Returns:
+            The rewritten response. Falls back to original `response` on any error
+            so a rewriting failure never breaks the user experience.
+        """
+        if not response.strip():
+            return response
+
+        # Skip rewriting for "I don't know" responses — persona adds noise, not value.
+        _NO_REWRITE_PREFIXES = (
+            "I couldn't find",
+            "I don't have",
+            "I'm not able",
+            "This assistant answers questions about",
+            "Based on limited context",
+        )
+        if any(response.lstrip().startswith(p) for p in _NO_REWRITE_PREFIXES):
+            return response
+
+        # Load style instruction from prompts.yaml (same key used in generation step)
+        persona_instruction = (
+            self.config.get_prompt(f"persona_{persona_key}")
+            or self.config.get_prompt("persona_developer")
+        )
+
+        system_prompt = self.config.get_prompt("persona_rewrite_preamble") + persona_instruction
+
+        temperature = self.config.get_temperature("persona_rewriting")
+        max_tokens  = (
+            self.config.get_llm_config()
+            .get("primary", {})
+            .get("max_tokens", {})
+            .get("response", 1024)
+        )
+
+        user_prompt = (
+            f"Original question:\n{query}\n\nAnswer to rewrite:\n\n{response}"
+            if query.strip()
+            else f"Answer to rewrite:\n\n{response}"
+        )
+
+        try:
+            # generate_text() (not generate()) — this is an internal rewrite step,
+            # not the user-facing answer. generate() streams to the active SSE
+            # stream; using it here leaked the pre-rewrite agent answer AND this
+            # rewritten version into the same chat bubble, back to back.
+            resp = await self.llm.generate_text(
+                prompt=user_prompt,
+                system=system_prompt,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            adapted = resp.text.strip()
+            if not adapted:
+                logger.warning("PersonaAdapter: LLM returned empty rewrite — keeping original")
+                return response
+
+            return adapted
+
+        except Exception:
+            # Never let rewriting failure propagate — the original answer is still correct
+            logger.exception("PersonaAdapter: rewrite failed for persona='%s' — keeping original", persona_key)
+            return response

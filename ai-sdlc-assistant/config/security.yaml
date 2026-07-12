@@ -1,0 +1,66 @@
+# ─────────────────────────────────────────────────────────────────────
+#  config/security.yaml
+#
+#  Prompt-injection detection patterns for PromptSafetyGuard.
+#  Add new patterns here as new attack vectors are discovered —
+#  no code change or deployment needed (hot-reloaded by watchdog).
+#
+#  Patterns are Python regex strings compiled with re.IGNORECASE.
+# ─────────────────────────────────────────────────────────────────────
+
+prompt_injection:
+  patterns:
+    # Template escape — break out of Python .format() calls
+    - "\\{\\{"
+    - "\\}\\}"
+
+    # Direct instruction override
+    - "ignore\\s+(all\\s+)?(previous|prior|above)\\s+instructions?"
+    - "forget\\s+(all\\s+)?(previous|prior|above)\\s+instructions?"
+    - "disregard\\s+(all\\s+)?(previous|prior|above)"
+
+    # System prompt extraction
+    - "(reveal|show|print|display|output|repeat)\\s+(your\\s+)?(system\\s+prompt|instructions?|prompt)"
+    - "what\\s+(is|are)\\s+your\\s+(system\\s+)?instructions?"
+
+    # Role override / jailbreak
+    - "you\\s+are\\s+now\\s+(an?\\s+)?(different|new|another|evil|uncensored)\\s+(ai|assistant|bot|model)"
+    - "act\\s+as\\s+(if\\s+you\\s+(are|were)\\s+)?(an?\\s+)?(unrestricted|jailbroken|uncensored)"
+    - "\\b(dan|jailbreak|developer\\s+mode|god\\s+mode)\\b"
+
+    # Multi-turn injection — fake new system/assistant message via newlines
+    - "\\n\\s*(system|assistant|human|user)\\s*:"
+    - "\\\\n\\\\n(ignore|forget|disregard)"
+
+    # Prompt delimiter attacks — close one section and open a fake system section
+    - "</?system>"
+    - "</?instructions?>"
+    - "\\[INST\\]"
+    - "\\[\\/INST\\]"
+    - "<\\|im_start\\|>"
+    - "<\\|im_end\\|>"
+
+# ── MCP Tool Safety ───────────────────────────────────────────────────────────
+# Verbs that identify state-changing (write) MCP tool actions.
+# Any tool whose name contains one of these substrings is treated as a write
+# tool: excluded from the autonomous gather loop and flagged destructiveHint=True
+# in ToolAnnotations so third-party MCP hosts (Claude Desktop, Cursor, Antigravity)
+# can prompt the user before execution.
+#
+# Loaded at startup by backend/mcp/constants.py — change here, restart to apply.
+# The constants.py module has a hardcoded fallback with the same list for safety.
+tool_safety:
+  write_verbs:
+    - create
+    - update
+    - delete
+    - assign
+    - reassign
+    - deassign
+    - approve
+    - reject
+    - request_changes
+    - merge
+    - send
+    - post
+    - close

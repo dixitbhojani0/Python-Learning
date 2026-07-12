@@ -1,0 +1,610 @@
+"""
+backend/agents/pr_review_agent.py
+
+PR Review Agent — reviews open PRs against coding standards and version policy.
+
+Always requires HITL approval (reviewer assignment is a team action).
+Flow:
+  1. GitHub MCP — search for relevant open PRs
+  2. RAG — retrieve from data/version_policies/ (semver, API change policy)
+  3. RAG — retrieve from data/adr_documents/ (coding standards)
+  4. CoT reasoning → LLM produces structured review JSON
+  5. Format HITL proposal card (reviewer assignment)
+  6. Return AgentPayload(hitl_required=True)
+"""
+import asyncio
+import logging
+import re
+
+try:
+    from langsmith import traceable
+except ImportError:
+    def traceable(fn=None, **_kw):
+        return fn if fn is not None else (lambda f: f)
+
+# Code PR signals — titles/labels that indicate real code work
+_CODE_PR_PAT = re.compile(
+    r'\b(fix|feat|feature|patch|minor|major|refactor|test|ci|config|api|auth|bug|hotfix|chore|docs|perf)\b',
+    re.IGNORECASE,
+)
+# Documentation-only PR signals — these should be deprioritized
+_DOC_PR_PAT = re.compile(
+    r'\b(information report|solution document|added document|readme|changelog|release notes?|wiki)\b',
+    re.IGNORECASE,
+)
+
+
+# Specific-PR target signals: an explicit "PR-N" id, or an approve/merge verb that
+# only makes sense against one PR. Anything else (e.g. "show me open PRs") is a
+# broad list query → list mode, no LLM deep review, no HITL.
+_PR_ID_PAT = re.compile(r'\bPR[-\s]?(\d+)\b', re.IGNORECASE)
+_PR_APPROVE_PAT = re.compile(r'\b(approve|merge|sign[\s-]?off|lgtm)\b', re.IGNORECASE)
+# "request changes" intent — a GitHub REQUEST_CHANGES review, distinct from approve/merge.
+_PR_REQUEST_CHANGES_PAT = re.compile(
+    r'\b(request changes?|reject|needs? changes?|changes? requested|request-changes)\b', re.IGNORECASE,
+)
+# Explicit reviewer name: "assign reviewer <name>", "add <name> as reviewer", "assign <name> to PR"
+_EXPLICIT_REVIEWER_PAT = re.compile(
+    r'(?:assign|add)\s+(?:reviewer\s+)?([a-zA-Z0-9_-]+)(?:\s+as\s+reviewer|\s+to\s+PR)?',
+    re.IGNORECASE,
+)
+
+
+def _query_target_pr_id(query: str) -> str:
+    """Return the explicit PR id (e.g. 'PR-5') in `query`, or '' when none — i.e. broad list."""
+    m = _PR_ID_PAT.search(query)
+    return f"PR-{m.group(1)}" if m else ""
+
+
+def _query_explicit_reviewer(query: str) -> str:
+    """Return reviewer name explicitly stated in query, or '' if none."""
+    m = _EXPLICIT_REVIEWER_PAT.search(query)
+    if not m:
+        return ""
+    name = m.group(1)
+    # Exclude words that are verbs/prepositions mistakenly captured, not usernames
+    if name.lower() in {"reviewer", "pr", "the", "a", "an", "for", "to", "in"}:
+        return ""
+    return name
+
+
+def _format_pr_list(prs: list[dict]) -> str:
+    """List-mode response: one row per open PR, no review table, no HITL prompt."""
+    if not prs:
+        return "No open PRs found."
+    lines = [f"**{len(prs)} open PR(s) needing review:**", ""]
+    for pr in prs:
+        ci = pr.get("ci_status", "unknown")
+        ci_icon = "✅" if ci == "passed" else "⏳" if ci == "running" else "❌" if ci == "failed" else "⚪"
+        lines.append(f"- `{pr['id']}` {pr['title']} — CI: {ci_icon} {ci}")
+    lines += ["", "_Ask `review PR-X` for a full review of a specific PR._"]
+    return "\n".join(lines)
+
+
+def _is_code_pr(pr: dict) -> bool:
+    """Return True if the PR looks like a code change (not a documentation upload)."""
+    title  = pr.get("title", "")
+    files  = pr.get("files_changed", [])
+    labels = pr.get("labels", [])
+
+    # If we have file data: code file = non-markdown, non-doc extension
+    if files:
+        code_exts = {".py", ".js", ".ts", ".java", ".go", ".yaml", ".yml", ".json", ".conf", ".sh"}
+        if any(any(f.endswith(ext) for ext in code_exts) for f in files):
+            return True
+    # Title or label signals
+    if _CODE_PR_PAT.search(title) or any(_CODE_PR_PAT.search(lb) for lb in labels):
+        return True
+    if _DOC_PR_PAT.search(title):
+        return False
+    return True  # default: include
+
+from backend.agents.base_agent import AgentPayload, BaseAgent
+from backend.core.config_loader import config as _default_config
+from backend.mcp_client.client import as_list, call_mcp_tool
+from backend.orchestrator.state import SDLCState
+from backend.rag.retriever import HybridRetriever, RetrievedChunk
+
+logger = logging.getLogger(__name__)
+
+
+# ── Context formatters ─────────────────────────────────────────────────────────
+
+def _format_pr_context(prs: list[dict]) -> str:
+    if not prs:
+        return "No relevant PRs found."
+    lines = []
+    for pr in prs:
+        files = ", ".join(pr.get("files_changed", []))
+        reviewers = ", ".join(pr.get("reviewers", []))
+        lines.append(
+            f"PR #{pr['id']}: {pr['title']}\n"
+            f"  Author: {pr.get('author', 'unknown')} | Status: {pr.get('status', 'UNKNOWN')}\n"
+            f"  CI: {pr.get('ci_status', 'unknown')} | Branch: {pr.get('branch', '')} → {pr.get('base_branch', 'main')}\n"
+            f"  Files: {files or 'N/A'}\n"
+            f"  Current reviewers: {reviewers or 'none assigned'}\n"
+            f"  Description: {pr.get('description', '')[:300]}"
+        )
+    return "\n\n".join(lines)
+
+
+def _format_rag_context(chunks: list[RetrievedChunk]) -> str:
+    if not chunks:
+        return "No relevant documentation found."
+    lines = []
+    for i, chunk in enumerate(chunks, 1):
+        content = chunk.parent_text or chunk.text
+        lines.append(f"[Source {i}: {chunk.source} ({chunk.doc_type})]")
+        lines.append(content[:700])
+    return "\n\n".join(lines)
+
+
+# ── Proposal card formatter ────────────────────────────────────────────────────
+
+def _role_summary(review_data: dict, user_role: str, total_prs: int) -> str:
+    """
+    Generate a one-sentence role-appropriate intro above the review table.
+    The table itself is identical for all roles — only this line changes.
+    """
+    pr_num    = review_data.get("pr_number", "")
+    risk      = review_data.get("risk_level", "MEDIUM")
+    ci        = review_data.get("ci_status", "unknown")
+    concerns  = review_data.get("concerns", "").strip()
+
+    if user_role == "developer":
+        action = "can be merged with caution" if risk == "MEDIUM" else ("is safe to merge" if risk == "LOW" else "needs rework before merge")
+        return f"**Code review — {pr_num}:** {action}. {'Concerns: ' + concerns[:120] if concerns else 'No blocking concerns found.'}"
+
+    if user_role in ("manager", "admin"):
+        reviewer_note = "No reviewer assigned — assign manually in GitHub." if review_data.get("suggested_reviewer", "unassigned") == "unassigned" else f"Suggested reviewer: `{review_data.get('suggested_reviewer')}`."
+        return f"**Sprint impact — {total_prs} open PR(s):** {pr_num} is {risk} risk. {reviewer_note}"
+
+    # stakeholder / default
+    release_signal = "does not block release" if risk in ("LOW", "MEDIUM") else "blocks release — rework required"
+    return f"**Release signal — {pr_num}:** This change {release_signal}. CI: {ci}."
+
+
+def _format_pr_proposal(
+    review_data: dict, all_prs: list[dict] | None = None, user_role: str = "developer",
+    action_mode: str = "assign", already_assigned: bool = False, not_a_collaborator: bool = False,
+    concise: bool = False,
+) -> str:
+    """
+    Build the human-readable PR review card.
+    Role-specific summary line on top; structured review table is identical for all roles.
+    """
+    pr_num   = review_data.get("pr_number", "this PR")
+    pr_title = review_data.get("pr_title", "N/A")
+    reviewer = review_data.get("suggested_reviewer", "unassigned")
+
+    # concise: the user gave an explicit action verb (approve/request-changes/assign
+    # a NAMED reviewer) — a direct action request, not a review request. The full
+    # standards/CI/risk table and LLM summary are noise here; show only what's
+    # needed to judge THAT action. approve_pr/reject_pr action_types are only ever
+    # reached via an explicit "approve"/"reject" verb in the query (never from a
+    # bare "review PR-X"), so they're unconditionally concise — see run()'s call site.
+    if concise:
+        if action_mode == "approve":
+            return (
+                f"## Approve — {pr_num}: {pr_title}\n\n"
+                f"_Shall I approve **{pr_num}**? (This approves the PR — it does not merge it.)_\n\n"
+                f"_Click **Approve** to approve, or **Reject** to cancel._"
+            )
+        if action_mode == "reject":
+            body = review_data.get("concerns", "").strip() or "Automated review found issues that need addressing before merge."
+            return (
+                f"## Request Changes — {pr_num}: {pr_title}\n\n"
+                f"_Shall I submit a **request changes** review on **{pr_num}**?_\n\n"
+                f"> {body}\n\n"
+                f"_Click **Approve** to submit this review, or **Reject** to cancel._"
+            )
+        header = f"## Assign Reviewer — {pr_num}: {pr_title}"
+        if already_assigned:
+            return f"{header}\n\n✅ **`{reviewer}`** is already the requested reviewer on this PR — no action needed."
+        if not_a_collaborator:
+            return (
+                f"{header}\n\n⚠️ **`{reviewer}`** is not a collaborator on this repository, "
+                f"so they can't be requested as a reviewer. Add them as a collaborator first, "
+                f"or choose someone else."
+            )
+        return (
+            f"{header}\n\n_Shall I assign `{reviewer}` as reviewer for this PR?_\n\n"
+            f"_Click **Approve** to assign, or **Reject** to cancel._"
+        )
+
+    risk_emoji = {"LOW": "🟢", "MEDIUM": "🟡", "HIGH": "🔴"}.get(
+        review_data.get("risk_level", "MEDIUM"), "🟡"
+    )
+    standards_emoji  = "✅" if review_data.get("standards_result") == "PASS" else "⚠️"
+    policy_emoji     = "✅" if review_data.get("version_policy_result") == "COMPLIANT" else "⚠️"
+    ci_emoji         = "✅" if review_data.get("ci_status") == "passed" else "⏳" if review_data.get("ci_status") == "running" else "❌"
+
+    total_prs = len(all_prs) if all_prs else 1
+    lines     = [_role_summary(review_data, user_role, total_prs), ""]
+
+    # Show all PRs that were reviewed (not just the chosen one)
+    if all_prs and len(all_prs) > 1:
+        lines += [f"**{len(all_prs)} open PRs reviewed:**", ""]
+        for pr in all_prs:
+            ci = pr.get("ci_status", "unknown")
+            ci_icon = "✅" if ci == "passed" else "⏳" if ci == "running" else "❌" if ci == "failed" else "⚪"
+            lines.append(f"- `{pr['id']}` {pr['title']} — CI: {ci_icon} {ci}")
+        lines += ["", "---", ""]
+
+    lines += [
+        f"## PR Review: {review_data.get('pr_number', '')} — {review_data.get('pr_title', 'N/A')}",
+        "",
+        f"| Check | Result |",
+        f"|-------|--------|",
+        f"| Coding Standards | {standards_emoji} {review_data.get('standards_result', 'N/A')} |",
+        f"| Version Policy   | {policy_emoji} {review_data.get('version_policy_result', 'N/A')} |",
+        f"| CI Status        | {ci_emoji} {review_data.get('ci_status', 'unknown')} |",
+        f"| Overall Risk     | {risk_emoji} {review_data.get('risk_level', 'MEDIUM')} |",
+        "",
+        f"📁 **Files changed:** {review_data.get('files_changed', 'N/A')}",
+    ]
+
+    concerns = review_data.get("concerns", "").strip()
+    if concerns:
+        lines += ["", f"⚠️ **Concerns:** {concerns}"]
+
+    summary = review_data.get("summary", "").strip()
+    if summary:
+        lines += ["", summary]
+
+    violations = review_data.get("standards_violations", [])
+    if violations:
+        lines += ["", "**Standards violations:**"]
+        lines += [f"  - {v}" for v in violations]
+
+    # action_mode is always "assign" here — approve/reject are always concise
+    # (handled above) since they're only ever reached via an explicit verb.
+    if already_assigned:
+        # Still show the full review analysis above — "review PR-X" is a request for
+        # the review itself, not just for a reviewer-assignment decision. Only the
+        # call-to-action changes when there's nothing left to assign.
+        lines += [
+            "",
+            f"✅ **`{reviewer}`** is already the requested reviewer on this PR — no action needed.",
+        ]
+    elif not_a_collaborator:
+        # Same principle: don't hide the review behind a proposal that's guaranteed
+        # to fail — GitHub silently ignores a non-collaborator reviewer request
+        # instead of erroring (see github_connector.assign_reviewer), so this check
+        # runs BEFORE proposing rather than only surfacing after a doomed Approve.
+        lines += [
+            "",
+            f"⚠️ **`{reviewer}`** is not a collaborator on this repository, so they can't "
+            f"be requested as a reviewer. Add them as a collaborator first, or choose "
+            f"someone else.",
+        ]
+    elif reviewer and reviewer != "unassigned":
+        lines += [
+            "",
+            f"**Suggested reviewer:** `{reviewer}` (based on file ownership)",
+            "",
+            "---",
+            f"_Shall I assign `{reviewer}` as reviewer for this PR?_",
+            "_Click **Approve** to assign, or **Reject** to cancel._",
+        ]
+    else:
+        lines += [
+            "",
+            "📌 **Action needed:** No reviewer could be automatically identified.",
+            "Please assign a reviewer manually in GitHub.",
+        ]
+    return "\n".join(lines)
+
+
+# ── Agent class ────────────────────────────────────────────────────────────────
+
+class PRReviewAgent(BaseAgent):
+    """
+    PR Review Agent — reviews PRs against coding standards and version policy.
+
+    1. GitHub MCP — fetch open/relevant PRs
+    2. RAG — version_policies/ (semver, API change policy)
+    3. RAG — adr_documents/ (coding standards)
+    4. LLM CoT → structured JSON review
+    5. Format HITL reviewer assignment proposal
+    6. Return AgentPayload(hitl_required=True)
+    """
+
+    def __init__(self, retriever: HybridRetriever, llm, config_loader=None, mcp_registry=None):
+        super().__init__(
+            mcp_registry=mcp_registry,
+            retriever=retriever,
+            llm=llm,
+            config_loader=config_loader or _default_config,
+        )
+
+    async def _fetch_prs(self, query: str) -> list[dict]:
+        """Fetch relevant open PRs from GitHub over MCP."""
+        try:
+            results = await asyncio.gather(
+                call_mcp_tool("github_search_prs", {"query": query}),
+                call_mcp_tool("github_list_open_prs", {}),
+                return_exceptions=True,
+            )
+            searched = as_list(results[0])
+            all_open = as_list(results[1])
+
+            # Merge: searched first, then any open PRs not already in results
+            seen_ids = {pr["id"] for pr in searched}
+            merged   = list(searched)
+            for pr in all_open:
+                if pr["id"] not in seen_ids:
+                    merged.append(pr)
+                    seen_ids.add(pr["id"])
+
+            # Sort: code PRs first, documentation PRs last
+            merged.sort(key=lambda p: (0 if _is_code_pr(p) else 1))
+            logger.info("PRReviewAgent: %d PRs fetched (%d from search, %d open total)", len(merged), len(searched), len(all_open))
+            return merged[:5]  # cap at 5 to avoid prompt bloat
+        except Exception:
+            logger.exception("PRReviewAgent: GitHub fetch failed — proceeding without PR data")
+            return []
+
+    @traceable(name="pr_review_agent", run_type="chain")
+    async def run(self, state: SDLCState) -> AgentPayload:
+        """Review relevant PRs and propose a reviewer assignment (HITL)."""
+        query   = state["query"]
+        project = state["project_id"]
+
+        logger.info("PRReviewAgent.run: project='%s' query='%s...'", project, query[:60])
+
+        # ── Step 1: GitHub PRs (async) ────────────────────────────────────────
+        prs = await self._fetch_prs(query)
+
+        # ── List-vs-deep branch ───────────────────────────────────────────────
+        # Broad query ("show me open PRs", no PR-N named, no approve/merge verb) →
+        # list mode: one row per PR, no LLM deep review, no HITL. Matches GitHub's
+        # "review requests" UX — the user picks a PR, then asks for a deep review.
+        target_id             = _query_target_pr_id(query)
+        wants_approve         = bool(_PR_APPROVE_PAT.search(query))
+        wants_request_changes = bool(_PR_REQUEST_CHANGES_PAT.search(query))
+        explicit_reviewer     = _query_explicit_reviewer(query)   # e.g. "dixitbhojani-blip"
+        broad_query           = not target_id and not wants_approve and not wants_request_changes and not explicit_reviewer
+
+        if broad_query:
+            logger.info("PRReviewAgent: broad list query — %d PRs, skipping deep review", len(prs))
+            list_response = _format_pr_list(prs)
+            return AgentPayload(
+                agent_name="pr_review_agent",
+                confidence=1.0 if prs else 0.0,
+                summary=f"{len(prs)} open PR(s) listed",
+                structured={
+                    "final_response": list_response,
+                    "skip_persona":   True,   # the list card is structured data, not prose
+                },
+                sources=["github_live"] if prs else [],
+                hitl_required=False,
+            )
+
+        # An action request (approve/request-changes/assign a NAMED reviewer) with no
+        # PR number, when multiple PRs are open, is ambiguous — silently letting the
+        # LLM pick one from the whole batch risks approving/rejecting/assigning the
+        # WRONG PR. Ask instead of guessing (same principle as ticket_agent's "which
+        # ticket?" guard when an edit request names no ticket ID).
+        wants_specific_action = wants_approve or wants_request_changes or bool(explicit_reviewer)
+        if wants_specific_action and not target_id and len(prs) > 1:
+            open_ids = ", ".join(p["id"] for p in prs)
+            example  = prs[0]["id"]
+            msg = (
+                f"Which PR did you mean? There are {len(prs)} open: {open_ids}.\n\n"
+                f"Please include the PR number, e.g. \"assign {explicit_reviewer or 'alice'} "
+                f"as reviewer to {example}\"."
+            )
+            return AgentPayload(
+                agent_name="pr_review_agent",
+                confidence=0.0,
+                summary="ambiguous PR target — asked for clarification",
+                structured={"final_response": msg, "skip_persona": True},
+                sources=["github_live"],
+                hitl_required=False,
+            )
+
+        # Specific PR → focus the rest of the flow on it (or fail loudly if missing).
+        # Silently reviewing a DIFFERENT PR than the one the user named is the worst
+        # outcome — it looks right and is wrong.
+        if target_id:
+            picked = next((p for p in prs if p["id"].upper() == target_id.upper()), None)
+            if picked is None:
+                open_ids = ", ".join(p["id"] for p in prs) or "none"
+                msg = f"**{target_id}** is not in the open PRs (currently open: {open_ids})."
+                logger.info("PRReviewAgent: %s not found in fetched PRs", target_id)
+                return AgentPayload(
+                    agent_name="pr_review_agent",
+                    confidence=0.0,
+                    summary=f"{target_id} not found",
+                    structured={"final_response": msg, "skip_persona": True},
+                    sources=["github_live"],
+                    hitl_required=False,
+                )
+            prs = [picked]
+            logger.info("PRReviewAgent: targeted %s", target_id)
+
+        # ── Step 2: RAG — version policy + coding standards (sync) ───────────
+        version_chunks, version_conf = self.retriever.retrieve(
+            f"version policy semver api breaking change {query}", project,
+        )
+        standards_chunks, _ = self.retriever.retrieve(
+            f"coding standards code review adr {query}", project,
+            doc_types=["doc"],
+        )
+
+        confidence = version_conf
+        logger.info(
+            "PRReviewAgent: %d PRs, %d version-policy chunks, %d standards chunks",
+            len(prs), len(version_chunks), len(standards_chunks),
+        )
+
+        # ── Step 3: Build CoT prompt ─────────────────────────────────────────
+        system_prompt    = self.config.get_prompt("system_prompt")
+        reasoning_prompt = self.config.get_prompt(
+            "pr_review_reasoning",
+            pr_context=_format_pr_context(prs),
+            version_policy_context=_format_rag_context(version_chunks[:4]),
+            standards_context=_format_rag_context(standards_chunks[:6]),
+        )
+
+        # ── Step 4: LLM call via generate_structured (provider handles JSON extraction) ──
+        temperature = self.config.get_temperature("agent_reasoning")   # 0.1
+        resp        = await self.llm.generate_structured(reasoning_prompt, system_prompt, temperature, 1000)
+        review_data = resp.structured if not resp.parse_error else {}
+
+        # ── Fallback if JSON parse fails or LLM rate limited ────────────────────
+        if not review_data:
+            logger.warning("PRReviewAgent: JSON parse failed — using fallback review")
+            primary_pr = prs[0] if prs else {}
+            # Only mark checks as PASS/COMPLIANT when the PR has actual file data.
+            # Without a diff, we cannot assess standards — use REVIEW_NEEDED.
+            has_files = bool(primary_pr.get("files_changed"))
+            review_data = {
+                "pr_number":             primary_pr.get("id", "N/A"),
+                "pr_title":              primary_pr.get("title", "Unknown PR"),
+                "files_changed":         ", ".join(primary_pr.get("files_changed", [])) or "N/A — diff not fetched",
+                "ci_status":             primary_pr.get("ci_status", "unknown"),
+                "standards_result":      "REVIEW_NEEDED" if not has_files else "REVIEW_NEEDED",
+                "version_policy_result": "REVIEW_NEEDED",
+                "concerns":              "Could not complete automated review — please review manually.",
+                "suggested_reviewer":    "unassigned",
+                "risk_level":            "MEDIUM",
+                "summary":               "Manual review required — file diff not available.",
+            }
+
+        # ── Guard: downgrade PASS result to REVIEW_NEEDED when no files were fetched.
+        # The LLM cannot assess coding standards without seeing the actual changed files.
+        chosen_pr_id = review_data.get("pr_number", "")
+        chosen_pr    = next((p for p in prs if p["id"] == chosen_pr_id), prs[0] if prs else None)
+        if chosen_pr and not chosen_pr.get("files_changed"):
+            if review_data.get("standards_result") == "PASS":
+                review_data["standards_result"] = "REVIEW_NEEDED"
+                review_data.setdefault("concerns", "")
+                review_data["concerns"] = (
+                    "⚠️ File diff not available — coding standards check requires manual review. "
+                    + review_data["concerns"]
+                ).strip()
+
+        # ── Populate CI status directly from GitHub data (not from LLM guess) ──
+        if chosen_pr:
+            real_ci = chosen_pr.get("ci_status", "unknown")
+            if real_ci != "unknown":
+                review_data["ci_status"] = real_ci
+
+        # ── If pr_number not set by LLM, use the first PR ───────────────────
+        if not review_data.get("pr_number") and prs:
+            review_data["pr_number"] = prs[0]["id"]
+            review_data["pr_title"]  = review_data.get("pr_title") or prs[0]["title"]
+
+        # ── If LLM left reviewer blank/unassigned, pull from the PR's own reviewers.
+        # LLM may return "" or "unassigned" — treat both the same.
+        if not review_data.get("suggested_reviewer") or review_data.get("suggested_reviewer") == "unassigned":
+            chosen_pr = next(
+                (p for p in prs if p["id"] == review_data.get("pr_number")),
+                prs[0] if prs else None,
+            )
+            if chosen_pr and chosen_pr.get("reviewers"):
+                review_data["suggested_reviewer"] = chosen_pr["reviewers"][0]
+
+        # ── User explicitly named a reviewer in the query — always use that name.
+        # This overrides whatever the LLM or PR metadata suggested.
+        if explicit_reviewer:
+            review_data["suggested_reviewer"] = explicit_reviewer
+
+        # ── Step 5: Format proposal card + decide if HITL is needed ─────────
+        # HITL only makes sense when a real reviewer name was identified.
+        # "unassigned" means no reviewer could be determined — show a read-only
+        # review card instead so the user isn't asked to approve a no-op.
+        pr_number          = review_data.get("pr_number", "")
+        suggested_reviewer = review_data.get("suggested_reviewer", "unassigned")
+        # Did the user ask to approve/merge the PR, or just to review/assign a reviewer?
+        wants_approval = wants_approve   # detected once at the top of run()
+
+        already_assigned   = False
+        not_a_collaborator = False
+        if wants_approval and pr_number:
+            action_type   = "approve_pr"
+            hitl_required = True
+        elif wants_request_changes and pr_number:
+            action_type   = "reject_pr"
+            hitl_required = True
+        else:
+            action_type = "assign_reviewer"
+            # Scenario: already the requested reviewer on this PR — no action needed.
+            # Mirrors ticket_agent._run_assignment's identical guard for Jira tickets.
+            # This must NOT short-circuit the whole response: "review PR-X" is a
+            # request for the review itself (standards/CI/risk), and a reviewer
+            # happening to already be assigned doesn't mean there's nothing to show —
+            # only the assign-reviewer call-to-action becomes unnecessary.
+            chosen_pr = next((p for p in prs if p["id"] == pr_number), prs[0] if prs else None)
+            current_reviewers = [r.lower() for r in (chosen_pr.get("reviewers") or [])] if chosen_pr else []
+            already_assigned = suggested_reviewer != "unassigned" and suggested_reviewer.lower() in current_reviewers
+
+            # Validate BEFORE proposing — GitHub's assign-reviewer API silently ignores
+            # a nonexistent/unreachable username instead of erroring (confirmed live),
+            # so without this check the user gets a "Click Approve" card for something
+            # guaranteed to fail, and only finds out after clicking it.
+            if suggested_reviewer != "unassigned" and not already_assigned:
+                try:
+                    check = await call_mcp_tool("github_is_collaborator", {"username": suggested_reviewer})
+                    not_a_collaborator = isinstance(check, dict) and not check.get("is_collaborator", True)
+                except Exception:
+                    logger.exception("PRReviewAgent: collaborator check failed for '%s' — proceeding without it", suggested_reviewer)
+
+            hitl_required = (
+                bool(suggested_reviewer and suggested_reviewer != "unassigned")
+                and not already_assigned and not not_a_collaborator
+            )
+
+        final_response = _format_pr_proposal(
+            review_data, all_prs=prs,
+            user_role=state.get("user_role", "developer"),
+            not_a_collaborator=not_a_collaborator,
+            action_mode=(
+                "approve" if action_type == "approve_pr" else
+                "reject" if action_type == "reject_pr" else
+                "assign"
+            ),
+            already_assigned=already_assigned,
+            # approve_pr/reject_pr are only ever reached via an explicit "approve"/
+            # "request changes" verb (never from a bare "review PR-X") — always
+            # concise. assign_reviewer is concise only when the user named a specific
+            # reviewer; with no name given, the reviewer is auto-suggested and the
+            # full review is what justifies that suggestion, so keep it.
+            concise=(
+                action_type in ("approve_pr", "reject_pr")
+                or (action_type == "assign_reviewer" and bool(explicit_reviewer))
+            ),
+        )
+
+        proposal = {
+            "action":             action_type,
+            "pr_number":          pr_number,
+            "pr_title":           review_data.get("pr_title", ""),
+            "suggested_reviewer": suggested_reviewer,
+            "project":            project,
+            "review_data":        review_data,
+        }
+
+        all_sources = list({c.source for c in version_chunks + standards_chunks})
+        if prs:
+            all_sources.append("github_live")
+
+        return AgentPayload(
+            agent_name="pr_review_agent",
+            confidence=confidence,
+            summary=f"PR review: {review_data.get('pr_number', '')} — {review_data.get('risk_level', 'MEDIUM')} risk",
+            structured={
+                "final_response": final_response,
+                "review_data":    review_data,
+                "skip_persona":   True,   # review cards must not be rewritten into sprint-status language
+                "rag_chunks": [
+                    {"text": c.text, "source": c.source, "score": c.score}
+                    for c in version_chunks + standards_chunks
+                ],
+            },
+            sources=all_sources,
+            hitl_required=hitl_required,
+            hitl_proposal=proposal if hitl_required else {},
+        )

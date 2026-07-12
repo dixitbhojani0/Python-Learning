@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.git/
+.env
+data/qdrant_storage/
+data/redis_data/
+*.egg-info/
+.pytest_cache/
+frontend-angular/node_modules/

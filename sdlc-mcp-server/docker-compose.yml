@@ -1,0 +1,65 @@
+# ─────────────────────────────────────────────
+#  SDLC MCP Server — Standalone Docker Compose
+#
+#  Services:
+#    redis       → OAuth token store         (internal only)
+#    mcp-server  → MCP server + OAuth AS     http://localhost:8100/mcp
+#
+#  Start:
+#    cp .env.example .env   # fill in real tokens
+#    docker compose up -d
+# ─────────────────────────────────────────────
+
+networks:
+  sdlc-net:
+    external: true      # shared with ai-sdlc-assistant — created once with: docker network create sdlc-net
+
+volumes:
+  sdlc-mcp-redis-data:  # AOF file — OAuth client registrations survive a redis restart/recreate
+
+services:
+
+  redis:
+    image: redis:7.4-alpine
+    container_name: sdlc-mcp-redis
+    ports:
+      - "6381:6379"     # expose to host for local dev/debugging
+    volumes:
+      - sdlc-mcp-redis-data:/data
+    command: >
+      redis-server
+      --maxmemory 64mb
+      --maxmemory-policy allkeys-lru
+      --save ""
+      --appendonly yes
+      --appendfsync everysec
+      --loglevel warning
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [sdlc-net]
+    restart: unless-stopped
+
+  mcp-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sdlc-mcp-server
+    ports:
+      - "8100:8100"
+    volumes:
+      - .:/app          # live code — restart container to pick up changes
+    env_file:
+      - .env
+    environment:
+      PYTHONPATH: /app
+      MCP_SERVER_HOST: 0.0.0.0
+      MCP_SERVER_PORT: "8100"
+      REDIS_URL: redis://sdlc-mcp-redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks: [sdlc-net]
+    restart: unless-stopped

@@ -1,0 +1,59 @@
+<h2>System Stats</h2>
+
+@if (loading()) {
+  <mat-spinner />
+} @else if (error()) {
+  <p style="color:red">{{ error() }}</p>
+  <button mat-stroked-button (click)="load()">Retry</button>
+} @else if (stats()) {
+  <div class="stats-grid">
+    <mat-card>
+      <mat-card-header>
+        <mat-icon matCardAvatar>storage</mat-icon>
+        <mat-card-title>{{ stats()!.qdrant_chunks }}</mat-card-title>
+        <mat-card-subtitle>Qdrant Chunks ({{ stats()!.qdrant_collection }})</mat-card-subtitle>
+      </mat-card-header>
+    </mat-card>
+
+    <mat-card>
+      <mat-card-header>
+        <mat-icon matCardAvatar>memory</mat-icon>
+        <mat-card-title>{{ stats()!.redis_keys }}</mat-card-title>
+        <mat-card-subtitle>Redis Keys</mat-card-subtitle>
+      </mat-card-header>
+    </mat-card>
+
+    <mat-card>
+      <mat-card-header>
+        <mat-icon matCardAvatar>chat</mat-icon>
+        <mat-card-title>{{ stats()!.session_turns }}</mat-card-title>
+        <mat-card-subtitle>Conversation Turns (SQLite)</mat-card-subtitle>
+      </mat-card-header>
+    </mat-card>
+
+    <mat-card>
+      <mat-card-header>
+        <mat-icon matCardAvatar>psychology</mat-icon>
+        <mat-card-title>{{ stats()!.semantic_facts }}</mat-card-title>
+        <mat-card-subtitle>Semantic Memory Facts</mat-card-subtitle>
+      </mat-card-header>
+    </mat-card>
+
+    <mat-card>
+      <mat-card-header>
+        <mat-icon matCardAvatar>info</mat-icon>
+        <mat-card-title>{{ stats()!.app_env }}</mat-card-title>
+        <mat-card-subtitle>Environment (project: {{ stats()!.default_project }})</mat-card-subtitle>
+      </mat-card-header>
+    </mat-card>
+  </div>
+
+  <button mat-stroked-button (click)="load()" style="margin-top:16px">
+    <mat-icon>refresh</mat-icon> Refresh
+  </button>
+}
+
+<style>
+  .stats-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; }
+  mat-card { cursor: default; }
+</style>

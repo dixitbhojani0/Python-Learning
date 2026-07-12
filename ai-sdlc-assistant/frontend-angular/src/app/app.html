@@ -1,0 +1,15 @@
+@if (auth.isLoggedIn()) {
+  <mat-toolbar color="primary">
+    <span>🤖 AI SDLC Assistant</span>
+    <span style="flex: 1"></span>
+    <a mat-button routerLink="/chat" routerLinkActive="active-link">Chat</a>
+    @if (auth.isAdmin()) {
+      <a mat-button routerLink="/admin" routerLinkActive="active-link">Admin</a>
+    }
+    <button mat-button (click)="auth.logout()">
+      Logout ({{ auth.getSession()?.name }})
+    </button>
+  </mat-toolbar>
+}
+
+<router-outlet />
