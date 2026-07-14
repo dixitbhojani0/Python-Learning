@@ -6,8 +6,12 @@ Redis-backed OAuth 2.1 token store.
 Redis is the correct backend for token storage:
   - TTL enforced natively per key — no manual purge needed
   - Atomic operations — no threading.Lock needed
-  - Tokens never touch the filesystem as plain text
-  - Survives server restarts automatically
+  - Survives redis/mcp-server restarts — AOF persistence is enabled in docker-compose.yml
+    (--appendonly yes) specifically so long-lived client registrations (no TTL) don't
+    force every connected external host (Antigravity, Claude Desktop, Cursor...) through
+    a fresh OAuth registration + consent dance on every restart. Short-lived tokens still
+    write to the same AOF file as a side effect — acceptable since they're already
+    short-TTL secrets, not the reason persistence was added.
 
 Key schema (all under the "mcp:" namespace):
     mcp:oauth:client:{client_id}  → JSON   no TTL (clients persist until revoked)
@@ -21,6 +25,7 @@ import logging
 import time
 
 import redis
+from redis import asyncio as aioredis
 from mcp.server.auth.provider import AccessToken, AuthorizationCode, RefreshToken
 from mcp.shared.auth import OAuthClientInformationFull
 
@@ -44,32 +49,38 @@ def _ttl_from_expires_at(expires_at: int | float | None) -> int | None:
 
 
 class TokenStore:
+    """All operations are async (redis.asyncio) — load_access_token runs on every
+    /mcp request, and a blocking Redis call there would stall the event loop."""
+
     def __init__(self, redis_url: str = "redis://127.0.0.1:6379") -> None:
-        self._r = redis.from_url(redis_url, decode_responses=True)
+        # Fail fast at startup with a throwaway sync ping, then use the async client.
         try:
-            self._r.ping()
+            probe = redis.from_url(redis_url)
+            probe.ping()
+            probe.close()
             logger.info("TokenStore: connected to Redis at %s", redis_url)
         except redis.ConnectionError as exc:
             logger.error("TokenStore: cannot connect to Redis at %s — %s", redis_url, exc)
             raise
+        self._r = aioredis.from_url(redis_url, decode_responses=True)
 
     # ── internal helpers ──────────────────────────────────────────────────────
 
-    def _get(self, key: str) -> dict | None:
-        raw = self._r.get(key)
+    async def _get(self, key: str) -> dict | None:
+        raw = await self._r.get(key)
         return json.loads(raw) if raw else None
 
-    def _set(self, key: str, value: dict, ex: int | None = None) -> None:
-        self._r.set(key, json.dumps(value), ex=ex)
+    async def _set(self, key: str, value: dict, ex: int | None = None) -> None:
+        await self._r.set(key, json.dumps(value), ex=ex)
 
     # ── clients ───────────────────────────────────────────────────────────────
 
-    def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
-        raw = self._get(_PFX_CLIENT.format(client_id))
+    async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
+        raw = await self._get(_PFX_CLIENT.format(client_id))
         return OAuthClientInformationFull(**raw) if raw else None
 
-    def save_client(self, client: OAuthClientInformationFull) -> None:
-        self._set(_PFX_CLIENT.format(client.client_id), client.model_dump(mode="json"))
+    async def save_client(self, client: OAuthClientInformationFull) -> None:
+        await self._set(_PFX_CLIENT.format(client.client_id), client.model_dump(mode="json"))
 
     # ── pending auth requests ─────────────────────────────────────────────────
     # Secondary index mcp:oauth:pending:client:{client_id} → req_id lets
@@ -78,65 +89,65 @@ class TokenStore:
 
     _PFX_PENDING_CLIENT = "mcp:oauth:pending:client:{}"
 
-    def save_pending_auth(self, req_id: str, data: dict) -> None:
+    async def save_pending_auth(self, req_id: str, data: dict) -> None:
         pipe = self._r.pipeline()
         pipe.set(_PFX_PENDING.format(req_id), json.dumps(data), ex=_PENDING_TTL)
         pipe.set(self._PFX_PENDING_CLIENT.format(data["client_id"]), req_id, ex=_PENDING_TTL)
-        pipe.execute()
+        await pipe.execute()
 
-    def find_pending_req_by_client(self, client_id: str) -> str | None:
+    async def find_pending_req_by_client(self, client_id: str) -> str | None:
         """Return an in-progress req_id for this client, or None."""
-        return self._r.get(self._PFX_PENDING_CLIENT.format(client_id))
+        return await self._r.get(self._PFX_PENDING_CLIENT.format(client_id))
 
-    def get_pending_auth(self, req_id: str) -> dict | None:
+    async def get_pending_auth(self, req_id: str) -> dict | None:
         """Read without deleting — used by the GET consent handler."""
-        raw = self._r.get(_PFX_PENDING.format(req_id))
+        raw = await self._r.get(_PFX_PENDING.format(req_id))
         return json.loads(raw) if raw else None
 
-    def pop_pending_auth(self, req_id: str) -> dict | None:
+    async def pop_pending_auth(self, req_id: str) -> dict | None:
         """Atomically read-and-delete the pending auth entry + client index."""
         key = _PFX_PENDING.format(req_id)
-        raw = self._r.getdel(key)
+        raw = await self._r.getdel(key)
         if not raw:
             return None
         data = json.loads(raw)
-        self._r.delete(self._PFX_PENDING_CLIENT.format(data.get("client_id", "")))
+        await self._r.delete(self._PFX_PENDING_CLIENT.format(data.get("client_id", "")))
         return data
 
     # ── authorization codes ───────────────────────────────────────────────────
 
-    def save_auth_code(self, code: AuthorizationCode) -> None:
-        self._set(_PFX_CODE.format(code.code), code.model_dump(mode="json"), ex=_CODE_TTL)
+    async def save_auth_code(self, code: AuthorizationCode) -> None:
+        await self._set(_PFX_CODE.format(code.code), code.model_dump(mode="json"), ex=_CODE_TTL)
 
-    def get_auth_code(self, code: str) -> AuthorizationCode | None:
-        raw = self._get(_PFX_CODE.format(code))
+    async def get_auth_code(self, code: str) -> AuthorizationCode | None:
+        raw = await self._get(_PFX_CODE.format(code))
         return AuthorizationCode(**raw) if raw else None
 
-    def delete_auth_code(self, code: str) -> None:
-        self._r.delete(_PFX_CODE.format(code))
+    async def delete_auth_code(self, code: str) -> None:
+        await self._r.delete(_PFX_CODE.format(code))
 
     # ── access tokens ─────────────────────────────────────────────────────────
 
-    def save_access_token(self, token: AccessToken) -> None:
+    async def save_access_token(self, token: AccessToken) -> None:
         ex = _ttl_from_expires_at(token.expires_at)
-        self._set(_PFX_TOKEN.format(token.token), token.model_dump(mode="json"), ex=ex)
+        await self._set(_PFX_TOKEN.format(token.token), token.model_dump(mode="json"), ex=ex)
 
-    def get_access_token(self, token: str) -> AccessToken | None:
-        raw = self._get(_PFX_TOKEN.format(token))
+    async def get_access_token(self, token: str) -> AccessToken | None:
+        raw = await self._get(_PFX_TOKEN.format(token))
         return AccessToken(**raw) if raw else None
 
-    def delete_access_token(self, token: str) -> None:
-        self._r.delete(_PFX_TOKEN.format(token))
+    async def delete_access_token(self, token: str) -> None:
+        await self._r.delete(_PFX_TOKEN.format(token))
 
     # ── refresh tokens ────────────────────────────────────────────────────────
 
-    def save_refresh_token(self, token: RefreshToken) -> None:
+    async def save_refresh_token(self, token: RefreshToken) -> None:
         ex = _ttl_from_expires_at(token.expires_at)
-        self._set(_PFX_REFRESH.format(token.token), token.model_dump(mode="json"), ex=ex)
+        await self._set(_PFX_REFRESH.format(token.token), token.model_dump(mode="json"), ex=ex)
 
-    def get_refresh_token(self, token: str) -> RefreshToken | None:
-        raw = self._get(_PFX_REFRESH.format(token))
+    async def get_refresh_token(self, token: str) -> RefreshToken | None:
+        raw = await self._get(_PFX_REFRESH.format(token))
         return RefreshToken(**raw) if raw else None
 
-    def delete_refresh_token(self, token: str) -> None:
-        self._r.delete(_PFX_REFRESH.format(token))
+    async def delete_refresh_token(self, token: str) -> None:
+        await self._r.delete(_PFX_REFRESH.format(token))

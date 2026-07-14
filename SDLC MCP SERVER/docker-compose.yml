@@ -14,6 +14,9 @@ networks:
   sdlc-net:
     external: true      # shared with ai-sdlc-assistant — created once with: docker network create sdlc-net
 
+volumes:
+  sdlc-mcp-redis-data:  # AOF file — OAuth client registrations survive a redis restart/recreate
+
 services:
 
   redis:
@@ -21,11 +24,15 @@ services:
     container_name: sdlc-mcp-redis
     ports:
       - "6381:6379"     # expose to host for local dev/debugging
+    volumes:
+      - sdlc-mcp-redis-data:/data
     command: >
       redis-server
       --maxmemory 64mb
       --maxmemory-policy allkeys-lru
       --save ""
+      --appendonly yes
+      --appendfsync everysec
       --loglevel warning
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]

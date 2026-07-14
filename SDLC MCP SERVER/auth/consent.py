@@ -52,7 +52,7 @@ async def handle_consent(request: Request, store: TokenStore, pin: str) -> Respo
         # Peek without deleting — the client index must stay intact so
         # authorize() can deduplicate parallel connections while the user
         # is looking at this page. Only POST (after Allow) deletes.
-        entry = store.get_pending_auth(req_id)
+        entry = await store.get_pending_auth(req_id)
         if not entry:
             return HTMLResponse("<h3>Authorization request expired or invalid.</h3>", status_code=400)
 
@@ -63,14 +63,14 @@ async def handle_consent(request: Request, store: TokenStore, pin: str) -> Respo
     # POST — user submitted the form
     form = await request.form()
     req_id = str(form.get("req", ""))
-    entry = store.pop_pending_auth(req_id)
+    entry = await store.pop_pending_auth(req_id)
     if not entry:
         return HTMLResponse("<h3>Authorization request expired or invalid.</h3>", status_code=400)
 
     params = AuthorizationParams(**entry["params_json"])
 
     if pin and str(form.get("pin", "")) != pin:
-        store.save_pending_auth(req_id, entry)  # put it back so user can retry
+        await store.save_pending_auth(req_id, entry)  # put it back so user can retry
         return HTMLResponse(_consent_html(req_id, entry["client_id"], params.scopes or ["mcp"], True, "Incorrect PIN — try again."))
 
     # Generate authorization code (>= 160 bits of entropy per RFC 6749 §10.10)
@@ -85,7 +85,7 @@ async def handle_consent(request: Request, store: TokenStore, pin: str) -> Respo
         redirect_uri_provided_explicitly=params.redirect_uri_provided_explicitly,
         resource=params.resource,
     )
-    store.save_auth_code(auth_code)
+    await store.save_auth_code(auth_code)
     logger.info("OAuth consent: issued auth code for client=%s", entry["client_id"])
 
     qs: dict = {"code": code_str}

@@ -4,23 +4,15 @@ connectors/jira_connector.py
 Real Jira connector — Jira REST API v3 via httpx.
 Auth: Basic auth with base64(email:api_token) — standard Jira Cloud auth.
 """
-import base64
 import logging
 from typing import Any
 
 import httpx
 
 from core.settings import settings
-from connectors.base_connector import BaseMCPConnector
+from connectors.base_connector import BaseMCPConnector, basic_auth_header
 
 logger = logging.getLogger(__name__)
-
-_TIMEOUT = httpx.Timeout(connect=5.0, read=25.0, write=5.0, pool=5.0)
-
-
-def _basic_auth_header(email: str, token: str) -> str:
-    encoded = base64.b64encode(f"{email}:{token}".encode()).decode()
-    return f"Basic {encoded}"
 
 
 def _extract_adf_text(node: object) -> str:
@@ -96,7 +88,7 @@ class JiraConnector(BaseMCPConnector):
         self._base_url = settings.JIRA_BASE_URL.rstrip("/")
         self._project  = settings.JIRA_PROJECT_KEY
         self._headers  = {
-            "Authorization": _basic_auth_header(settings.JIRA_EMAIL, settings.JIRA_TOKEN),
+            "Authorization": basic_auth_header(settings.JIRA_EMAIL, settings.JIRA_TOKEN),
             "Accept":        "application/json",
             "Content-Type":  "application/json",
         }
@@ -111,12 +103,11 @@ class JiraConnector(BaseMCPConnector):
 
     async def get_ticket(self, ticket_id: str) -> dict | None:
         try:
-            async with httpx.AsyncClient(headers=self._headers, timeout=_TIMEOUT) as client:
-                r = await client.get(
-                    f"{self._base_url}/rest/api/3/issue/{ticket_id.upper()}",
-                    params={"fields": "summary,status,priority,assignee,labels,description,issuelinks,customfield_10020,created,updated,comment"},
-                )
-                r.raise_for_status()
+            r = await self.http.get(
+                f"{self._base_url}/rest/api/3/issue/{ticket_id.upper()}",
+                params={"fields": "summary,status,priority,assignee,labels,description,issuelinks,customfield_10020,created,updated,comment"},
+            )
+            r.raise_for_status()
             logger.info("JiraConnector.get_ticket: fetched '%s'", ticket_id)
             return _normalize_issue(r.json())
         except httpx.HTTPStatusError as exc:
@@ -162,16 +153,15 @@ class JiraConnector(BaseMCPConnector):
             jql = self._text_jql(project_key, keywords)
 
         try:
-            async with httpx.AsyncClient(headers=self._headers, timeout=_TIMEOUT) as client:
-                r = await client.post(
-                    f"{self._base_url}/rest/api/3/search/jql",
-                    json={
-                        "jql": jql,
-                        "maxResults": 50,
-                        "fields": ["summary", "status", "priority", "assignee", "labels", "description", "issuelinks", "customfield_10020", "created", "updated"],
-                    },
-                )
-                r.raise_for_status()
+            r = await self.http.post(
+                f"{self._base_url}/rest/api/3/search/jql",
+                json={
+                    "jql": jql,
+                    "maxResults": 50,
+                    "fields": ["summary", "status", "priority", "assignee", "labels", "description", "issuelinks", "customfield_10020", "created", "updated"],
+                },
+            )
+            r.raise_for_status()
             issues = r.json().get("issues", [])
             logger.info("JiraConnector.search_tickets: '%s' → %d issues", query[:50], len(issues))
             return [_normalize_issue(i) for i in issues]
@@ -224,12 +214,11 @@ class JiraConnector(BaseMCPConnector):
             f'ORDER BY priority DESC'
         )
         try:
-            async with httpx.AsyncClient(headers=self._headers, timeout=_TIMEOUT) as client:
-                r = await client.post(
-                    f"{self._base_url}/rest/api/3/search/jql",
-                    json={"jql": jql, "maxResults": 20, "fields": ["summary", "status", "priority", "assignee", "labels", "description", "issuelinks", "created", "updated"]},
-                )
-                r.raise_for_status()
+            r = await self.http.post(
+                f"{self._base_url}/rest/api/3/search/jql",
+                json={"jql": jql, "maxResults": 20, "fields": ["summary", "status", "priority", "assignee", "labels", "description", "issuelinks", "created", "updated"]},
+            )
+            r.raise_for_status()
             issues = r.json().get("issues", [])
             logger.info("JiraConnector.get_blocked_tickets: %d blocked", len(issues))
             return [_normalize_issue(i) for i in issues]
@@ -241,12 +230,11 @@ class JiraConnector(BaseMCPConnector):
         project_key = project.upper() if project else self._project
         jql_base = f'project = "{project_key}" AND sprint in openSprints()'
         try:
-            async with httpx.AsyncClient(headers=self._headers, timeout=_TIMEOUT) as client:
-                r = await client.post(
-                    f"{self._base_url}/rest/api/3/search/jql",
-                    json={"jql": jql_base, "maxResults": 50, "fields": ["summary", "status", "priority", "customfield_10020", "labels"]},
-                )
-                r.raise_for_status()
+            r = await self.http.post(
+                f"{self._base_url}/rest/api/3/search/jql",
+                json={"jql": jql_base, "maxResults": 50, "fields": ["summary", "status", "priority", "customfield_10020", "labels"]},
+            )
+            r.raise_for_status()
             issues = r.json().get("issues", [])
             if not issues:
                 return {"sprint": "No active sprint", "project": project_key, "total_tickets": 0}
@@ -279,12 +267,11 @@ class JiraConnector(BaseMCPConnector):
     async def get_project_members(self, project: str = "") -> list[dict]:
         project_key = project.upper() if project else self._project
         try:
-            async with httpx.AsyncClient(headers=self._headers, timeout=_TIMEOUT) as client:
-                r = await client.get(
-                    f"{self._base_url}/rest/api/3/user/assignable/search",
-                    params={"project": project_key, "maxResults": 50},
-                )
-                r.raise_for_status()
+            r = await self.http.get(
+                f"{self._base_url}/rest/api/3/user/assignable/search",
+                params={"project": project_key, "maxResults": 50},
+            )
+            r.raise_for_status()
             users = r.json()
             members = [
                 {
@@ -305,12 +292,11 @@ class JiraConnector(BaseMCPConnector):
     async def add_issue_to_sprint(self, ticket_id: str, sprint_id: int) -> bool:
         url = f"{self._base_url}/rest/agile/1.0/sprint/{sprint_id}/issue"
         try:
-            async with httpx.AsyncClient(headers=self._headers, timeout=_TIMEOUT) as client:
-                r = await client.post(url, json={"issues": [ticket_id]})
-                if r.status_code in (200, 204):
-                    logger.info("JiraConnector.add_issue_to_sprint: %s → sprint %d", ticket_id, sprint_id)
-                    return True
-                logger.warning("JiraConnector.add_issue_to_sprint: HTTP %d for %s → sprint %d", r.status_code, ticket_id, sprint_id)
+            r = await self.http.post(url, json={"issues": [ticket_id]})
+            if r.status_code in (200, 204):
+                logger.info("JiraConnector.add_issue_to_sprint: %s → sprint %d", ticket_id, sprint_id)
+                return True
+            logger.warning("JiraConnector.add_issue_to_sprint: HTTP %d for %s → sprint %d", r.status_code, ticket_id, sprint_id)
         except Exception:
             logger.exception("JiraConnector.add_issue_to_sprint failed for %s → sprint %d", ticket_id, sprint_id)
         return False
@@ -319,12 +305,13 @@ class JiraConnector(BaseMCPConnector):
         project_key = (project or self._project).upper()
         jql = f'project = "{project_key}" AND sprint in openSprints()'
         try:
-            async with httpx.AsyncClient(headers=self._headers, timeout=_TIMEOUT) as client:
-                r = await client.post(
-                    f"{self._base_url}/rest/api/3/search",
-                    json={"jql": jql, "maxResults": 1, "fields": ["customfield_10020"]},
-                )
-                r.raise_for_status()
+            # /rest/api/3/search is deprecated (410 on newer Jira Cloud) — use /search/jql
+            # like every other query in this connector.
+            r = await self.http.post(
+                f"{self._base_url}/rest/api/3/search/jql",
+                json={"jql": jql, "maxResults": 1, "fields": ["customfield_10020"]},
+            )
+            r.raise_for_status()
             issues = r.json().get("issues", [])
             if not issues:
                 return None
@@ -369,16 +356,18 @@ class JiraConnector(BaseMCPConnector):
             fields["customfield_10020"] = sprint_id
 
         try:
-            async with httpx.AsyncClient(headers=self._headers, timeout=_TIMEOUT) as client:
-                r = await client.post(f"{self._base_url}/rest/api/3/issue", json={"fields": fields})
-                r.raise_for_status()
+            r = await self.http.post(f"{self._base_url}/rest/api/3/issue", json={"fields": fields})
+            r.raise_for_status()
             data = r.json()
             ticket_id = data.get("key", "")
             logger.info("JiraConnector.create_ticket: created '%s' → %s", title[:60], ticket_id)
-            return {"id": ticket_id, "url": f"{self._base_url}/browse/{ticket_id}"}
+            return {"success": True, "id": ticket_id, "url": f"{self._base_url}/browse/{ticket_id}"}
+        except httpx.HTTPStatusError as exc:
+            logger.exception("JiraConnector.create_ticket failed for title='%s' — HTTP %d", title[:60], exc.response.status_code)
+            return {"success": False, "error": f"Jira rejected the create (HTTP {exc.response.status_code})"}
         except Exception:
             logger.exception("JiraConnector.create_ticket failed for title='%s'", title[:60])
-            return {}
+            return {"success": False, "error": "request failed"}
 
     async def update_ticket(self, ticket_id: str, description: str = "", summary: str = "", labels: list[str] | None = None) -> dict:
         fields: dict[str, Any] = {}
@@ -394,11 +383,10 @@ class JiraConnector(BaseMCPConnector):
         if not fields:
             return {"success": False, "error": "nothing to update"}
         try:
-            async with httpx.AsyncClient(headers=self._headers, timeout=_TIMEOUT) as client:
-                r = await client.put(
-                    f"{self._base_url}/rest/api/3/issue/{ticket_id.upper()}",
-                    json={"fields": fields},
-                )
+            r = await self.http.put(
+                f"{self._base_url}/rest/api/3/issue/{ticket_id.upper()}",
+                json={"fields": fields},
+            )
             if r.status_code == 204:
                 logger.info("JiraConnector.update_ticket: updated '%s'", ticket_id)
                 return {"success": True, "ticket_id": ticket_id}
@@ -410,8 +398,7 @@ class JiraConnector(BaseMCPConnector):
     async def assign_ticket(self, ticket_id: str, account_id: str) -> dict:
         url = f"{self._base_url}/rest/api/3/issue/{ticket_id}/assignee"
         try:
-            async with httpx.AsyncClient(headers=self._headers, timeout=_TIMEOUT) as client:
-                r = await client.put(url, json={"accountId": account_id})
+            r = await self.http.put(url, json={"accountId": account_id})
             if r.status_code == 204:
                 logger.info("JiraConnector.assign_ticket: %s → accountId=%s", ticket_id, account_id)
                 return {"success": True, "ticket_id": ticket_id, "account_id": account_id}
@@ -428,12 +415,11 @@ class JiraConnector(BaseMCPConnector):
             }
         }
         try:
-            async with httpx.AsyncClient(headers=self._headers, timeout=_TIMEOUT) as client:
-                r = await client.post(
-                    f"{self._base_url}/rest/api/3/issue/{ticket_id.upper()}/comment",
-                    json=payload,
-                )
-                r.raise_for_status()
+            r = await self.http.post(
+                f"{self._base_url}/rest/api/3/issue/{ticket_id.upper()}/comment",
+                json=payload,
+            )
+            r.raise_for_status()
             logger.info("JiraConnector.add_comment: added to %s", ticket_id)
             return {"success": True, "ticket_id": ticket_id}
         except Exception:

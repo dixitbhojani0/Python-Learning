@@ -20,7 +20,6 @@ import logging.config
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions
-from mcp.server.auth.provider import AccessToken
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
 
@@ -36,6 +35,7 @@ from tools import jira_tools, github_tools, slack_tools, confluence_tools
 from auth.store import TokenStore
 from auth.provider import SDLCOAuthProvider
 from auth.consent import handle_consent
+from auth.service_token import handle_service_token
 
 logging.basicConfig(
     level=getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO),
@@ -101,32 +101,7 @@ async def oauth_consent(request):
 # Token auto-rotates: ai-sdlc fetches a fresh one before expiry. No browser needed.
 @mcp.custom_route("/oauth/token/service", methods=["POST"])
 async def service_token_endpoint(request):
-    import secrets as _secrets
-    from datetime import datetime, timedelta, timezone
-    from starlette.responses import JSONResponse
-
-    if settings.OAUTH_SERVICE_SECRET == "placeholder":
-        return JSONResponse({"error": "not_configured"}, status_code=503)
-
-    try:
-        body = await request.json()
-    except Exception:
-        return JSONResponse({"error": "invalid_request"}, status_code=400)
-
-    if body.get("client_secret") != settings.OAUTH_SERVICE_SECRET:
-        logger.warning("OAuth service endpoint: invalid client_secret attempt")
-        return JSONResponse({"error": "invalid_client"}, status_code=401)
-
-    _expires_in = 3600
-    _token = _secrets.token_urlsafe(32)
-    _store.save_access_token(AccessToken(
-        token=_token,
-        client_id="service-account",
-        scopes=["mcp"],
-        expires_at=int((datetime.now(timezone.utc) + timedelta(seconds=_expires_in)).timestamp()),
-    ))
-    logger.info("OAuth: issued 1hr service account token")
-    return JSONResponse({"access_token": _token, "token_type": "Bearer", "expires_in": _expires_in})
+    return await handle_service_token(request, _store, settings.OAUTH_SERVICE_SECRET)
 
 
 # ── Diagnostic tool ───────────────────────────────────────────────────────────

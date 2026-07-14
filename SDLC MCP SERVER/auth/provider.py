@@ -38,10 +38,10 @@ class SDLCOAuthProvider(OAuthAuthorizationServerProvider):
     # ── client registration ───────────────────────────────────────────────────
 
     async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
-        return self._store.get_client(client_id)
+        return await self._store.get_client(client_id)
 
     async def register_client(self, client_info: OAuthClientInformationFull) -> None:
-        self._store.save_client(client_info)
+        await self._store.save_client(client_info)
         logger.info("OAuth: registered client %r", client_info.client_id)
 
     # ── authorization code flow ───────────────────────────────────────────────
@@ -53,13 +53,13 @@ class SDLCOAuthProvider(OAuthAuthorizationServerProvider):
     ) -> str:
         # Deduplicate: if a consent flow is already in-progress for this client,
         # return the same URL so parallel connections don't open multiple browser tabs.
-        existing = self._store.find_pending_req_by_client(client.client_id)
+        existing = await self._store.find_pending_req_by_client(client.client_id)
         if existing:
             logger.info("OAuth: reusing pending consent req=%s client=%s", existing, client.client_id)
             return f"/oauth/consent?req={existing}"
 
         req_id = secrets.token_urlsafe(24)
-        self._store.save_pending_auth(req_id, {
+        await self._store.save_pending_auth(req_id, {
             "client_id":   client.client_id,
             "params_json": params.model_dump(mode="json"),
         })
@@ -71,7 +71,7 @@ class SDLCOAuthProvider(OAuthAuthorizationServerProvider):
         client: OAuthClientInformationFull,
         authorization_code: str,
     ) -> AuthorizationCode | None:
-        code = self._store.get_auth_code(authorization_code)
+        code = await self._store.get_auth_code(authorization_code)
         if code and code.client_id != client.client_id:
             logger.warning("OAuth: auth code client mismatch — rejecting")
             return None
@@ -86,19 +86,19 @@ class SDLCOAuthProvider(OAuthAuthorizationServerProvider):
         refresh_token = secrets.token_urlsafe(32)
         scopes = authorization_code.scopes or ["mcp"]
 
-        self._store.save_access_token(AccessToken(
+        await self._store.save_access_token(AccessToken(
             token=access_token,
             client_id=client.client_id,
             scopes=scopes,
             expires_at=_ts(_ACCESS_TTL_S),
         ))
-        self._store.save_refresh_token(RefreshToken(
+        await self._store.save_refresh_token(RefreshToken(
             token=refresh_token,
             client_id=client.client_id,
             scopes=scopes,
             expires_at=_ts(_REFRESH_TTL_S),
         ))
-        self._store.delete_auth_code(authorization_code.code)
+        await self._store.delete_auth_code(authorization_code.code)
         logger.info("OAuth: issued tokens for client=%s scopes=%s", client.client_id, scopes)
 
         return OAuthToken(
@@ -116,7 +116,7 @@ class SDLCOAuthProvider(OAuthAuthorizationServerProvider):
         client: OAuthClientInformationFull,
         refresh_token: str,
     ) -> RefreshToken | None:
-        rt = self._store.get_refresh_token(refresh_token)
+        rt = await self._store.get_refresh_token(refresh_token)
         if rt and rt.client_id != client.client_id:
             logger.warning("OAuth: refresh token client mismatch — rejecting")
             return None
@@ -131,7 +131,7 @@ class SDLCOAuthProvider(OAuthAuthorizationServerProvider):
         scopes = scopes or refresh_token.scopes
         new_access = secrets.token_urlsafe(32)
 
-        self._store.save_access_token(AccessToken(
+        await self._store.save_access_token(AccessToken(
             token=new_access,
             client_id=client.client_id,
             scopes=scopes,
@@ -156,13 +156,13 @@ class SDLCOAuthProvider(OAuthAuthorizationServerProvider):
     # ── token verification (called on every /mcp request) ────────────────────
 
     async def load_access_token(self, token: str) -> AccessToken | None:
-        return self._store.get_access_token(token)
+        return await self._store.get_access_token(token)
 
     # ── revocation ────────────────────────────────────────────────────────────
 
     async def revoke_token(self, token: AccessToken | RefreshToken) -> None:
         if isinstance(token, AccessToken):
-            self._store.delete_access_token(token.token)
+            await self._store.delete_access_token(token.token)
         else:
-            self._store.delete_refresh_token(token.token)
+            await self._store.delete_refresh_token(token.token)
         logger.info("OAuth: revoked token for client=%s", token.client_id)

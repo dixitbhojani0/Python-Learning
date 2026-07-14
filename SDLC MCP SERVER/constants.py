@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 _WRITE_VERBS_FALLBACK: frozenset[str] = frozenset({
     "create", "update", "delete", "assign", "reassign", "deassign",
     "approve", "reject", "request_changes", "merge", "send", "post", "close",
+    "comment",   # jira_add_comment writes to Jira
 })
 
 
