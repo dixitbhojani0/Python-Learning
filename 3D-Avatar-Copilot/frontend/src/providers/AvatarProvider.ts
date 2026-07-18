@@ -31,6 +31,10 @@ export interface AvatarProvider {
   connect(videoEl: HTMLVideoElement, session?: SessionInfo): Promise<void>;
   /** Speak exact text with lip sync. Resolves when speech has finished. */
   speak(text: string): Promise<void>;
+  /** Mute/unmute the microphone input (what the copilot hears). */
+  setMicMuted?(muted: boolean): void;
+  /** Mute/unmute the voice output. */
+  setOutputMuted?(muted: boolean): void;
   disconnect(): void;
   on<E extends keyof ProviderEvents>(event: E, cb: ProviderEvents[E]): void;
 }

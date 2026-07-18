@@ -30,6 +30,8 @@ export default function App() {
   const [hasVideo, setHasVideo] = useState(false);
   const [dryMode, setDryMode] = useState(false);
   const [canReconnect, setCanReconnect] = useState(false);
+  const [micMuted, setMicMuted] = useState(false);
+  const [outputMuted, setOutputMuted] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const providerRef = useRef<AvatarProvider | null>(null);
@@ -73,6 +75,7 @@ export default function App() {
             setPlayedOrder((prev) => [...prev, i]);
             addMessage("assistant", sceneList[i].answer, sceneList[i].card);
           },
+          onFallback: (text) => addMessage("assistant", text),
           onClosing: () => {
             setClosing(true);
             provider.disconnect(); // stop billing avatar minutes
@@ -140,9 +143,25 @@ export default function App() {
     }
     setStarted(true);
     setCanReconnect(false);
+    setMicMuted(false);
+    setOutputMuted(false);
     const engine = await connect(sceneList);
     if (config.autoplay) void engine.runAutoplay(config.autoplayGapMs);
   }, [connect, scenes]);
+
+  const toggleMic = useCallback(() => {
+    setMicMuted((prev) => {
+      providerRef.current?.setMicMuted?.(!prev);
+      return !prev;
+    });
+  }, []);
+
+  const toggleOutput = useCallback(() => {
+    setOutputMuted((prev) => {
+      providerRef.current?.setOutputMuted?.(!prev);
+      return !prev;
+    });
+  }, []);
 
   // keyboard fallbacks: 1-6 jump, Space = next unplayed
   useEffect(() => {
@@ -204,7 +223,11 @@ export default function App() {
           status={status}
           personaName={personaName}
           messages={messages}
-          onMicClick={() => void engineRef.current?.playScene(engineRef.current.nextUnplayed())}
+          micMuted={micMuted}
+          outputMuted={outputMuted}
+          canListen={!dryMode}
+          onToggleMic={toggleMic}
+          onToggleOutput={toggleOutput}
         />
       )}
 
