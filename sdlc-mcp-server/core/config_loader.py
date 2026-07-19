@@ -95,9 +95,5 @@ class ConfigLoader:
         with self._lock:
             return self._configs.get("security", {})
 
-    def get_write_verbs(self) -> frozenset[str]:
-        verbs = self.get_security_config().get("tool_safety", {}).get("write_verbs", [])
-        return frozenset(str(v).lower() for v in verbs) if verbs else frozenset()
-
 
 config = ConfigLoader()

@@ -5,9 +5,24 @@ Jira READ and WRITE tools exposed over MCP.
 Each tool delegates to JiraConnector via the shared MCPRegistry.
 """
 import logging
+import re
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+_TICKET_KEY_RE = re.compile(r"^[A-Za-z][A-Za-z0-9]*-\d+$")
+
+
+def _invalid_ticket_id(ticket_id: str) -> dict | None:
+    """Validate at the tool boundary: Jira issue keys look like 'SDLC-5'.
+    Returns an error dict for bad input, None when valid."""
+    if _TICKET_KEY_RE.match(ticket_id.strip()):
+        return None
+    return {
+        "success": False,
+        "error": f"invalid ticket_id {ticket_id!r} — expected a Jira key like 'SDLC-5'",
+        "ticket_id": ticket_id,
+    }
 
 
 def register(mcp: Any, registry: Any) -> None:
@@ -41,6 +56,8 @@ def register(mcp: Any, registry: Any) -> None:
         Returns: the ticket dict, or {"error": ..., "ticket_id": ...} if not found.
         """
         logger.info("tool jira_get_ticket(ticket_id=%r)", ticket_id)
+        if err := _invalid_ticket_id(ticket_id):
+            return {"error": err["error"], "ticket_id": ticket_id}
         ticket = await registry.get("jira").get_ticket(ticket_id)
         return ticket if ticket else {"error": "ticket not found", "ticket_id": ticket_id}
 
@@ -151,6 +168,14 @@ def register_writes(mcp: Any, registry: Any) -> None:
             issue_type=issue_type, labels=label_list,
             assignee_account_id=assignee_account_id, sprint_id=sid,
         )
+        if not result.get("id"):
+            # Failed create must say so — mutating the empty dict with
+            # sprint_resolved=False used to masquerade as a soft success.
+            return {
+                "success": False,
+                "error": result.get("error", "Jira create failed — check server logs"),
+                "sprint_resolved": False,
+            }
         if sid and result.get("id"):
             added = await registry.get("jira").add_issue_to_sprint(result["id"], sid)
             sprint_resolved = sprint_resolved and added
@@ -170,6 +195,8 @@ def register_writes(mcp: Any, registry: Any) -> None:
             account_id: the assignee's Jira Cloud accountId.
         """
         logger.info("tool jira_assign_ticket(ticket_id=%r, account_id=%r)", ticket_id, account_id)
+        if err := _invalid_ticket_id(ticket_id):
+            return err
         return await registry.get("jira").assign_ticket(ticket_id, account_id)
 
     @mcp.tool()
@@ -182,6 +209,8 @@ def register_writes(mcp: Any, registry: Any) -> None:
             description: new body (empty = unchanged).
         """
         logger.info("tool jira_update_ticket(ticket_id=%r)", ticket_id)
+        if err := _invalid_ticket_id(ticket_id):
+            return err
         return await registry.get("jira").update_ticket(ticket_id, description=description, summary=summary)
 
     @mcp.tool()
@@ -193,6 +222,8 @@ def register_writes(mcp: Any, registry: Any) -> None:
             comment: the comment text.
         """
         logger.info("tool jira_add_comment(ticket_id=%r)", ticket_id)
+        if err := _invalid_ticket_id(ticket_id):
+            return err
         return await registry.get("jira").add_comment(ticket_id, comment)
 
     logger.info("jira_tools: registered 4 write tools")

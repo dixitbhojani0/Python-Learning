@@ -6,15 +6,11 @@ Slack READ and WRITE tools exposed over MCP.
 import logging
 from typing import Any
 
-from core.config_loader import config as _config
-
 logger = logging.getLogger(__name__)
 
-
-def _default_channel() -> str:
-    """Default channel from agents.yaml > notify_agent.slack_channel. Falls back to 'general'."""
-    # In the standalone server, fall back to 'general' since agents.yaml is not loaded.
-    return "general"
+# Default channel when the caller doesn't name one. The standalone server has no
+# agents.yaml, so this is a plain constant rather than config plumbing.
+_DEFAULT_CHANNEL = "general"
 
 
 def register(mcp: Any, registry: Any) -> None:
@@ -30,7 +26,7 @@ def register(mcp: Any, registry: Any) -> None:
 
         Returns: list of messages with user, text, channel, timestamp.
         """
-        ch = channel.lstrip("#") or _default_channel()
+        ch = channel.lstrip("#") or _DEFAULT_CHANNEL
         logger.info("tool slack_search_messages(query=%r, channel=%r)", query, ch)
         return await registry.get("slack").search_messages(query, ch)
 
@@ -43,7 +39,7 @@ def register(mcp: Any, registry: Any) -> None:
 
         Returns: list of recent messages (user, text, channel, timestamp).
         """
-        ch = channel.lstrip("#") or _default_channel()
+        ch = channel.lstrip("#") or _DEFAULT_CHANNEL
         logger.info("tool slack_get_channel_history(channel=%r)", ch)
         return await registry.get("slack").get_channel_history(ch)
 
@@ -61,10 +57,11 @@ def register_writes(mcp: Any, registry: Any) -> None:
             channel: channel name (e.g. "engineering-manager").
             message: the message text.
 
-        Returns: {"ok": bool, "channel": str}.
+        Returns: {"success": bool, "error": str|None, "ok": bool, "channel": str}.
+        ("ok" mirrors "success" for backward compatibility.)
         """
         logger.info("tool slack_send_message(channel=%r)", channel)
-        sent = await registry.get("slack").send_message(channel, message)
-        return {"ok": bool(sent), "channel": channel}
+        result = await registry.get("slack").send_message(channel, message)
+        return {**result, "ok": result["success"], "channel": channel}
 
     logger.info("slack_tools: registered 1 write tool")

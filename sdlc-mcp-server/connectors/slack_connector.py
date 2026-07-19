@@ -6,15 +6,12 @@ Auth: Bot token (xoxb-...) with scopes: channels:history, channels:read, chat:wr
 """
 import logging
 
-import httpx
-
 from core.settings import settings
 from connectors.base_connector import BaseMCPConnector
 
 logger = logging.getLogger(__name__)
 
 _API_BASE = "https://slack.com/api"
-_TIMEOUT  = httpx.Timeout(connect=5.0, read=25.0, write=5.0, pool=5.0)
 
 
 def _normalize_message(msg: dict, channel_name: str = "") -> dict:
@@ -42,7 +39,7 @@ class SlackConnector(BaseMCPConnector):
             and not settings.SLACK_USE_MOCK
         )
 
-    async def _populate_cache(self, client: httpx.AsyncClient, endpoint: str) -> None:
+    async def _populate_cache(self, endpoint: str) -> None:
         cursor = ""
         for _ in range(5):
             # public_channel only — matches the token's granted scopes (channels:read/history).
@@ -53,7 +50,7 @@ class SlackConnector(BaseMCPConnector):
             if cursor:
                 params["cursor"] = cursor
             try:
-                r = await client.get(f"{_API_BASE}/{endpoint}", params=params, timeout=_TIMEOUT)
+                r = await self.http.get(f"{_API_BASE}/{endpoint}", params=params)
             except Exception:
                 logger.exception("SlackConnector._populate_cache: %s call failed", endpoint)
                 return
@@ -67,19 +64,19 @@ class SlackConnector(BaseMCPConnector):
             if not cursor:
                 return
 
-    async def _resolve_channel_id(self, client: httpx.AsyncClient, channel_name: str) -> str | None:
+    async def _resolve_channel_id(self, channel_name: str) -> str | None:
         name = channel_name.lstrip("#")
         if name in self._channel_id_cache:
             return self._channel_id_cache[name]
-        await self._populate_cache(client, "conversations.list")
+        await self._populate_cache("conversations.list")
         if name in self._channel_id_cache:
             return self._channel_id_cache[name]
-        await self._populate_cache(client, "users.conversations")
+        await self._populate_cache("users.conversations")
         return self._channel_id_cache.get(name)
 
-    async def _fetch_history(self, client: httpx.AsyncClient, channel_id: str, channel_name: str, limit: int = 200) -> list[dict]:
+    async def _fetch_history(self, channel_id: str, channel_name: str, limit: int = 200) -> list[dict]:
         async def _hit() -> dict:
-            r = await client.get(f"{_API_BASE}/conversations.history", params={"channel": channel_id, "limit": limit}, timeout=_TIMEOUT)
+            r = await self.http.get(f"{_API_BASE}/conversations.history", params={"channel": channel_id, "limit": limit})
             return r.json() if r.is_success else {"ok": False, "error": f"http {r.status_code}"}
 
         data = await _hit()
@@ -88,7 +85,7 @@ class SlackConnector(BaseMCPConnector):
 
         err = data.get("error", "unknown")
         if err == "not_in_channel":
-            join_r = await client.post(f"{_API_BASE}/conversations.join", json={"channel": channel_id}, timeout=_TIMEOUT)
+            join_r = await self.http.post(f"{_API_BASE}/conversations.join", json={"channel": channel_id})
             join_data = join_r.json() if join_r.is_success else {"ok": False}
             if not join_data.get("ok"):
                 clean = channel_name.lstrip("#")
@@ -105,16 +102,15 @@ class SlackConnector(BaseMCPConnector):
 
     async def search_messages(self, query: str, channel: str = "backend", limit: int = 5) -> list[dict]:
         try:
-            async with httpx.AsyncClient(headers=self._headers, timeout=_TIMEOUT) as client:
-                channel_id = await self._resolve_channel_id(client, channel)
-                if not channel_id:
-                    return [{"error": f"channel '#{channel.lstrip('#')}' not found", "channel": channel.lstrip("#")}]
-                history = await self._fetch_history(client, channel_id, channel, limit=200)
-                if history and history[0].get("error"):
-                    return history
-                q = (query or "").strip().lower()
-                matches = [m for m in history if q in (m.get("text") or "").lower()] if q else history
-                results = [_normalize_message(m, channel) for m in matches[:limit]]
+            channel_id = await self._resolve_channel_id(channel)
+            if not channel_id:
+                return [{"error": f"channel '#{channel.lstrip('#')}' not found", "channel": channel.lstrip("#")}]
+            history = await self._fetch_history(channel_id, channel, limit=200)
+            if history and history[0].get("error"):
+                return history
+            q = (query or "").strip().lower()
+            matches = [m for m in history if q in (m.get("text") or "").lower()] if q else history
+            results = [_normalize_message(m, channel) for m in matches[:limit]]
             logger.info("SlackConnector.search_messages: '%s' in #%s → %d matched", query[:50], channel, len(results))
             return results
         except Exception:
@@ -123,38 +119,36 @@ class SlackConnector(BaseMCPConnector):
 
     async def get_channel_history(self, channel: str = "backend", limit: int = 10) -> list[dict]:
         try:
-            async with httpx.AsyncClient(headers=self._headers, timeout=_TIMEOUT) as client:
-                channel_id = await self._resolve_channel_id(client, channel)
-                if not channel_id:
-                    return [{"error": f"channel '#{channel.lstrip('#')}' not found", "channel": channel.lstrip("#")}]
-                history = await self._fetch_history(client, channel_id, channel, limit=limit)
-                if history and history[0].get("error"):
-                    return history
-                results = [_normalize_message(m, channel) for m in history]
+            channel_id = await self._resolve_channel_id(channel)
+            if not channel_id:
+                return [{"error": f"channel '#{channel.lstrip('#')}' not found", "channel": channel.lstrip("#")}]
+            history = await self._fetch_history(channel_id, channel, limit=limit)
+            if history and history[0].get("error"):
+                return history
+            results = [_normalize_message(m, channel) for m in history]
             logger.info("SlackConnector.get_channel_history: #%s → %d messages", channel, len(results))
             return results
         except Exception:
             logger.exception("SlackConnector.get_channel_history failed for channel='%s'", channel)
             return []
 
-    async def send_message(self, channel: str, message: str) -> bool:
+    async def send_message(self, channel: str, message: str) -> dict:
+        """Returns {"success": bool, "error": str|None} — same shape as other write ops."""
         try:
-            async with httpx.AsyncClient(headers=self._headers, timeout=_TIMEOUT) as client:
-                channel_id = await self._resolve_channel_id(client, channel)
-                target = channel_id or channel
-                r = await client.post(
-                    f"{_API_BASE}/chat.postMessage",
-                    json={"channel": target, "text": message, "mrkdwn": True},
-                    timeout=_TIMEOUT,
-                )
-                data = r.json()
-                ok = data.get("ok", False)
-                if not ok:
-                    logger.warning("SlackConnector.send_message: failed — %s", data.get("error"))
-                return ok
+            channel_id = await self._resolve_channel_id(channel)
+            target = channel_id or channel
+            r = await self.http.post(
+                f"{_API_BASE}/chat.postMessage",
+                json={"channel": target, "text": message, "mrkdwn": True},
+            )
+            data = r.json() if r.is_success else {"ok": False, "error": f"http {r.status_code}"}
+            if not data.get("ok"):
+                logger.warning("SlackConnector.send_message: failed — %s", data.get("error"))
+                return {"success": False, "error": str(data.get("error", "unknown"))}
+            return {"success": True, "error": None}
         except Exception:
             logger.exception("SlackConnector.send_message failed for channel='%s'", channel)
-            return False
+            return {"success": False, "error": "request failed"}
 
     post_message = send_message
 
