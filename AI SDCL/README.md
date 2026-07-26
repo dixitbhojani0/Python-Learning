@@ -382,7 +382,7 @@ curl http://localhost:8000/health
 python -c "
 from backend.rag.retriever import HybridRetriever
 retriever = HybridRetriever()
-chunks, score = retriever.retrieve('CORS error nginx auth', 'antlog')
+chunks, score = retriever.retrieve('CORS error nginx auth', 'SDLC')
 print(f'Top score: {score:.3f}, Chunks: {len(chunks)}')
 print(chunks[0].parent_text[:200] if chunks else 'No results')
 "
