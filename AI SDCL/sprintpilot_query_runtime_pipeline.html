@@ -1,0 +1,172 @@
+<h2 class="sr-only">SprintPilot complete query-time pipeline — every step from user query to response, including routing, prompt assembly, evaluation guards, and reflection loop</h2>
+<style>
+.qp{padding:1rem 0;max-width:680px}
+.ph{font-size:11px;font-weight:500;letter-spacing:.06em;padding:4px 10px;border-radius:4px;margin:16px 0 6px;display:inline-block}
+.ph.mem{background:var(--bg-accent);color:var(--text-accent)}
+.ph.rout{background:var(--bg-pro);color:var(--text-pro)}
+.ph.ag{background:var(--bg-success);color:var(--text-success)}
+.ph.post{background:var(--bg-warning);color:var(--text-warning)}
+.ph.out{background:var(--surface-1);color:var(--text-secondary);border:0.5px solid var(--border)}
+.st{border:0.5px solid var(--border);border-radius:8px;padding:9px 12px;margin-bottom:3px;cursor:pointer;transition:background .12s}
+.st:hover{background:var(--surface-1)}
+.st.mem{border-left:3px solid var(--border-accent)}
+.st.rout{border-left:3px solid var(--border-pro)}
+.st.ag{border-left:3px solid var(--border-success)}
+.st.llm{border-left:3px solid var(--border-pro)}
+.st.guard{border-left:3px solid var(--border-warning);background:var(--bg-warning)}
+.st.guard:hover{background:var(--bg-warning)}
+.st.hitl{border-left:3px solid var(--border-danger);background:var(--bg-danger)}
+.st.hitl:hover{background:var(--bg-danger)}
+.st.loop{border:0.5px dashed var(--border-danger);background:var(--bg-danger)}
+.st.loop:hover{background:var(--bg-danger)}
+.st.out{border-left:3px solid var(--border-success)}
+.sh{display:flex;align-items:center;gap:7px;margin-bottom:3px}
+.nb{font-size:10px;font-weight:500;border-radius:50%;width:16px;height:16px;display:flex;align-items:center;justify-content:center;flex-shrink:0;line-height:1}
+.nb.mem{background:var(--bg-accent);color:var(--text-accent)}
+.nb.rout{background:var(--bg-pro);color:var(--text-pro)}
+.nb.ag{background:var(--bg-success);color:var(--text-success)}
+.nb.post{background:var(--bg-warning);color:var(--text-warning)}
+.nb.out{background:var(--bg-success);color:var(--text-success)}
+.sn{font-size:13px;font-weight:500;color:var(--text-primary)}
+.badge{font-size:10px;font-weight:500;padding:1px 7px;border-radius:10px;margin-left:4px;vertical-align:middle}
+.badge.g{background:var(--bg-warning);color:var(--text-warning)}
+.badge.e{background:var(--bg-danger);color:var(--text-danger)}
+.badge.lp{background:var(--bg-pro);color:var(--text-pro)}
+.tc{font-size:11px;color:var(--text-muted);font-family:var(--font-mono);margin:0 0 2px;line-height:1.4}
+.wh{font-size:11px;margin:0;line-height:1.4}
+.wh.mem{color:var(--text-accent)}
+.wh.rout{color:var(--text-pro)}
+.wh.ag{color:var(--text-success)}
+.wh.post{color:var(--text-warning)}
+.wh.g{color:var(--text-warning)}
+.wh.d{color:var(--text-danger)}
+.cn{height:7px;margin:0 auto 3px;width:1px;background:var(--border-strong)}
+.slots{display:grid;grid-template-columns:repeat(4,1fr);gap:3px;margin:6px 0 3px}
+.slot{border:0.5px solid var(--border);border-radius:5px;padding:5px 7px}
+.slt{font-size:10px;font-weight:500;color:var(--text-secondary);margin:0 0 1px}
+.slb{font-size:10px;color:var(--text-muted);font-family:var(--font-mono);margin:0}
+.tier{display:flex;gap:3px;margin:5px 0 4px}
+.tc2{flex:1;border:0.5px solid var(--border);border-radius:6px;padding:6px 8px}
+.tn{font-size:11px;font-weight:500;color:var(--text-secondary);margin:0 0 1px}
+.tt{font-size:11px;color:var(--text-muted);font-family:var(--font-mono);margin:0;line-height:1.3}
+.exit{font-size:11px;color:var(--text-danger);font-style:italic;margin:3px 0 0;padding-left:2px}
+</style>
+<div class="qp">
+
+<div class="ph mem">A — pre-processing (nodes 1–2)</div>
+
+<div class="st mem" onclick="sendPrompt('How does a user query enter the SprintPilot LangGraph pipeline from FastAPI?')">
+<div class="sh"><span class="nb mem">1</span><span class="sn">Query received</span></div>
+<div class="tc">FastAPI → LangGraph graph.invoke(SDLCState) — session_id, project_id, user_role, query</div>
+<div class="wh mem">Graph state carries all context; each node reads from and writes back to SDLCState</div>
+</div><div class="cn"></div>
+
+<div class="st mem" onclick="sendPrompt('Why was the semantic cache disabled in SprintPilot and what replaced it?')">
+<div class="sh"><span class="nb mem">2</span><span class="sn">Semantic cache check</span><span class="badge g">disabled</span></div>
+<div class="tc">No-op passthrough — response_cached=False — Redis answer cache removed (bug B6)</div>
+<div class="wh mem">Live MCP data (Jira/GitHub/Slack) makes whole-answer caching stale; e.g. closed ticket still shown as blocker</div>
+</div><div class="cn"></div>
+
+<div class="st mem" onclick="sendPrompt('How does SprintPilot memory retrieval work — session history, summarization, and semantic facts?')">
+<div class="sh"><span class="nb mem">3</span><span class="sn">Memory retrieval</span></div>
+<div class="tc">SQLite: load last 11 turns → keep 5 raw → LLM-summarize older into ≤250t summary · Qdrant: semantic_memory.retrieve_facts(query)</div>
+<div class="wh mem">Prevents token explosion in long sessions; semantic facts add long-term knowledge not in session history</div>
+</div><div class="cn"></div>
+
+<div class="ph rout">B — intent classification (node 3)</div>
+
+<div class="st rout" onclick="sendPrompt('How does the 3-tier intent classification waterfall work in SprintPilot?')">
+<div class="sh"><span class="nb rout">4</span><span class="sn">Intent classification</span></div>
+<div class="tc" style="margin-bottom:4px">3-tier waterfall — first confident tier wins:</div>
+<div class="tier">
+<div class="tc2"><div class="tn">Semantic router</div><div class="tt">embed(query) → cosine vs anchor phrases · min_score=0.42 AND margin≥0.12 → fast, deterministic, ~50× cheaper than LLM</div></div>
+<div class="tc2"><div class="tn">LLM supervisor</div><div class="tt">reads routing_description per agent from agents.yaml · handles paraphrases and compound queries</div></div>
+<div class="tc2"><div class="tn">Keyword fallback</div><div class="tt">whole-word match on trigger_keywords · runs if LLM call fails for any reason</div></div>
+</div>
+<div class="wh rout">Router is ~50× faster and deterministic; LLM handles ambiguous/out-of-distribution; keywords are the safety net</div>
+</div><div class="cn"></div>
+
+<div class="ph ag">C — agent execution (nodes 4–8, one agent per query)</div>
+
+<div class="st ag" onclick="sendPrompt('How does hybrid RAG retrieval run inside an agent in SprintPilot?')">
+<div class="sh"><span class="nb ag">5</span><span class="sn">Hybrid RAG retrieval</span></div>
+<div class="tc">embed(query) → Qdrant pre-filter (project + stale=False) → vector top-30 + BM25 on same corpus → RRF(k=60) → cross-encoder rerank (ms-marco sigmoid T=3) → top-7 parent chunks + confidence score</div>
+<div class="wh ag">Corrective RAG loop fires if confidence &lt;0.45 — LLM reformulates query → retry → best of two</div>
+</div><div class="cn"></div>
+
+<div class="st guard" onclick="sendPrompt('How does the low confidence hallucination guard work in SprintPilot agents?')">
+<div class="sh"><span class="sn">Hallucination guard</span><span class="badge g">guard</span></div>
+<div class="tc">if confidence &lt; 0.20 (_LOW_CONFIDENCE_THRESHOLD) → abort agent → return "insufficient evidence" response immediately</div>
+<div class="wh g">Irrelevant chunks are often returned for out-of-domain queries — the LLM would hallucinate from training data without this gate</div>
+<div class="exit">Exit path: response → persona adapt → user (skips LLM generation)</div>
+</div><div class="cn"></div>
+
+<div class="st ag" onclick="sendPrompt('How does MCP tool calling work inside a SprintPilot agent?')">
+<div class="sh"><span class="nb ag">6</span><span class="sn">MCP tool calls (live data)</span></div>
+<div class="tc">MCPAgent: LLM selects + chains tools from real MCP server (JSON-RPC port 8100) — Jira sprint board, GitHub PRs, Slack messages · rerank_relevance() checks if live data is on-topic before including</div>
+<div class="wh ag">Live data placed BEFORE RAG context in the prompt — fresher signal given priority over ingested docs</div>
+</div><div class="cn"></div>
+
+<div class="st ag" onclick="sendPrompt('How does the 7-slot context builder assemble the prompt and handle the token budget?')">
+<div class="sh"><span class="nb ag">7</span><span class="sn">7-slot context build</span></div>
+<div class="tc" style="margin-bottom:5px">tiktoken cl100k_base counts tokens BEFORE sending — never estimate · total budget 8000t (safe for llama-3.3-70b):</div>
+<div class="slots">
+<div class="slot"><div class="slt">1 · system</div><div class="slb">~200t · fixed</div></div>
+<div class="slot"><div class="slt">2 · persona</div><div class="slb">~100t · per role</div></div>
+<div class="slot"><div class="slt">3 · summary</div><div class="slb">~300t · compressed turns</div></div>
+<div class="slot"><div class="slt">4 · recent</div><div class="slb">~400t · last 5 raw</div></div>
+<div class="slot"><div class="slt">5 · RAG context</div><div class="slb">~1500t · top-7 parents</div></div>
+<div class="slot"><div class="slt">6 · tool output</div><div class="slb">~500t · MCP live data</div></div>
+<div class="slot"><div class="slt">7 · user query</div><div class="slb">no cap · never cut</div></div>
+<div class="slot"><div class="slt">compression</div><div class="slb">drop RAG tail → drop old turns → trim summary</div></div>
+</div>
+<div class="wh ag">Slots assembled in order with "---" separators; query is never truncated — every other slot compresses first</div>
+</div><div class="cn"></div>
+
+<div class="st llm" onclick="sendPrompt('How does the LLM generation step work in SprintPilot agents — primary model, fallback, and JSON parsing?')">
+<div class="sh"><span class="nb rout">8</span><span class="sn">LLM generation</span></div>
+<div class="tc">Groq llama-3.3-70b (primary) → Gemini 1.5 Flash (fallback) · streamed async · strip &lt;think&gt;...&lt;/think&gt; blocks (Qwen3/DeepSeek R1 compat) → extract ```json block → raw {…} fallback</div>
+<div class="wh rout">Streaming means first tokens reach the user immediately; JSON stripping handles chain-of-thought reasoning models without extra prompt engineering</div>
+</div><div class="cn"></div>
+
+<div class="ph post">D — post-processing (nodes 9–10)</div>
+
+<div class="st hitl" onclick="sendPrompt('How does the HITL gate work in SprintPilot and what happens after the user approves?')">
+<div class="sh"><span class="sn">HITL gate</span><span class="badge e">write actions only</span></div>
+<div class="tc">if hitl_required=True → hitl_manager.save(proposal) → Redis TTL 24h (SQLite fallback) → return hitl_action_id · frontend shows Approve / Reject buttons · POST /api/hitl/approve|reject resolves the pending action</div>
+<div class="wh d">Write-capable MCP tools (create ticket, assign reviewer) always require human approval before execution — LLM proposes, human confirms</div>
+</div><div class="cn"></div>
+
+<div class="st guard" onclick="sendPrompt('What are the skip persona signals in SprintPilot and why do some responses bypass persona rewriting?')">
+<div class="sh"><span class="sn">Skip persona check</span><span class="badge g">guard</span></div>
+<div class="tc">if skip_persona=True OR response contains signals ("does not exist in jira", "already assigned to", "no action needed") → skip to response · also skip if agent sets skip_persona explicitly</div>
+<div class="wh g">Short factual corrections ("ticket SDLC-99 does not exist") lose meaning when rewritten into stakeholder language — preserve them verbatim</div>
+</div><div class="cn"></div>
+
+<div class="st llm" onclick="sendPrompt('How does persona adaptation work as a second LLM call in SprintPilot?')">
+<div class="sh"><span class="nb rout">9</span><span class="sn">Persona adaptation</span></div>
+<div class="tc">2nd LLM call — ONLY job: rewrite tone for user role (developer / manager / technical_leader / stakeholder) · strict rules: keep all facts, ticket IDs, numbers exactly — only vocabulary and emphasis change</div>
+<div class="wh rout">One LLM call can't simultaneously reason over 7 RAG chunks AND write in stakeholder tone — splitting produces cleaner role-specific language (+3–5s latency, accepted for demo)</div>
+</div><div class="cn"></div>
+
+<div class="st guard" onclick="sendPrompt('How does the faithfulness judge work in SprintPilot and when does it fire?')">
+<div class="sh"><span class="sn">Faithfulness evaluation</span><span class="badge g">eval gate</span></div>
+<div class="tc">if NOT using MCP data AND confidence &lt; reflect_faithfulness_threshold (0.45) → LLM-as-judge: reads top-6 chunks + response → flags unsupported claims → returns {supported_claims, unsupported_claims, score} JSON</div>
+<div class="wh g">MCP answers are skipped — judge scores them low even when correct because live data isn't in rag_chunks · fails open (1.0) on error so judge failure never suppresses a legitimate answer</div>
+</div><div class="cn"></div>
+
+<div class="st loop" onclick="sendPrompt('How does the reflect and revise loop work in SprintPilot when faithfulness is too low?')">
+<div class="sh"><span style="font-size:13px;color:var(--text-danger)"><i class="ti ti-refresh" aria-hidden="true"></i></span><span class="sn" style="margin-left:2px">Reflect and revise loop</span><span class="badge lp">one retry only</span></div>
+<div class="tc">if faithfulness &lt; 0.45 → regenerate from evidence only (no MCP, no memory) → persona-adapt the revision → re-score faithfulness · keep revision ONLY if new score &gt; original — can never make answer worse · degrades to original on any error</div>
+<div class="wh d">Catches hallucinations that slipped past the low-confidence guard — model added a training-data fact the retrieved chunks don't support</div>
+</div><div class="cn"></div>
+
+<div class="ph out">E — output + telemetry</div>
+
+<div class="st out" onclick="sendPrompt('What metrics does SprintPilot record per query and how are they used?')">
+<div class="sh"><span class="nb out">10</span><span class="sn">Response returned + metrics saved</span></div>
+<div class="tc">Stream response to user · append to eval_results.jsonl: precision (context P), recall (context R), faithfulness, answer_relevancy (embed cosine), answer_correctness (0.5 factual + 0.5 semantic), intent_accuracy · composite = 0.20P + 0.20R + 0.25F + 0.15Rel + 0.20Cor</div>
+<div class="wh ag">5 independent metrics catch different failure modes: precision = retrieval noise, recall = missed facts, faithfulness = hallucination, relevancy = topic drift, correctness = wrong answer despite good retrieval</div>
+</div>
+
+</div>

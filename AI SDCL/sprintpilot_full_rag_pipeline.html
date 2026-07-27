@@ -1,0 +1,181 @@
+<h2 class="sr-only">SprintPilot full RAG pipeline — ingestion and retrieval phases, technology used and design rationale for each step</h2>
+<style>
+.rg{display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:1rem 0}
+.ph{font-size:12px;font-weight:500;border-radius:6px;padding:5px 10px;text-align:center;margin:0 0 8px}
+.pi{background:var(--bg-pro);color:var(--text-pro)}
+.pr{background:var(--bg-accent);color:var(--text-accent)}
+.st{border:0.5px solid var(--border);border-radius:8px;padding:9px 12px;margin-bottom:3px;cursor:pointer;transition:background .12s}
+.st:hover{background:var(--surface-1)}
+.si{border-left:3px solid var(--border-pro)}
+.sr{border-left:3px solid var(--border-accent)}
+.sl{border:0.5px dashed var(--border-danger);background:var(--bg-danger)}
+.sl:hover{background:var(--bg-danger)}
+.sh{display:flex;align-items:center;gap:6px;margin-bottom:3px}
+.nb{font-size:10px;font-weight:500;border-radius:50%;width:16px;height:16px;display:flex;align-items:center;justify-content:center;flex-shrink:0;line-height:1}
+.ni{background:var(--bg-pro);color:var(--text-pro)}
+.nr{background:var(--bg-accent);color:var(--text-accent)}
+.sn{font-size:13px;font-weight:500;color:var(--text-primary)}
+.tc{font-size:11px;color:var(--text-muted);font-family:var(--font-mono);margin:0 0 2px;line-height:1.4}
+.wi{font-size:11px;color:var(--text-pro);margin:0;line-height:1.4}
+.wr{font-size:11px;color:var(--text-accent);margin:0;line-height:1.4}
+.wd{font-size:11px;color:var(--text-danger);margin:0;line-height:1.4}
+.cn{height:6px;margin:0 auto 3px;width:1px;background:var(--border-strong)}
+.br{display:flex;gap:3px;margin:5px 0 4px}
+.bc{flex:1;border:0.5px solid var(--border);border-radius:6px;padding:6px 7px}
+.bn{font-size:11px;font-weight:500;color:var(--text-secondary);margin:0 0 2px}
+.bt{font-size:11px;color:var(--text-muted);font-family:var(--font-mono);margin:0;line-height:1.3}
+</style>
+<div class="rg">
+
+<div>
+<div class="ph pi">Ingestion — offline, once per document</div>
+
+<div class="st si" onclick="sendPrompt('How does SprintPilot accept different document formats at ingestion time?')">
+<div class="sh"><span class="nb ni">1</span><span class="sn">Raw document</span></div>
+<div class="tc">PDF, DOCX, MD, JSON, HTML, PPTX</div>
+<div class="wi">6 formats, one unified downstream pipeline</div>
+</div><div class="cn"></div>
+
+<div class="st si" onclick="sendPrompt('How does SprintPilot detect document type from metadata or file path keywords?')">
+<div class="sh"><span class="nb ni">2</span><span class="sn">Detect doc type</span></div>
+<div class="tc">metadata["type"] first → path keywords: sprint/adr/slack/ticket/jira → default "doc"</div>
+<div class="wi">Zero-cost routing — source folder is a reliable signal, no LLM call needed</div>
+</div><div class="cn"></div>
+
+<div class="st si" onclick="sendPrompt('How does SprintPilot resolve chunking strategy and why does file extension take priority over doc_type?')">
+<div class="sh"><span class="nb ni">3</span><span class="sn">Resolve chunk strategy</span></div>
+<div class="tc">ChunkingStrategyFactory → chunking.yaml hot-reload (ext &gt; doc_type &gt; fallback)</div>
+<div class="wi">Extension is a hard guarantee — .pdf is always rich_document regardless of metadata</div>
+</div><div class="cn"></div>
+
+<div class="st si" onclick="sendPrompt('How does SprintPilot choose between its three document parsers, and how does PDF image OCR work?')">
+<div class="sh"><span class="nb ni">4</span><span class="sn">Parse document</span></div>
+<div class="tc" style="margin-bottom:0">3 paths by split_method from resolved strategy:</div>
+<div class="br">
+<div class="bc"><div class="bn">Slack JSON</div><div class="bt">load_slack_json()<br>msg-per-chunk</div></div>
+<div class="bc"><div class="bn">unstructured.io</div><div class="bt">partition() typed elements<br>pypdf fallback</div></div>
+<div class="bc"><div class="bn">Plain text / MD</div><div class="bt">Path.read_text()<br>para-aware split</div></div>
+</div>
+<div class="tc" style="margin-bottom:2px">PDF also: extract_pdf_images() → Tesseract OCR → image chunk with image_path + ocr_text</div>
+<div class="wi">Each format has structure that naive text extraction destroys; images become searchable and viewable</div>
+</div><div class="cn"></div>
+
+<div class="st si" onclick="sendPrompt('How does SprintPilot filter noise and apply quality gates before chunking?')">
+<div class="sh"><span class="nb ni">5</span><span class="sn">Filter + quality gate</span></div>
+<div class="tc">TOC filter (&gt;25% dots) · _is_noise_title() (code, pipes, colons, all-caps) · _has_meaningful_content() (≥5 words &gt;2 chars)</div>
+<div class="wi">Dot-leaders and bold labels become junk chunks that poison search results</div>
+</div><div class="cn"></div>
+
+<div class="st si" onclick="sendPrompt('How does parent-child chunking work in SprintPilot and why use two different chunk sizes?')">
+<div class="sh"><span class="nb ni">6</span><span class="sn">Parent-child split</span></div>
+<div class="tc">~2000t parents (~8000 chars) / ~512t children (~2048 chars) / 50t overlap · _find_break_point() at sentence → para → word</div>
+<div class="wi">2025 benchmark: 0.88/0.85 P/R vs 0.78/0.72 flat — search small for precision, read large for full context</div>
+</div><div class="cn"></div>
+
+<div class="st si" onclick="sendPrompt('How does LLM context prefix generation work in SprintPilot ingestion and why does it reduce retrieval failures?')">
+<div class="sh"><span class="nb ni">7</span><span class="sn">LLM context prefix</span></div>
+<div class="tc">Groq llm · 1–2 sentence chunk summary · 3 retries (2s→4s backoff) · batch throttled with BATCH_SLEEP</div>
+<div class="wi">Anthropic 2024: −35% retrieval failures standalone; −49% combined with hybrid BM25</div>
+</div><div class="cn"></div>
+
+<div class="st si" onclick="sendPrompt('How does batch embedding work in SprintPilot ingestion and why was all-MiniLM-L6-v2 chosen?')">
+<div class="sh"><span class="nb ni">8</span><span class="sn">Batch embed</span></div>
+<div class="tc">prefix + child text → all-MiniLM-L6-v2 · 384-dim · batch_size=32 · normalize=True · local, no API</div>
+<div class="wi">Local = zero cost and latency; batch_size=32 is ~5× faster than one-by-one; consistent space</div>
+</div><div class="cn"></div>
+
+<div class="st si" onclick="sendPrompt('How does Qdrant upsert work in SprintPilot and why are parent chunks stored separately as is_parent=True?')">
+<div class="sh"><span class="nb ni">9</span><span class="sn">Qdrant upsert</span></div>
+<div class="tc">Child: UUID5(content) dedup · Parent: is_parent=True excluded from search · metadata: section_title, page_no, element_type, chunk_index, document_position, ingested_date, prev/next_chunk_id, parent_id</div>
+<div class="wi">Parents excluded so they don't compete with children; rich metadata enables pre-filter narrowing</div>
+</div><div class="cn"></div>
+
+<div class="st si" onclick="sendPrompt('What is cross-document link building in SprintPilot and why run it post-ingest?')">
+<div class="sh"><span class="nb ni">10</span><span class="sn">Cross-doc link build</span></div>
+<div class="tc">search_related() per chunk · min_score=0.75 · different source only · writes related_chunk_ids back via update_payload()</div>
+<div class="wi">Enables cross-source correlation at query time without duplicating any chunk</div>
+</div>
+</div>
+
+<div>
+<div class="ph pr">Retrieval — online, per query</div>
+
+<div class="st sr" onclick="sendPrompt('What triggers the SprintPilot RAG retrieval pipeline and what are the two entry paths?')">
+<div class="sh"><span class="nb nr">1</span><span class="sn">User query</span></div>
+<div class="tc">Raw natural language query string from agent</div>
+<div class="wr">Triggers full pipeline or the recall shortcut at step 2</div>
+</div><div class="cn"></div>
+
+<div class="st sr" onclick="sendPrompt('How does SprintPilot recall mode work for full document retrieval, and how does identify_document avoid bias toward large docs?')">
+<div class="sh"><span class="nb nr">2</span><span class="sn">Recall mode check</span></div>
+<div class="tc">identify_document() → semantic probe → title-overlap scoring (vs pure top-chunk bias) → retrieve_full_document() in chunk_index order</div>
+<div class="wr">"Show me the whole checklist" needs all chunks ordered, not top-7 fragments</div>
+</div><div class="cn"></div>
+
+<div class="st sr" onclick="sendPrompt('How does SprintPilot embed the user query and why must it use the same model as ingestion?')">
+<div class="sh"><span class="nb nr">3</span><span class="sn">Embed query</span></div>
+<div class="tc">embed_text() · all-MiniLM-L6-v2 · normalize=True (same model as ingestion)</div>
+<div class="wr">Consistent vector space — different models at query vs ingest time breaks similarity scores</div>
+</div><div class="cn"></div>
+
+<div class="st sr" onclick="sendPrompt('How does Qdrant pre-filtering work before vector search in SprintPilot and why apply it before not after?')">
+<div class="sh"><span class="nb nr">4</span><span class="sn">Qdrant pre-filter</span></div>
+<div class="tc">project + stale=False + optional doc_types · applied inside Qdrant before vector search (not post-filter)</div>
+<div class="wr">Removes wrong-project chunks before expensive similarity math, not after</div>
+</div><div class="cn"></div>
+
+<div class="st sr" onclick="sendPrompt('How does dense vector search work in SprintPilot retrieval and why return top-30?')">
+<div class="sh"><span class="nb nr">5</span><span class="sn">Vector search</span></div>
+<div class="tc">Qdrant cosine similarity · top-30 candidates · is_parent=True excluded</div>
+<div class="wr">Semantic match: "DB keeps crashing" finds "connection pool timeout"; 30 gives reranker headroom</div>
+</div><div class="cn"></div>
+
+<div class="st sr" onclick="sendPrompt('How does BM25 keyword search work in SprintPilot retrieval and what does it catch that vector search misses?')">
+<div class="sh"><span class="nb nr">6</span><span class="sn">BM25 keyword search</span></div>
+<div class="tc">BM25Okapi on same 30-doc corpus · query.lower().split() · rank_bm25 library</div>
+<div class="wr">Exact match: "SDLC-1042", "/api/v2/auth", "nginx" that embedding similarity misses</div>
+</div><div class="cn"></div>
+
+<div class="st sr" onclick="sendPrompt('How does reciprocal rank fusion work in SprintPilot and why is it better than averaging vector and BM25 scores?')">
+<div class="sh"><span class="nb nr">7</span><span class="sn">Reciprocal rank fusion</span></div>
+<div class="tc">RRF(d) = Σ 1/(k+rank) · k=60 (Cormack et al. 2009) · rank-based, not score-based</div>
+<div class="wr">Vector cosine and BM25 scores live on different scales; ranks are scale-independent</div>
+</div><div class="cn"></div>
+
+<div class="st sr" onclick="sendPrompt('How does cross-encoder reranking work in SprintPilot and why sigmoid T=3?')">
+<div class="sh"><span class="nb nr">8</span><span class="sn">Cross-encoder rerank</span></div>
+<div class="tc">ms-marco-MiniLM-L-6-v2 · CrossEncoder.predict() · sigmoid(x/3) temperature T=3</div>
+<div class="wr">Reads query+doc together (not approximate); T=3 corrects domain gap (web-trained on sprint docs)</div>
+</div><div class="cn"></div>
+
+<div class="st sr" onclick="sendPrompt('Why does SprintPilot return exactly top-7 chunks after reranking and how are RetrievedChunk objects built?')">
+<div class="sh"><span class="nb nr">9</span><span class="sn">Top-7 selection</span></div>
+<div class="tc">Sorted by reranker score desc · top_k=7 from config · builds RetrievedChunk(text, parent_text, source, doc_type, score, metadata)</div>
+<div class="wr">Quality ceiling — reranker picks most genuinely relevant, not just most similar</div>
+</div><div class="cn"></div>
+
+<div class="st sr" onclick="sendPrompt('What are SprintPilot confidence tiers and how do they drive agent answer certainty?')">
+<div class="sh"><span class="nb nr">10</span><span class="sn">Confidence tier</span></div>
+<div class="tc">≥0.75 HIGH · 0.45–0.74 MEDIUM · 0.20–0.44 LOW · &lt;0.20 NO_EVIDENCE</div>
+<div class="wr">Agents add caveat language at MEDIUM/LOW; below 0.45 triggers corrective retry</div>
+</div><div class="cn"></div>
+
+<div class="st sl" onclick="sendPrompt('How does corrective RAG work in SprintPilot when initial retrieval confidence is below 0.45?')">
+<div class="sh"><span style="font-size:14px;color:var(--text-danger)"><i class="ti ti-refresh" aria-hidden="true"></i></span><span class="sn" style="margin-left:2px">Corrective RAG loop (if &lt;0.45)</span></div>
+<div class="tc">llm_rewrite_fn(query) → reformulated retry → best of {first_pass, corrective, degraded} returned</div>
+<div class="wd">Reformulates bad queries rather than silently returning weak evidence to the agent</div>
+</div><div class="cn"></div>
+
+<div class="st sr" onclick="sendPrompt('Why does SprintPilot swap child chunk text for parent text before sending context to agents?')">
+<div class="sh"><span class="nb nr">11</span><span class="sn">Parent chunk swap</span></div>
+<div class="tc">RetrievedChunk.parent_text (~2000t) replaces .text child (~512t) — denormalized in Qdrant payload, single lookup</div>
+<div class="wr">Search small for precision; LLM reads large for full surrounding context</div>
+</div><div class="cn"></div>
+
+<div class="st sr" onclick="sendPrompt('What do SprintPilot agents receive from the RAG pipeline and how do they use the confidence score?')">
+<div class="sh"><span class="nb nr">12</span><span class="sn">Agents receive</span></div>
+<div class="tc">list[RetrievedChunk] + float confidence_score + strategy_used (first_pass/corrective/degraded)</div>
+<div class="wr">Score calibrates answer certainty; strategy_used surfaces retrieval quality in agent logs</div>
+</div>
+</div>
+</div>
