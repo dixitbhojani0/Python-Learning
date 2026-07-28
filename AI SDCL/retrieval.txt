@@ -1,0 +1,47 @@
+User: "What is blocking the dashboard?"
+        │
+        ▼
+┌──────────────────┐
+│  Embed query     │  384-dim vector
+└──────────────────┘
+        │
+        ├─────────────────────┐
+        ▼                     ▼
+┌──────────────┐     ┌──────────────┐
+│ Vector Search│     │  BM25 Search │
+│  (semantic)  │     │  (keywords)  │
+│  top 30      │     │  top 30      │
+└──────────────┘     └──────────────┘
+        │                     │
+        └──────────┬──────────┘
+                   ▼
+        ┌──────────────────┐
+        │       RRF        │  Reciprocal Rank Fusion
+        │  (merge + rank)  │  intelligently combines both lists
+        └──────────────────┘
+                   │
+                   ▼
+        ┌──────────────────┐
+        │  CrossEncoder    │  ms-marco-MiniLM-L-6-v2
+        │  Reranker        │  scores TRUE relevance to query
+        │  top 7 kept      │  (not just similarity)
+        └──────────────────┘
+                   │
+                   ▼
+        ┌──────────────────┐
+        │ Confidence Check │
+        │                  │
+        │ ≥ 0.75 → HIGH    │  answer directly
+        │ 0.45–0.74 → MED  │  answer with caution note
+        │ < 0.45 → LOW     │  → Corrective RAG (rewrite query + retry)
+        │ still low → NONE │  → Graceful degradation (no hallucination)
+        └──────────────────┘
+                   │
+                   ▼
+        ┌──────────────────┐
+        │ Return PARENT    │  child was searched, parent is read by LLM
+        │ chunks to LLM    │  ~1500 tokens of full context per chunk
+        └──────────────────┘
+                   │
+                   ▼
+               🤖 LLM

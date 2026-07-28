@@ -1,0 +1,90 @@
+RAG Pipeline — High Level
+1. Ingestion (one-time, run ingest.py)
+📄 Documents (sprint docs, ADRs, Slack, incidents, version policies)
+        │
+        ▼
+┌─────────────────┐
+│  DocumentChunker │
+│                 │
+│  text → Parent  │  ~1500 tokens  (paragraph-aware split)
+│         │       │
+│         └─Child │  ~350 tokens   (sliding window, 40-token overlap)
+└─────────────────┘
+        │
+        ▼
+┌──────────────────────────┐
+│  Contextual Prefix (LLM) │  "This chunk is from nginx ADR, section 3..."
+│  prepend 1-2 sentences   │  + child text  →  richer embedding
+└──────────────────────────┘
+        │
+        ▼
+┌──────────────────┐
+│  Embedding Model │  all-MiniLM-L6-v2  →  384-dim vector
+│  (local, free)   │
+└──────────────────┘
+        │
+        ▼
+┌─────────────────────────────────────────┐
+│              Qdrant                     │
+│  { vector, parent_text, source,         │
+│    doc_type, project, stale: false }    │
+└─────────────────────────────────────────┘
+
+2. Retrieval (every user query)
+
+User: "What is blocking the dashboard?"
+        │
+        ▼
+┌──────────────────┐
+│  Embed query     │  384-dim vector
+└──────────────────┘
+        │
+        ├─────────────────────┐
+        ▼                     ▼
+┌──────────────┐     ┌──────────────┐
+│ Vector Search│     │  BM25 Search │
+│  (semantic)  │     │  (keywords)  │
+│  top 30      │     │  top 30      │
+└──────────────┘     └──────────────┘
+        │                     │
+        └──────────┬──────────┘
+                   ▼
+        ┌──────────────────┐
+        │       RRF        │  Reciprocal Rank Fusion
+        │  (merge + rank)  │  intelligently combines both lists
+        └──────────────────┘
+                   │
+                   ▼
+        ┌──────────────────┐
+        │  CrossEncoder    │  ms-marco-MiniLM-L-6-v2
+        │  Reranker        │  scores TRUE relevance to query
+        │  top 7 kept      │  (not just similarity)
+        └──────────────────┘
+                   │
+                   ▼
+        ┌──────────────────┐
+        │ Confidence Check │
+        │                  │
+        │ ≥ 0.75 → HIGH    │  answer directly
+        │ 0.45–0.74 → MED  │  answer with caution note
+        │ < 0.45 → LOW     │  → Corrective RAG (rewrite query + retry)
+        │ still low → NONE │  → Graceful degradation (no hallucination)
+        └──────────────────┘
+                   │
+                   ▼
+        ┌──────────────────┐
+        │ Return PARENT    │  child was searched, parent is read by LLM
+        │ chunks to LLM    │  ~1500 tokens of full context per chunk
+        └──────────────────┘
+                   │
+                   ▼
+               🤖 LLM
+
+Why Hybrid (BM25 + Vector)?
+
+Query: "CORS error on /api/v2/auth SDLC-1042"
+
+BM25 finds:   "SDLC-1042"  "CORS"  "/api/v2/auth"   ← exact keyword match
+Vector finds: "header missing after nginx reload"    ← semantic meaning
+
+Neither alone catches everything. Together they do.

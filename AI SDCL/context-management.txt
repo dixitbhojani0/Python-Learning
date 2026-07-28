@@ -1,0 +1,25 @@
+1. Context Management — the 7-Slot Prompt System
+Every LLM call in this project assembles exactly 7 slots into one prompt string, measured in tokens before sending. This lives in context_builder.py.
+
+
+┌─────────────────────────────────────────────────────┐
+│ Slot 1: System Prompt          ~200 tokens  (fixed) │
+│ Slot 2: Persona Instruction    ~100 tokens  (fixed) │
+│ Slot 3: Conversation Summary   ~300 tokens  (LLM-compressed old turns) │
+│ Slot 4: Recent Messages        ~400 tokens  (last 5 raw turns) │
+│ Slot 5: RAG Context            ~1500 tokens (top 7 retrieved chunks) │
+│ Slot 6: Tool Outputs           ~500 tokens  (Jira/Slack/GitHub live data) │
+│ Slot 7: User Query             no cap       (NEVER truncated) │
+│                                ─────────────────────│
+│                       Budget:  8000 tokens total    │
+└─────────────────────────────────────────────────────┘
+Token measurement: uses tiktoken — counted exactly, never estimated. Groq's Llama tokenizer differs by only ±3-5 tokens from cl100k_base, well within the safety buffer.
+
+What happens when over budget: The _compress() method cuts in this priority order:
+
+Drop lowest-scoring RAG chunks (they're already sorted by reranker score, so lowest relevance goes first)
+Drop oldest recent messages (keeps minimum 2)
+System, Persona, and the current Query are never cut
+Long conversations (graph.py:227-325): once a session has more than 6 turns, older turns get LLM-compressed into a ≤250-token summary. The last 5 turns are always kept raw so follow-up questions work naturally.
+
+Long-term facts (graph.py:311-324): separately, Qdrant stores extracted project facts from past sessions (semantic memory). These are retrieved per-query and injected before the RAG context.
