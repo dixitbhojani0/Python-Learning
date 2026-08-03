@@ -434,6 +434,7 @@ This project is for educational and demonstration purposes as part of a GenAI as
 
 ## 🙏 Acknowledgements
 
+
 - [LangChain](https://python.langchain.com/) & [LangGraph](https://langchain-ai.github.io/langgraph/) for the orchestration framework
 - [Groq](https://console.groq.com) for free, blazing-fast LLM inference
 - [Qdrant](https://qdrant.tech/) for the local vector database
