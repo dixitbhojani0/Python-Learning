@@ -411,18 +411,17 @@ curl -X POST http://localhost:8000/api/chat \
 - [x] Ingestion script (`scripts/ingest.py`)
 - [x] LangGraph state schema (`SDLCState`)
 - [x] Base agent class + `AgentPayload`
-- [ ] Core agents (CrossSource, Risk, Ticket, PR)
-- [ ] LangGraph orchestrator graph + intent classifier
-- [ ] HITL interrupt/resume logic
-- [ ] MCP connectors (GitHub, Jira, Slack mock)
-- [ ] FastAPI routes (chat, stream, HITL)
-- [ ] Persona adapter (role-based response rewriting)
-- [ ] Context builder (7-slot prompt assembly)
-- [ ] Chainlit chat UI
-- [ ] Streamlit admin panel
+- [x] Core agents (CrossSource, Risk, Ticket, PR)
+- [x] LangGraph orchestrator graph + intent classifier
+- [x] HITL interrupt/resume logic
+- [x] MCP connectors (GitHub, Jira, Slack mock)
+- [x] FastAPI routes (chat, stream, HITL)
+- [x] Persona adapter (role-based response rewriting)
+- [x] Context builder (7-slot prompt assembly)
+- [x] Angular Chat/Admin UI Panel
 - [ ] APScheduler (proactive risk scan)
-- [ ] LangSmith observability integration
-- [ ] End-to-end demo scenarios validated
+- [x] LangSmith observability integration
+- [x] End-to-end demo scenarios validated
 
 ---
 
