@@ -337,7 +337,7 @@ Every LLM prompt lives in `config/prompts.yaml` and is hot-reloaded via watchdog
 
 ---
 
-## ⚙️ Configuration
+## Configuration
 
 All configuration is externalized into 6 YAML files under `config/`:
 
@@ -354,7 +354,7 @@ All configuration is externalized into 6 YAML files under `config/`:
 
 ---
 
-## 🔍 Observability (LangSmith)
+## Observability (LangSmith)
 
 When `LANGCHAIN_TRACING_V2=true` is set in `.env`, every operation is traced in LangSmith:
 
@@ -368,7 +368,7 @@ Open [smith.langchain.com](https://smith.langchain.com) during the demo to show 
 
 ---
 
-## 🧪 Testing
+## Testing
 
 ```bash
 # Run the end-to-end test checklist
@@ -396,7 +396,7 @@ curl -X POST http://localhost:8000/api/chat \
 
 ---
 
-## 📋 Development Roadmap
+## Development Roadmap
 
 - [x] Project skeleton & dependency management
 - [x] Docker Compose (Qdrant + Redis)
@@ -425,13 +425,13 @@ curl -X POST http://localhost:8000/api/chat \
 
 ---
 
-## 📄 License
+## License
 
 This project is for educational and demonstration purposes as part of a GenAI assignment.
 
 ---
 
-## 🙏 Acknowledgements
+## Acknowledgements
 
 
 - [LangChain](https://python.langchain.com/) & [LangGraph](https://langchain-ai.github.io/langgraph/) for the orchestration framework
