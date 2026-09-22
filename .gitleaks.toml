@@ -1,0 +1,22 @@
+# Extends gitleaks' default ruleset — this does not replace or weaken it.
+# The one addition is a narrow allowlist for the deliberately fake password
+# fixtures the ai-platform test suite generates (see
+# ai-platform/backend/tests/integration/conftest.py), which gitleaks'
+# entropy heuristic otherwise flags. Scoped to the exact fixture string, not
+# to test files generally — a real secret accidentally committed to a test
+# file must still be caught.
+[extend]
+useDefault = true
+
+[allowlist]
+regexes = [
+  '''correct-horse-battery-staple''',
+]
+# Vendored/generated directories — never committed (see .gitignore), and
+# won't exist yet at CI-scan time on a fresh checkout anyway; excluded here
+# too so a local `gitleaks detect --no-git` run (dependencies already
+# installed) matches what CI actually sees.
+paths = [
+  '''.*/\.venv/.*''',
+  '''.*/node_modules/.*''',
+]

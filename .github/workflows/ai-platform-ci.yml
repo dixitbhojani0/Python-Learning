@@ -1,0 +1,111 @@
+name: ai-platform CI
+
+# Path-filtered: this is one project in a monorepo (ai-platform/, alongside
+# ai-sdlc-assistant, sdlc-mcp-server, 3D-Avatar-Copilot) — a change to a
+# sibling project must not trigger or block this workflow, and vice versa.
+on:
+  push:
+    branches: [main]
+    paths: ["ai-platform/**", ".github/workflows/ai-platform-ci.yml"]
+  pull_request:
+    paths: ["ai-platform/**", ".github/workflows/ai-platform-ci.yml"]
+
+jobs:
+  secrets-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # gitleaks scans history, not just the working tree
+      - name: Scan for committed secrets
+        uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        # pgvector/pgvector, not plain postgres — Phase 5's `CREATE EXTENSION
+        # vector` needs the extension's files actually present on the server
+        # (see docker-compose.yml's identical comment for local dev).
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: platform
+          POSTGRES_PASSWORD: platform_dev_only
+          POSTGRES_DB: platform
+        ports:
+          - 15432:5432
+        options: >-
+          --health-cmd "pg_isready -U platform"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    defaults:
+      run:
+        working-directory: ai-platform
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install backend dependencies
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install --disable-pip-version-check -r backend/requirements.txt
+
+      - name: Install postgresql-client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Create least-privilege app role (db-init/01-app-role.sql)
+        # docker-entrypoint-initdb.d only runs on first init of a fresh volume
+        # (see docker-compose.yml's comment) — a GitHub Actions service
+        # container's volume mount can't guarantee that ordering against
+        # actions/checkout either, so this applies the same script explicitly,
+        # the same way it was applied manually to an already-running local
+        # container earlier in this project's history.
+        env:
+          PGPASSWORD: platform_dev_only
+        run: psql -h localhost -p 15432 -U platform -d platform -f db-init/01-app-role.sql
+
+      - name: Run database migrations
+        working-directory: ai-platform/backend
+        run: ../.venv/bin/python -m alembic upgrade head
+
+      - name: Run backend test suite (with coverage)
+        # .coveragerc's concurrency=greenlet,thread is required for accurate
+        # numbers here — without it, coverage silently under-reports both
+        # SQLAlchemy-async code and every sync FastAPI handler/dependency
+        # (see .coveragerc's own comment for how that was discovered).
+        run: .venv/bin/python -m pytest -v --cov=backend/app --cov-report=term-missing
+
+      - name: Dependency vulnerability scan
+        run: |
+          .venv/bin/pip install pip-audit
+          .venv/bin/pip-audit -r backend/requirements.txt
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ai-platform/frontend
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+
+      - name: Install frontend dependencies
+        run: npm install
+
+      - name: Run frontend test suite
+        run: npx ng test --watch=false
+
+      - name: Production build
+        run: npx ng build
+
+      - name: Dependency vulnerability scan
+        run: npm audit --audit-level=high
