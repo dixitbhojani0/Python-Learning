@@ -24,7 +24,12 @@ async def _seed_tenant(slug: str, name: str, admin_email: str, admin_password: s
             session.add(tenant)
 
     async with tenant_scoped_session(tenant.id) as session:
-        admin_role = Role(id=uuid.uuid4(), tenant_id=tenant.id, name="admin", permissions=["users:read", "users:write"])
+        admin_role = Role(
+            id=uuid.uuid4(),
+            tenant_id=tenant.id,
+            name="admin",
+            permissions=["users:read", "users:write", "documents:read", "documents:write", "tools:approve"],
+        )
         session.add(admin_role)
         await session.flush()
 

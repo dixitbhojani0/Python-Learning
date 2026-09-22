@@ -21,8 +21,64 @@ suite is re-run before the next step starts, so nothing regresses silently.
 | 11. Tools & bounded-autonomy agents (§15, §16) | Self-registering `ToolRegistry` (same pattern as LLM/embedding) with two safe tools (calculator via an AST-based safe evaluator, never `eval()`; current-time) and one deliberately destructive high-risk tool (`delete_all_documents`); deterministic (regex-based, not a fake "LLM decided") tool-trigger detection; low-risk tools execute inline bounded by a hard 5s timeout, high-risk tools stop the turn and create a `PendingToolApproval` — real pause-and-resume HITL, not a same-request approval. Admin UI approve/reject panel | 184 backend + 67 frontend passed |
 | 12. CI/CD (§26, §27) | `.github/workflows/ai-platform-ci.yml`: three parallel jobs — secrets scan (gitleaks, verified clean locally against the real CLI), backend (Postgres service container, migrations, full pytest suite, `pip-audit`), frontend (`ng test`, `ng build`, `npm audit`). Path-filtered so a change to a sibling monorepo project never triggers or blocks this workflow | 184 backend + 67 frontend passed, both dependency audits clean |
 | 13. Coverage audit — verifying "tested" is actually true | Measured real branch coverage with `pytest-cov`/`ng test --coverage` instead of assuming the test suite's line count implied thoroughness; found and fixed a systematic coverage **under**-reporting bug (below) before trusting any number; closed every genuinely reachable gap the corrected numbers exposed (embedding registry had zero direct tests, a tool-approval failure path, a deleted-user-with-valid-token security edge case, two extraction/calculator branch-targeting mistakes, 5 symmetric Angular admin error handlers) | 198 backend (99% line coverage) + 72 frontend (97.66% statements / 100% lines) passed |
+| 14. Actually running it — first real dev-server walkthrough | First time both dev servers were run together (not `TestClient`/`HttpTestingController` against each other) and every feature driven through the real proxy with a real seeded account. Found and fixed three real gaps none of the 270 automated tests could have caught (below): no CSS existed anywhere, the dev-server API proxy was silently broken end to end, and the seeded demo admin was missing 3 of 5 real permissions | No new automated tests — this phase is what those tests structurally cannot cover; see "why" below |
 
 **Next up:** the platform blueprint's remaining phases are largely enterprise-hardening (SSO/SCIM, schema-per-tenant provisioning) and scale/deployment concerns (§T's managed-cloud topology) — both explicitly gated in the blueprint's own roadmap on "a real tenant/load demanding it," which doesn't exist here, so building them now would be exactly the speculative work §30 warns against. The core product surface (chat, RAG, memory, tools/agents, admin, eval) is feature-complete end to end, has automated CI enforcing it stays that way, and now has a coverage-audited test suite proving that CI gate actually exercises the code it claims to.
+
+### Three real bugs no automated test could have caught — only found by actually running it
+
+270 passing tests (198 backend + 72 frontend) proved every unit and every API contract works in
+isolation. They could not prove the pieces glued together actually work, because none of that seam
+is exercised by `TestClient`/`HttpTestingController` — those talk to an in-process app object or a
+mocked `HttpClient`, never through a real HTTP proxy, a real seeded database, or a real browser
+rendering real CSS. All three gaps surfaced from manually running the app end to end and using it
+like an actual user would, not just from reading the code:
+
+1. **The frontend had no CSS at all.** `styles.css` was still the untouched Angular CLI
+   placeholder (`/* You can add global styles... */`) — every one of the 13 build phases focused
+   on logic and test coverage, and none of them ever wrote a stylesheet. The login page rendered
+   as raw unstyled HTML (serif `<h1>`, borderless inputs). No test could have caught this: Angular
+   component tests render into a headless DOM and assert on `data-testid` content/attributes, never
+   on computed styles or visual layout. Fixed with a plain-CSS design system in `styles.css`
+   (colors, spacing, cards, form/button styling — no new dependency) and layout classes added to
+   all four page templates; the full 72-test suite still passes unchanged, because it never queried
+   anything the new classes touch.
+2. **The dev-server API proxy was completely broken.** `frontend/proxy.conf.json` keyed its rule as
+   `"/api/*"` — correct syntax for the old webpack-dev-server/`http-proxy-middleware` config format,
+   but Angular 22's dev server (`@angular/build:dev-server`) is esbuild+Vite-based and matches proxy
+   paths as literal prefixes, so `"/api/*"` never matches a real request path like
+   `/api/v1/auth/login` (the asterisk isn't treated as a wildcard). Every API call from the browser
+   silently 404'd — before ever reaching the backend, confirmed by the backend's own access log
+   showing zero incoming requests during a failed browser login. The login page's error handling
+   deliberately shows one generic message for every failure mode (§V — avoid leaking which part of
+   tenant/email/password was wrong), which is correct security behavior but also meant the UI gave
+   no hint that the real problem was infrastructure, not credentials. Fixed by changing the proxy
+   key from `"/api/*"` to `"/api"` and restarting the dev server (proxy config is read once at
+   startup, not hot-reloaded); re-verified with a real login call returning a real JWT. This is
+   exactly the class of bug integration tests exist to catch, and exactly why the "run it and use it
+   in a browser before calling it done" step is not optional even after 270 green tests.
+3. **The seeded demo admin account couldn't use two of the five Admin page sections.**
+   `backend/scripts/seed_dev_data.py` created the "admin" role with only
+   `["users:read", "users:write"]` — never `documents:read`/`documents:write`/`tools:approve`. Every
+   backend test for those permission-gated routes builds its own role/permission fixture directly
+   (by design — see Phase 9's "why the admin page loads independently" section) and never touches
+   this script at all, so nothing in the suite could have noticed the *demo* persona itself was
+   incomplete. In practice this meant the exact account this README tells a reader to log in with
+   got a permanent 403 on the Documents section and the Pending Approvals section — the two most
+   interactive parts of the admin page. Found by actually clicking around as that account would.
+   Fixed by granting the seeded admin role the full permission set the backend actually defines
+   (grepped every `require_permission(...)` call site rather than guessing), then updating the
+   already-seeded roles in place (`UPDATE roles SET permissions = ...` via a `tenant_scoped_session`,
+   not a second `seed_dev_data` run, which would have tried to insert duplicate tenants). Re-verified
+   by logging in for a fresh JWT (permissions are baked into the token at login, not re-checked
+   live) and confirming both previously-403 endpoints now return 200.
+
+After fixing all three, every feature was walked end to end through the real proxy with a fresh
+token — not just the ones that broke: protected routes, SSE-streamed chat, RAG ingestion +
+citations, long-term memory (remember → recall), the calculator tool, the full high-risk tool
+**pause → approve → execute** HITL loop, and `Accept-Language: hi` returning real Hindi error text.
+Nothing else was broken. The full 198-test backend suite and the frontend production build were
+both re-confirmed green after all three fixes, and after the direct database edit for #3.
 
 ### Why the first coverage numbers were wrong — coverage.py misses concurrency, not just untested code
 

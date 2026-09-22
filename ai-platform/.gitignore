@@ -11,6 +11,9 @@ frontend/dist/
 frontend/.angular/
 frontend/coverage/
 
+# Local dev-server output (manual `> file.log` redirects, not build artifacts)
+*.log
+
 # Secrets — never committed, see backend/.env.example when it lands in a later step
 .env
 *.env.local

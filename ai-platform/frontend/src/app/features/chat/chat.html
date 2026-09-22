@@ -1,48 +1,50 @@
-<section>
-  <header>
+<div class="page app-shell">
+  <header class="app-header">
     <h1>{{ 'chat.title' | transloco }}</h1>
     <a routerLink="/admin" data-testid="admin-link">{{ 'admin.title' | transloco }}</a>
     <button type="button" (click)="logout()" data-testid="logout-button">{{ 'chat.logout' | transloco }}</button>
   </header>
 
-  <div data-testid="message-list">
-    @if (messages().length === 0) {
-      <p data-testid="empty-state">{{ 'chat.emptyState' | transloco }}</p>
-    }
-    @for (message of messages(); track $index) {
-      <p [attr.data-testid]="'message-' + $index" [attr.data-role]="message.role">
-        <strong>{{ (message.role === 'user' ? 'chat.you' : 'chat.assistant') | transloco }}:</strong>
-        {{ message.content }}
-      </p>
-      @if (message.citationCount) {
-        <p [attr.data-testid]="'citations-' + $index" class="citations">
-          {{ 'chat.sources' | transloco: { count: message.citationCount } }}
+  <section class="card">
+    <div data-testid="message-list" class="message-list">
+      @if (messages().length === 0) {
+        <p data-testid="empty-state" class="empty-state">{{ 'chat.emptyState' | transloco }}</p>
+      }
+      @for (message of messages(); track $index) {
+        <p [attr.data-testid]="'message-' + $index" [attr.data-role]="message.role" class="message">
+          <strong>{{ (message.role === 'user' ? 'chat.you' : 'chat.assistant') | transloco }}:</strong>
+          {{ message.content }}
         </p>
+        @if (message.citationCount) {
+          <p [attr.data-testid]="'citations-' + $index" class="citations">
+            {{ 'chat.sources' | transloco: { count: message.citationCount } }}
+          </p>
+        }
+        @if (message.toolResultText) {
+          <p [attr.data-testid]="'tool-result-' + $index" class="tool-result">{{ message.toolResultText }}</p>
+        }
+        @if (message.approvalRequired) {
+          <p [attr.data-testid]="'approval-required-' + $index" role="status">{{ 'chat.approvalRequired' | transloco }}</p>
+        }
       }
-      @if (message.toolResultText) {
-        <p [attr.data-testid]="'tool-result-' + $index" class="tool-result">{{ message.toolResultText }}</p>
-      }
-      @if (message.approvalRequired) {
-        <p [attr.data-testid]="'approval-required-' + $index" role="status">{{ 'chat.approvalRequired' | transloco }}</p>
-      }
+    </div>
+
+    @if (errorMessage(); as key) {
+      <p role="alert" data-testid="chat-error">{{ key | transloco }}</p>
     }
-  </div>
 
-  @if (errorMessage(); as key) {
-    <p role="alert" data-testid="chat-error">{{ key | transloco }}</p>
-  }
-
-  <form (ngSubmit)="send()">
-    <input
-      name="draft"
-      type="text"
-      [(ngModel)]="draft"
-      [placeholder]="'chat.placeholder' | transloco"
-      [disabled]="sending()"
-      data-testid="chat-input"
-    />
-    <button type="submit" [disabled]="sending()" data-testid="chat-send">
-      {{ (sending() ? 'chat.sending' : 'chat.send') | transloco }}
-    </button>
-  </form>
-</section>
+    <form (ngSubmit)="send()" class="chat-form">
+      <input
+        name="draft"
+        type="text"
+        [(ngModel)]="draft"
+        [placeholder]="'chat.placeholder' | transloco"
+        [disabled]="sending()"
+        data-testid="chat-input"
+      />
+      <button type="submit" [disabled]="sending()" data-testid="chat-send">
+        {{ (sending() ? 'chat.sending' : 'chat.send') | transloco }}
+      </button>
+    </form>
+  </section>
+</div>

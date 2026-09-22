@@ -1,26 +1,28 @@
-<form (ngSubmit)="submit()" data-testid="login-form">
-  <h1>{{ 'login.title' | transloco }}</h1>
+<div class="page">
+  <form (ngSubmit)="submit()" data-testid="login-form" class="page-narrow card">
+    <h1>{{ 'login.title' | transloco }}</h1>
 
-  <label>
-    {{ 'login.tenantSlug' | transloco }}
-    <input name="tenantSlug" type="text" [(ngModel)]="tenantSlug" required data-testid="tenant-slug-input" />
-  </label>
+    @if (errorMessage(); as key) {
+      <p role="alert" data-testid="login-error">{{ key | transloco }}</p>
+    }
 
-  <label>
-    {{ 'login.email' | transloco }}
-    <input name="email" type="email" [(ngModel)]="email" required data-testid="email-input" />
-  </label>
+    <label>
+      {{ 'login.tenantSlug' | transloco }}
+      <input name="tenantSlug" type="text" [(ngModel)]="tenantSlug" required data-testid="tenant-slug-input" />
+    </label>
 
-  <label>
-    {{ 'login.password' | transloco }}
-    <input name="password" type="password" [(ngModel)]="password" required data-testid="password-input" />
-  </label>
+    <label>
+      {{ 'login.email' | transloco }}
+      <input name="email" type="email" [(ngModel)]="email" required data-testid="email-input" />
+    </label>
 
-  <button type="submit" [disabled]="submitting()" data-testid="login-submit">
-    {{ (submitting() ? 'login.submitting' : 'login.submit') | transloco }}
-  </button>
+    <label>
+      {{ 'login.password' | transloco }}
+      <input name="password" type="password" [(ngModel)]="password" required data-testid="password-input" />
+    </label>
 
-  @if (errorMessage(); as key) {
-    <p role="alert" data-testid="login-error">{{ key | transloco }}</p>
-  }
-</form>
+    <button type="submit" [disabled]="submitting()" data-testid="login-submit">
+      {{ (submitting() ? 'login.submitting' : 'login.submit') | transloco }}
+    </button>
+  </form>
+</div>

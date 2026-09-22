@@ -1,25 +1,27 @@
-<section>
-  <h1>{{ 'health.title' | transloco }}</h1>
+<div class="page page-narrow">
+  <section class="card">
+    <h1>{{ 'health.title' | transloco }}</h1>
 
-  <label>
-    {{ 'health.localeLabel' | transloco }}
-    <select (change)="setLocale($any($event.target).value)" [attr.data-testid]="'locale-select'">
-      @for (lang of availableLangs; track lang) {
-        <option [value]="lang">{{ lang }}</option>
+    <label>
+      {{ 'health.localeLabel' | transloco }}
+      <select (change)="setLocale($any($event.target).value)" [attr.data-testid]="'locale-select'">
+        @for (lang of availableLangs; track lang) {
+          <option [value]="lang">{{ lang }}</option>
+        }
+      </select>
+    </label>
+
+    @switch (status()) {
+      @case ('loading') {
+        <p data-testid="health-message">{{ 'health.checking' | transloco }}</p>
       }
-    </select>
-  </label>
-
-  @switch (status()) {
-    @case ('loading') {
-      <p data-testid="health-message">{{ 'health.checking' | transloco }}</p>
+      @case ('ok') {
+        <p data-testid="health-message">{{ 'health.ok' | transloco }}</p>
+        <p data-testid="backend-message">{{ backendMessage() }}</p>
+      }
+      @case ('error') {
+        <p data-testid="health-message" role="alert">{{ 'health.error' | transloco }}</p>
+      }
     }
-    @case ('ok') {
-      <p data-testid="health-message">{{ 'health.ok' | transloco }}</p>
-      <p data-testid="backend-message">{{ backendMessage() }}</p>
-    }
-    @case ('error') {
-      <p data-testid="health-message" role="alert">{{ 'health.error' | transloco }}</p>
-    }
-  }
-</section>
+  </section>
+</div>

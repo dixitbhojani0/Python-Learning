@@ -1,8 +1,10 @@
-<section>
-  <h1>{{ 'admin.title' | transloco }}</h1>
-  <a routerLink="/chat" data-testid="back-to-chat-link">{{ 'admin.backToChat' | transloco }}</a>
+<div class="page app-shell">
+  <header class="app-header">
+    <h1>{{ 'admin.title' | transloco }}</h1>
+    <a routerLink="/chat" data-testid="back-to-chat-link">{{ 'admin.backToChat' | transloco }}</a>
+  </header>
 
-  <section data-testid="tenant-section">
+  <section data-testid="tenant-section" class="card">
     <h2>{{ 'admin.tenant' | transloco }}</h2>
     @if (tenantError(); as key) {
       <p role="alert" data-testid="tenant-error">{{ key | transloco }}</p>
@@ -11,7 +13,7 @@
     }
   </section>
 
-  <section data-testid="providers-section">
+  <section data-testid="providers-section" class="card">
     <h2>{{ 'admin.providers' | transloco }}</h2>
     @if (providersError(); as key) {
       <p role="alert" data-testid="providers-error">{{ key | transloco }}</p>
@@ -26,7 +28,7 @@
     }
   </section>
 
-  <section data-testid="telemetry-section">
+  <section data-testid="telemetry-section" class="card">
     <h2>{{ 'admin.telemetry' | transloco }}</h2>
     @if (telemetryError(); as key) {
       <p role="alert" data-testid="telemetry-error">{{ key | transloco }}</p>
@@ -41,18 +43,18 @@
     }
   </section>
 
-  <section data-testid="approvals-section">
+  <section data-testid="approvals-section" class="card">
     <h2>{{ 'admin.pendingApprovals' | transloco }}</h2>
     @if (approvalsError(); as key) {
       <p role="alert" data-testid="approvals-error">{{ key | transloco }}</p>
     }
     @if (pendingApprovals().length === 0 && !approvalsError()) {
-      <p data-testid="approvals-empty">{{ 'admin.noPendingApprovals' | transloco }}</p>
+      <p data-testid="approvals-empty" class="empty-state">{{ 'admin.noPendingApprovals' | transloco }}</p>
     }
     <ul>
       @for (approval of pendingApprovals(); track approval.id) {
-        <li [attr.data-testid]="'approval-' + $index">
-          {{ approval.tool_name }} ({{ approval.tool_args | json }})
+        <li [attr.data-testid]="'approval-' + $index" class="list-item">
+          <span>{{ approval.tool_name }} ({{ approval.tool_args | json }})</span>
           <button type="button" (click)="approveToolCall(approval.id)" [attr.data-testid]="'approve-' + $index">
             {{ 'admin.approve' | transloco }}
           </button>
@@ -64,18 +66,18 @@
     </ul>
   </section>
 
-  <section data-testid="documents-section">
+  <section data-testid="documents-section" class="card">
     <h2>{{ 'admin.documents' | transloco }}</h2>
     @if (documentsError(); as key) {
       <p role="alert" data-testid="documents-error">{{ key | transloco }}</p>
     }
     @if (documents().length === 0 && !documentsError()) {
-      <p data-testid="documents-empty">{{ 'admin.noDocuments' | transloco }}</p>
+      <p data-testid="documents-empty" class="empty-state">{{ 'admin.noDocuments' | transloco }}</p>
     }
     <ul>
       @for (doc of documents(); track doc.id) {
-        <li [attr.data-testid]="'document-' + $index">
-          {{ doc.title }} ({{ 'admin.chunkCount' | transloco: { count: doc.chunk_count } }})
+        <li [attr.data-testid]="'document-' + $index" class="list-item">
+          <span>{{ doc.title }} ({{ 'admin.chunkCount' | transloco: { count: doc.chunk_count } }})</span>
           <button type="button" (click)="deleteDocument(doc.id)" [attr.data-testid]="'delete-document-' + $index">
             {{ 'admin.delete' | transloco }}
           </button>
@@ -106,4 +108,4 @@
       }
     </form>
   </section>
-</section>
+</div>
