@@ -1,10 +1,9 @@
 import { TestBed } from '@angular/core/testing';
-import { Router, provideRouter } from '@angular/router';
+import { provideRouter } from '@angular/router';
 import { vi } from 'vitest';
 import { TranslocoTestingModule } from '@jsverse/transloco';
 import { ChatComponent } from './chat';
 import { ChatEvent, ChatService } from '../../core/chat/chat.service';
-import { AuthService } from '../../core/auth/auth.service';
 
 const LANGS = {
   en: {
@@ -23,18 +22,16 @@ async function* genFrom(events: ChatEvent[]): AsyncGenerator<ChatEvent> {
 
 describe('ChatComponent', () => {
   let chatStub: { sendMessage: ReturnType<typeof vi.fn> };
-  let authStub: { logout: ReturnType<typeof vi.fn> };
 
   async function setup() {
     chatStub = { sendMessage: vi.fn() };
-    authStub = { logout: vi.fn() };
 
     await TestBed.configureTestingModule({
       imports: [
         ChatComponent,
         TranslocoTestingModule.forRoot({ langs: LANGS, translocoConfig: { availableLangs: ['en'], defaultLang: 'en' } }),
       ],
-      providers: [provideRouter([]), { provide: ChatService, useValue: chatStub }, { provide: AuthService, useValue: authStub }],
+      providers: [provideRouter([]), { provide: ChatService, useValue: chatStub }],
     }).compileComponents();
 
     const fixture = TestBed.createComponent(ChatComponent);
@@ -130,6 +127,48 @@ describe('ChatComponent', () => {
     expect(el.querySelector('[data-testid="message-1"]')!.textContent?.trim()).toBe('Assistant:'); // no token content arrived
   });
 
+  it('shows a typing indicator on the empty assistant placeholder before the first token arrives', async () => {
+    const fixture = await setup();
+    let resolveStream!: () => void;
+    chatStub.sendMessage.mockReturnValue(
+      (async function* () {
+        await new Promise<void>((resolve) => (resolveStream = resolve));
+        yield { type: 'done', conversation_id: 'c1' } as ChatEvent;
+      })()
+    );
+
+    const sendPromise = setDraftAndSend(fixture, 'hi there');
+    await Promise.resolve(); // let the async generator start and the placeholder render
+    fixture.detectChanges();
+
+    expect((fixture.nativeElement as HTMLElement).querySelector('.typing-indicator')).toBeTruthy();
+
+    resolveStream();
+    await sendPromise;
+  });
+
+  it('replaces the typing indicator with real content once a token arrives', async () => {
+    const fixture = await setup();
+    chatStub.sendMessage.mockReturnValue(genFrom([{ type: 'token', text: 'hi' }, { type: 'done', conversation_id: 'c1' }]));
+
+    await setDraftAndSend(fixture, 'hello');
+    fixture.detectChanges();
+
+    expect((fixture.nativeElement as HTMLElement).querySelector('.typing-indicator')).toBeNull();
+  });
+
+  it('renders a timestamp for every message', async () => {
+    const fixture = await setup();
+    chatStub.sendMessage.mockReturnValue(genFrom([{ type: 'token', text: 'hi' }, { type: 'done', conversation_id: 'c1' }]));
+
+    await setDraftAndSend(fixture, 'hello');
+    fixture.detectChanges();
+
+    const times = (fixture.nativeElement as HTMLElement).querySelectorAll('.message-time');
+    expect(times.length).toBe(2); // user message + assistant reply
+    expect(times[0].textContent?.trim()).not.toBe('');
+  });
+
   it('passes the conversation_id from a prior "done" event into the next send() call', async () => {
     const fixture = await setup();
     chatStub.sendMessage.mockReturnValue(genFrom([{ type: 'done', conversation_id: 'conv-42' }]));
@@ -167,18 +206,5 @@ describe('ChatComponent', () => {
 
     expect(chatStub.sendMessage).not.toHaveBeenCalled();
     expect((fixture.nativeElement as HTMLElement).querySelector('[data-testid="empty-state"]')).toBeTruthy();
-  });
-
-  // ── Side effects ────────────────────────────────────────────────────────
-
-  it('logout() clears the session and navigates to /login', async () => {
-    const fixture = await setup();
-    const router = TestBed.inject(Router);
-    const navigateSpy = vi.spyOn(router, 'navigateByUrl');
-
-    (fixture.componentInstance as unknown as { logout: () => void }).logout();
-
-    expect(authStub.logout).toHaveBeenCalled();
-    expect(navigateSpy).toHaveBeenCalledWith('/login');
   });
 });

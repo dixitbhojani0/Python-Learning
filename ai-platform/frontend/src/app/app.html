@@ -1,1 +1,22 @@
-<router-outlet />
+@if (auth.isAuthenticated()) {
+  <div class="app-shell-layout">
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span>{{ 'app.brandName' | transloco }}</span>
+      </div>
+      <nav class="sidebar-nav">
+        <a routerLink="/chat" routerLinkActive="active" data-testid="nav-chat">{{ 'chat.title' | transloco }}</a>
+        <a routerLink="/admin" routerLinkActive="active" data-testid="nav-admin">{{ 'admin.title' | transloco }}</a>
+      </nav>
+      <button type="button" class="sidebar-signout" (click)="logout()" data-testid="nav-logout">
+        {{ 'chat.logout' | transloco }}
+      </button>
+    </aside>
+    <main class="app-main">
+      <router-outlet />
+    </main>
+  </div>
+} @else {
+  <router-outlet />
+}

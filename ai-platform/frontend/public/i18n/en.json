@@ -1,4 +1,7 @@
 {
+  "app": {
+    "brandName": "AI Platform"
+  },
   "health": {
     "title": "Platform status",
     "checking": "Checking service health…",

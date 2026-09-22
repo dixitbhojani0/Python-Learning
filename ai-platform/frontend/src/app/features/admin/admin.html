@@ -1,7 +1,6 @@
-<div class="page app-shell">
+<div class="app-shell">
   <header class="app-header">
     <h1>{{ 'admin.title' | transloco }}</h1>
-    <a routerLink="/chat" data-testid="back-to-chat-link">{{ 'admin.backToChat' | transloco }}</a>
   </header>
 
   <section data-testid="tenant-section" class="card">
@@ -54,7 +53,7 @@
     <ul>
       @for (approval of pendingApprovals(); track approval.id) {
         <li [attr.data-testid]="'approval-' + $index" class="list-item">
-          <span>{{ approval.tool_name }} ({{ approval.tool_args | json }})</span>
+          <span><span class="badge badge-warning">{{ approval.tool_name }}</span> {{ approval.tool_args | json }}</span>
           <button type="button" (click)="approveToolCall(approval.id)" [attr.data-testid]="'approve-' + $index">
             {{ 'admin.approve' | transloco }}
           </button>
@@ -77,7 +76,7 @@
     <ul>
       @for (doc of documents(); track doc.id) {
         <li [attr.data-testid]="'document-' + $index" class="list-item">
-          <span>{{ doc.title }} ({{ 'admin.chunkCount' | transloco: { count: doc.chunk_count } }})</span>
+          <span>{{ doc.title }} <span class="badge badge-neutral">{{ 'admin.chunkCount' | transloco: { count: doc.chunk_count } }}</span></span>
           <button type="button" (click)="deleteDocument(doc.id)" [attr.data-testid]="'delete-document-' + $index">
             {{ 'admin.delete' | transloco }}
           </button>
@@ -157,7 +156,7 @@
         <p role="alert" data-testid="invite-error">{{ key | transloco }}</p>
       }
       @if (lastInvitedUser(); as invited) {
-        <p role="status" data-testid="invite-success">
+        <p role="status" class="success-banner" data-testid="invite-success">
           {{ 'admin.invitedNotice' | transloco: { email: invited.email, password: invited.password } }}
         </p>
       }
@@ -172,7 +171,12 @@
     <ul>
       @for (r of roles(); track r.id) {
         <li [attr.data-testid]="'role-' + $index" class="list-item">
-          <span>{{ r.name }} ({{ r.permissions.join(', ') }})</span>
+          <span>{{ r.name }}</span>
+          <span class="badge-row">
+            @for (perm of r.permissions; track perm) {
+              <span class="badge badge-neutral">{{ perm }}</span>
+            }
+          </span>
         </li>
       }
     </ul>

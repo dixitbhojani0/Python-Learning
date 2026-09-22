@@ -1,7 +1,6 @@
 import { JsonPipe } from '@angular/common';
 import { Component, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { RouterLink } from '@angular/router';
 import { TranslocoPipe } from '@jsverse/transloco';
 import {
   AdminService,
@@ -23,7 +22,7 @@ const KNOWN_PERMISSIONS = ['users:read', 'users:write', 'documents:read', 'docum
 
 @Component({
   selector: 'app-admin',
-  imports: [FormsModule, TranslocoPipe, RouterLink, JsonPipe],
+  imports: [FormsModule, TranslocoPipe, JsonPipe],
   templateUrl: './admin.html',
 })
 export class AdminComponent {

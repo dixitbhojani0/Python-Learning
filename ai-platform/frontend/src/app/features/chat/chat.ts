@@ -1,8 +1,6 @@
 import { Component, ElementRef, effect, inject, signal, viewChild } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { Router, RouterLink } from '@angular/router';
 import { TranslocoPipe } from '@jsverse/transloco';
-import { AuthService } from '../../core/auth/auth.service';
 import { ChatService } from '../../core/chat/chat.service';
 
 interface ChatMessage {
@@ -18,13 +16,11 @@ const timeFormatter = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minu
 
 @Component({
   selector: 'app-chat',
-  imports: [FormsModule, TranslocoPipe, RouterLink],
+  imports: [FormsModule, TranslocoPipe],
   templateUrl: './chat.html',
 })
 export class ChatComponent {
   private readonly chatService = inject(ChatService);
-  private readonly auth = inject(AuthService);
-  private readonly router = inject(Router);
 
   protected draft = '';
   protected readonly messages = signal<ChatMessage[]>([]);
@@ -135,10 +131,5 @@ export class ChatComponent {
       next[next.length - 1] = { ...last, approvalRequired: true };
       return next;
     });
-  }
-
-  protected logout(): void {
-    this.auth.logout();
-    this.router.navigateByUrl('/login');
   }
 }
