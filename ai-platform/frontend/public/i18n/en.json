@@ -1,0 +1,62 @@
+{
+  "health": {
+    "title": "Platform status",
+    "checking": "Checking service health…",
+    "ok": "Everything is healthy.",
+    "error": "Could not reach the platform right now. Please try again shortly.",
+    "localeLabel": "Language"
+  },
+  "login": {
+    "title": "Sign in",
+    "tenantSlug": "Workspace",
+    "email": "Email",
+    "password": "Password",
+    "submit": "Sign in",
+    "submitting": "Signing in…",
+    "error": "Could not sign in. Check your workspace, email, and password."
+  },
+  "chat": {
+    "title": "Chat",
+    "placeholder": "Message the assistant…",
+    "send": "Send",
+    "sending": "Sending…",
+    "emptyState": "Send a message to start the conversation.",
+    "you": "You",
+    "assistant": "Assistant",
+    "error": "The assistant could not respond right now. Please try again.",
+    "logout": "Sign out",
+    "sources": "Sources: {{count}}",
+    "approvalRequired": "This action requires approval. An administrator can review it in the admin panel."
+  },
+  "admin": {
+    "title": "Admin",
+    "tenant": "Workspace",
+    "providers": "AI providers",
+    "documents": "Knowledge base",
+    "llmProvider": "Chat model",
+    "embeddingProvider": "Embedding model",
+    "noDocuments": "No documents ingested yet.",
+    "chunkCount": "{{count}} chunks",
+    "delete": "Delete",
+    "ingestTitle": "Add a document",
+    "documentTitle": "Title",
+    "documentContent": "Content",
+    "ingest": "Ingest",
+    "ingesting": "Ingesting…",
+    "ingestFailed": "Could not ingest this document. Please try again.",
+    "deleteFailed": "Could not delete this document. Please try again.",
+    "accessDenied": "You don't have permission to view this section.",
+    "backToChat": "Back to chat",
+    "telemetry": "Usage",
+    "totalChatTurns": "Chat turns",
+    "ragUsageRate": "RAG usage rate",
+    "memoryUsageRate": "Memory usage rate",
+    "avgLatency": "Avg. latency (ms)",
+    "avgResponseLength": "Avg. response length (words)",
+    "pendingApprovals": "Pending tool approvals",
+    "noPendingApprovals": "Nothing is waiting for approval.",
+    "approve": "Approve",
+    "reject": "Reject",
+    "approvalActionFailed": "Could not complete that action. Please try again."
+  }
+}

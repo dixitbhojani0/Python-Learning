@@ -1,0 +1,17 @@
+{
+  "health.ok": "Service is healthy.",
+  "health.degraded": "Service is running with degraded capabilities: {reason}",
+  "config.invalid": "Configuration is invalid at layer '{layer}': {detail}",
+  "llm.provider_unknown": "Unknown LLM provider '{name}'. Registered providers: {available}.",
+  "llm.generation_failed": "The assistant could not generate a response right now. Please try again shortly.",
+  "auth.unauthorized": "Authentication required. Please sign in.",
+  "auth.forbidden": "You do not have the '{permission}' permission needed for this action.",
+  "auth.invalid_credentials": "Incorrect email or password.",
+  "auth.tenant_not_found": "No workspace found for '{slug}'.",
+  "chat.conversation_not_found": "Conversation not found.",
+  "memory.item_not_found": "No remembered item found for that key.",
+  "admin.document_not_found": "Document not found.",
+  "tools.approval_required_message": "This action requires approval before it can run. An administrator can approve or reject it from the admin panel.",
+  "tools.approval_not_found": "Pending approval not found.",
+  "tools.approval_already_resolved": "This approval has already been resolved."
+}

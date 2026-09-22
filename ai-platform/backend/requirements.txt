@@ -1,0 +1,31 @@
+# fastapi bumped 0.118.0 -> 0.141.1 and pyjwt 2.10.1 -> 2.13.0 (Phase 12 CI
+# hardening): pip-audit found real, currently-exploitable CVEs in the
+# starlette version fastapi 0.118.0 pulled in transitively, and in pyjwt
+# itself — both are network-exposed (starlette is FastAPI's ASGI core;
+# pyjwt is this platform's auth token library). Full suite re-verified green
+# after the bump, not just version-bumped and hoped.
+fastapi==0.141.1
+uvicorn[standard]==0.37.0
+pydantic==2.11.7
+pydantic-settings==2.7.1
+httpx==0.28.1
+
+# persistence / tenancy (Phase 2)
+sqlalchemy[asyncio]==2.0.43
+asyncpg==0.30.0
+alembic==1.14.0
+pyjwt==2.13.0
+bcrypt==4.2.1
+
+# RAG (Phase 5) — pgvector's SQLAlchemy type + comparator helpers only,
+# no ML/embedding library — embeddings come from the same httpx-based
+# adapter pattern as the LLM providers (§M), not a local model.
+pgvector==0.3.6
+
+# test-only — also bumped in the same pip-audit pass (dev-only, lower
+# severity than the runtime deps above, but fixed anyway since the upgrade
+# path was clean: full suite re-verified green, no config changes needed
+# despite pytest-asyncio's 0.x -> 1.x major version jump).
+pytest==9.0.3
+pytest-asyncio==1.4.0
+pytest-cov==7.1.0

@@ -1,0 +1,15 @@
+[tool.pytest.ini_options]
+# rootdir is this file's directory (ai-platform/) — "backend" is a top-level
+# importable package from here, matching every "from backend.app...." import
+# in the source (same convention already used by the sibling ai-sdlc-assistant
+# project, whose imports are "from backend.core.settings import settings").
+pythonpath = ["."]
+testpaths = ["backend/tests"]
+asyncio_mode = "auto"
+# One event loop for the whole test session, matching the single long-lived
+# asyncpg connection pool (backend/app/db/session.py's module-level `engine`)
+# — the same relationship a real running app has (one process, one loop,
+# one pool). A function-scoped loop (pytest-asyncio's default) tears down
+# and recreates the loop between tests while the pool's connections survive,
+# which breaks asyncpg connections bound to the now-closed loop.
+asyncio_default_fixture_loop_scope = "session"

@@ -1,0 +1,17 @@
+{
+  "health.ok": "सेवा सही से कार्य कर रही है।",
+  "health.degraded": "सेवा सीमित क्षमता के साथ चल रही है: {reason}",
+  "config.invalid": "लेयर '{layer}' पर कॉन्फ़िगरेशन अमान्य है: {detail}",
+  "llm.provider_unknown": "अज्ञात LLM प्रदाता '{name}'। पंजीकृत प्रदाता: {available}।",
+  "llm.generation_failed": "सहायक अभी प्रतिक्रिया नहीं बना सका। कृपया थोड़ी देर में पुनः प्रयास करें।",
+  "auth.unauthorized": "प्रमाणीकरण आवश्यक है। कृपया साइन इन करें।",
+  "auth.forbidden": "इस कार्रवाई के लिए आवश्यक '{permission}' अनुमति आपके पास नहीं है।",
+  "auth.invalid_credentials": "गलत ईमेल या पासवर्ड।",
+  "auth.tenant_not_found": "'{slug}' के लिए कोई वर्कस्पेस नहीं मिला।",
+  "chat.conversation_not_found": "वार्तालाप नहीं मिला।",
+  "memory.item_not_found": "उस कुंजी के लिए कोई संग्रहीत आइटम नहीं मिला।",
+  "admin.document_not_found": "दस्तावेज़ नहीं मिला।",
+  "tools.approval_required_message": "इस कार्रवाई को चलाने से पहले स्वीकृति आवश्यक है। एक व्यवस्थापक इसे एडमिन पैनल से स्वीकृत या अस्वीकृत कर सकता है।",
+  "tools.approval_not_found": "लंबित स्वीकृति नहीं मिली।",
+  "tools.approval_already_resolved": "यह स्वीकृति पहले ही हल चुकी है।"
+}

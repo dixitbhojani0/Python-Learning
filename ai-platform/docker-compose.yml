@@ -1,0 +1,25 @@
+services:
+  postgres:
+    # pgvector/pgvector, not plain postgres — Phase 5's `CREATE EXTENSION
+    # vector` needs the extension's .control/.so files actually present on
+    # the server; the vanilla postgres image doesn't ship them.
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: platform
+      POSTGRES_PASSWORD: platform_dev_only
+      POSTGRES_DB: platform
+    ports:
+      # 55432 fell inside a Windows/Hyper-V dynamic port-exclusion range that
+      # shifts after a Docker Desktop restart — 15432 is the stable choice.
+      - "15432:5432"
+    volumes:
+      - platform_pg_data:/var/lib/postgresql/data
+      - ./db-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U platform"]
+      interval: 2s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  platform_pg_data:

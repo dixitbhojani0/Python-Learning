@@ -1,0 +1,15 @@
+[run]
+# Both settings are load-bearing, not defaults left in by habit:
+#   greenlet — SQLAlchemy's async dialects bridge sync/async execution via
+#              greenlet_spawn(); without this, coverage.py's tracer misses
+#              code that runs inside that bridge — i.e. almost every DB-
+#              touching line in this codebase silently under-reports.
+#   thread   — FastAPI dispatches plain `def` (non-async) route handlers and
+#              dependencies to a worker thread via Starlette's
+#              run_in_threadpool; coverage.py only traces the main thread by
+#              default, so sync code (e.g. api/deps.py's auth checks,
+#              main.py's /health) was reporting as low as 57-62% covered
+#              despite being exercised by 100+ passing tests.
+# Discovered by comparing measured coverage against known-exercised code
+# paths (§ ai-platform/README.md's testing section) — not assumed correct.
+concurrency = greenlet, thread
