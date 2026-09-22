@@ -57,6 +57,28 @@
     "noPendingApprovals": "कुछ भी स्वीकृति की प्रतीक्षा में नहीं है।",
     "approve": "स्वीकृत करें",
     "reject": "अस्वीकृत करें",
-    "approvalActionFailed": "वह कार्रवाई पूरी नहीं हो सकी। कृपया पुनः प्रयास करें।"
+    "approvalActionFailed": "वह कार्रवाई पूरी नहीं हो सकी। कृपया पुनः प्रयास करें।",
+    "users": "टीम के सदस्य",
+    "email": "ईमेल",
+    "role": "भूमिका",
+    "inviteEmailPlaceholder": "person@company.com",
+    "invite": "आमंत्रित करें",
+    "inviting": "आमंत्रित किया जा रहा है…",
+    "inviteFailed": "इस व्यक्ति को आमंत्रित नहीं किया जा सका। कृपया पुनः प्रयास करें।",
+    "roleChangeFailed": "इस व्यक्ति की भूमिका बदली नहीं जा सकी। कृपया पुनः प्रयास करें।",
+    "invitedNotice": "{{email}} को आमंत्रित किया गया। यह अस्थायी पासवर्ड उनके साथ साझा करें — यह दोबारा नहीं दिखाया जाएगा: {{password}}",
+    "roles": "भूमिकाएं",
+    "newRoleNamePlaceholder": "भूमिका का नाम",
+    "permissions": "अनुमतियां",
+    "createRole": "भूमिका बनाएं",
+    "creatingRole": "बनाई जा रही है…",
+    "createRoleFailed": "यह भूमिका नहीं बनाई जा सकी। कृपया पुनः प्रयास करें।",
+    "permissionLabels": {
+      "users:read": "टीम के सदस्य देखें",
+      "users:write": "टीम के सदस्य और भूमिकाएं प्रबंधित करें",
+      "documents:read": "नॉलेज आधार देखें",
+      "documents:write": "नॉलेज आधार प्रबंधित करें",
+      "tools:approve": "टूल कार्रवाइयां स्वीकृत करें"
+    }
   }
 }

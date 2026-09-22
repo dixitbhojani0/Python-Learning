@@ -108,4 +108,104 @@
       }
     </form>
   </section>
+
+  <section data-testid="users-section" class="card">
+    <h2>{{ 'admin.users' | transloco }}</h2>
+    @if (usersError(); as key) {
+      <p role="alert" data-testid="users-error">{{ key | transloco }}</p>
+    }
+    <ul>
+      @for (u of users(); track u.id) {
+        <li [attr.data-testid]="'user-' + $index" class="list-item">
+          <span>{{ u.email }}</span>
+          <select
+            [ngModel]="u.role_id"
+            (ngModelChange)="changeUserRole(u.id, $event)"
+            [name]="'user-role-' + $index"
+            [attr.data-testid]="'user-role-select-' + $index"
+          >
+            @for (r of roles(); track r.id) {
+              <option [value]="r.id">{{ r.name }}</option>
+            }
+          </select>
+        </li>
+      }
+    </ul>
+
+    <form (ngSubmit)="inviteUser()">
+      <h3>{{ 'admin.invite' | transloco }}</h3>
+      <input
+        name="inviteEmail"
+        type="email"
+        [(ngModel)]="inviteEmail"
+        [placeholder]="'admin.inviteEmailPlaceholder' | transloco"
+        data-testid="invite-email-input"
+      />
+      <label>
+        {{ 'admin.role' | transloco }}
+        <select name="inviteRole" [(ngModel)]="inviteRoleId" data-testid="invite-role-select">
+          <option value="" disabled>{{ 'admin.role' | transloco }}</option>
+          @for (r of roles(); track r.id) {
+            <option [value]="r.id">{{ r.name }}</option>
+          }
+        </select>
+      </label>
+      <button type="submit" [disabled]="inviting()" data-testid="invite-submit">
+        {{ (inviting() ? 'admin.inviting' : 'admin.invite') | transloco }}
+      </button>
+      @if (inviteError(); as key) {
+        <p role="alert" data-testid="invite-error">{{ key | transloco }}</p>
+      }
+      @if (lastInvitedUser(); as invited) {
+        <p role="status" data-testid="invite-success">
+          {{ 'admin.invitedNotice' | transloco: { email: invited.email, password: invited.password } }}
+        </p>
+      }
+    </form>
+  </section>
+
+  <section data-testid="roles-section" class="card">
+    <h2>{{ 'admin.roles' | transloco }}</h2>
+    @if (rolesError(); as key) {
+      <p role="alert" data-testid="roles-error">{{ key | transloco }}</p>
+    }
+    <ul>
+      @for (r of roles(); track r.id) {
+        <li [attr.data-testid]="'role-' + $index" class="list-item">
+          <span>{{ r.name }} ({{ r.permissions.join(', ') }})</span>
+        </li>
+      }
+    </ul>
+
+    <form (ngSubmit)="createRole()">
+      <h3>{{ 'admin.createRole' | transloco }}</h3>
+      <input
+        name="newRoleName"
+        type="text"
+        [(ngModel)]="newRoleName"
+        [placeholder]="'admin.newRoleNamePlaceholder' | transloco"
+        data-testid="new-role-name-input"
+      />
+      <fieldset>
+        <legend>{{ 'admin.permissions' | transloco }}</legend>
+        @for (perm of knownPermissions; track perm) {
+          <label class="checkbox-label">
+            <input
+              type="checkbox"
+              [checked]="newRolePermissions().has(perm)"
+              (change)="togglePermission(perm)"
+              [attr.data-testid]="'permission-checkbox-' + perm"
+            />
+            {{ 'admin.permissionLabels.' + perm | transloco }}
+          </label>
+        }
+      </fieldset>
+      <button type="submit" [disabled]="creatingRole()" data-testid="create-role-submit">
+        {{ (creatingRole() ? 'admin.creatingRole' : 'admin.createRole') | transloco }}
+      </button>
+      @if (createRoleError(); as key) {
+        <p role="alert" data-testid="create-role-error">{{ key | transloco }}</p>
+      }
+    </form>
+  </section>
 </div>

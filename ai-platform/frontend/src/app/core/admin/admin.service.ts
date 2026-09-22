@@ -38,6 +38,27 @@ export interface PendingApproval {
   created_at: string;
 }
 
+export interface Role {
+  id: string;
+  name: string;
+  permissions: string[];
+}
+
+export interface ManagedUser {
+  id: string;
+  email: string;
+  role_id: string;
+  role_name: string;
+  created_at: string;
+}
+
+export interface InvitedUser {
+  id: string;
+  email: string;
+  role_id: string;
+  temporary_password: string;
+}
+
 @Injectable({ providedIn: 'root' })
 export class AdminService {
   private readonly http = inject(HttpClient);
@@ -78,5 +99,25 @@ export class AdminService {
 
   rejectToolCall(id: string) {
     return firstValueFrom(this.http.post<{ status: string }>(`/api/v1/admin/tool-approvals/${id}/reject`, {}));
+  }
+
+  listRoles() {
+    return firstValueFrom(this.http.get<Role[]>('/api/v1/admin/roles'));
+  }
+
+  createRole(name: string, permissions: string[]) {
+    return firstValueFrom(this.http.post<Role>('/api/v1/admin/roles', { name, permissions }));
+  }
+
+  listUsers() {
+    return firstValueFrom(this.http.get<ManagedUser[]>('/api/v1/admin/users'));
+  }
+
+  inviteUser(email: string, roleId: string) {
+    return firstValueFrom(this.http.post<InvitedUser>('/api/v1/admin/users', { email, role_id: roleId }));
+  }
+
+  updateUserRole(userId: string, roleId: string) {
+    return firstValueFrom(this.http.patch<ManagedUser>(`/api/v1/admin/users/${userId}/role`, { role_id: roleId }));
   }
 }

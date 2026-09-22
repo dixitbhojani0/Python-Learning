@@ -11,22 +11,32 @@
         <p data-testid="empty-state" class="empty-state">{{ 'chat.emptyState' | transloco }}</p>
       }
       @for (message of messages(); track $index) {
-        <p [attr.data-testid]="'message-' + $index" [attr.data-role]="message.role" class="message">
-          <strong>{{ (message.role === 'user' ? 'chat.you' : 'chat.assistant') | transloco }}:</strong>
-          {{ message.content }}
-        </p>
-        @if (message.citationCount) {
-          <p [attr.data-testid]="'citations-' + $index" class="citations">
-            {{ 'chat.sources' | transloco: { count: message.citationCount } }}
-          </p>
-        }
-        @if (message.toolResultText) {
-          <p [attr.data-testid]="'tool-result-' + $index" class="tool-result">{{ message.toolResultText }}</p>
-        }
-        @if (message.approvalRequired) {
-          <p [attr.data-testid]="'approval-required-' + $index" role="status">{{ 'chat.approvalRequired' | transloco }}</p>
-        }
+        <div class="message-row" [attr.data-role]="message.role">
+          <span class="avatar" aria-hidden="true"></span>
+          <div class="bubble">
+            <p [attr.data-testid]="'message-' + $index" [attr.data-role]="message.role" class="message">
+              <strong>{{ (message.role === 'user' ? 'chat.you' : 'chat.assistant') | transloco }}:</strong>
+              {{ message.content }}
+            </p>
+            @if (isTypingPlaceholder($index)) {
+              <p class="typing-indicator" aria-hidden="true"><span></span><span></span><span></span></p>
+            }
+            @if (message.citationCount) {
+              <p [attr.data-testid]="'citations-' + $index" class="citations">
+                {{ 'chat.sources' | transloco: { count: message.citationCount } }}
+              </p>
+            }
+            @if (message.toolResultText) {
+              <p [attr.data-testid]="'tool-result-' + $index" class="tool-result">{{ message.toolResultText }}</p>
+            }
+            @if (message.approvalRequired) {
+              <p [attr.data-testid]="'approval-required-' + $index" role="status">{{ 'chat.approvalRequired' | transloco }}</p>
+            }
+            <span class="message-time">{{ formatTime(message.timestamp) }}</span>
+          </div>
+        </div>
       }
+      <div #scrollAnchor></div>
     </div>
 
     @if (errorMessage(); as key) {

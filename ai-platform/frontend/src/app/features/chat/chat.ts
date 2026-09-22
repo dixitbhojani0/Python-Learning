@@ -1,4 +1,4 @@
-import { Component, inject, signal } from '@angular/core';
+import { Component, ElementRef, effect, inject, signal, viewChild } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
 import { TranslocoPipe } from '@jsverse/transloco';
@@ -8,10 +8,13 @@ import { ChatService } from '../../core/chat/chat.service';
 interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
+  timestamp: number;
   citationCount?: number;
   toolResultText?: string;
   approvalRequired?: boolean;
 }
+
+const timeFormatter = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' });
 
 @Component({
   selector: 'app-chat',
@@ -29,6 +32,36 @@ export class ChatComponent {
   protected readonly errorMessage = signal<string | null>(null);
   private conversationId: string | null = null;
 
+  private readonly scrollAnchor = viewChild<ElementRef<HTMLElement>>('scrollAnchor');
+
+  constructor() {
+    // Auto-scroll to the newest message/token as it streams in — every chat
+    // product does this; without it a long reply scrolls the transcript out
+    // from under the reader. scrollIntoView is unavailable in the jsdom test
+    // environment, hence the optional chaining rather than a hard call.
+    effect(() => {
+      this.messages();
+      queueMicrotask(() => this.scrollAnchor()?.nativeElement.scrollIntoView?.({ block: 'end', behavior: 'smooth' }));
+    });
+  }
+
+  protected formatTime(timestamp: number): string {
+    return timeFormatter.format(timestamp);
+  }
+
+  protected isTypingPlaceholder(index: number): boolean {
+    const list = this.messages();
+    const message = list[index];
+    return (
+      this.sending() &&
+      index === list.length - 1 &&
+      message.role === 'assistant' &&
+      message.content === '' &&
+      !message.toolResultText &&
+      !message.approvalRequired
+    );
+  }
+
   protected async send(): Promise<void> {
     const content = this.draft.trim();
     if (!content || this.sending()) {
@@ -38,7 +71,11 @@ export class ChatComponent {
     this.draft = '';
     this.errorMessage.set(null);
     this.sending.set(true);
-    this.messages.update((current) => [...current, { role: 'user', content }, { role: 'assistant', content: '' }]);
+    this.messages.update((current) => [
+      ...current,
+      { role: 'user', content, timestamp: Date.now() },
+      { role: 'assistant', content: '', timestamp: Date.now() },
+    ]);
 
     try {
       for await (const event of this.chatService.sendMessage(content, this.conversationId)) {

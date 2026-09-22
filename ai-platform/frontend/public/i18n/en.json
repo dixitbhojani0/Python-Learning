@@ -57,6 +57,28 @@
     "noPendingApprovals": "Nothing is waiting for approval.",
     "approve": "Approve",
     "reject": "Reject",
-    "approvalActionFailed": "Could not complete that action. Please try again."
+    "approvalActionFailed": "Could not complete that action. Please try again.",
+    "users": "Team members",
+    "email": "Email",
+    "role": "Role",
+    "inviteEmailPlaceholder": "person@company.com",
+    "invite": "Invite",
+    "inviting": "Inviting…",
+    "inviteFailed": "Could not invite this person. Please try again.",
+    "roleChangeFailed": "Could not change this person's role. Please try again.",
+    "invitedNotice": "Invited {{email}}. Share this temporary password with them — it will not be shown again: {{password}}",
+    "roles": "Roles",
+    "newRoleNamePlaceholder": "Role name",
+    "permissions": "Permissions",
+    "createRole": "Create role",
+    "creatingRole": "Creating…",
+    "createRoleFailed": "Could not create this role. Please try again.",
+    "permissionLabels": {
+      "users:read": "View team members",
+      "users:write": "Manage team members and roles",
+      "documents:read": "View knowledge base",
+      "documents:write": "Manage knowledge base",
+      "tools:approve": "Approve tool actions"
+    }
   }
 }

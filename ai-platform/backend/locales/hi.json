@@ -11,6 +11,11 @@
   "chat.conversation_not_found": "वार्तालाप नहीं मिला।",
   "memory.item_not_found": "उस कुंजी के लिए कोई संग्रहीत आइटम नहीं मिला।",
   "admin.document_not_found": "दस्तावेज़ नहीं मिला।",
+  "admin.invalid_permissions": "एक या अधिक अनुमतियाँ मान्य नहीं हैं: {permissions}",
+  "admin.role_name_taken": "इस नाम की भूमिका इस वर्कस्पेस में पहले से मौजूद है।",
+  "admin.role_not_found": "भूमिका नहीं मिली।",
+  "admin.email_already_in_use": "इस ईमेल वाला उपयोगकर्ता इस वर्कस्पेस में पहले से मौजूद है।",
+  "admin.user_not_found": "उपयोगकर्ता नहीं मिला।",
   "tools.approval_required_message": "इस कार्रवाई को चलाने से पहले स्वीकृति आवश्यक है। एक व्यवस्थापक इसे एडमिन पैनल से स्वीकृत या अस्वीकृत कर सकता है।",
   "tools.approval_not_found": "लंबित स्वीकृति नहीं मिली।",
   "tools.approval_already_resolved": "यह स्वीकृति पहले ही हल चुकी है।"

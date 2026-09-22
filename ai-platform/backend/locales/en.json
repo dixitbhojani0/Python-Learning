@@ -11,6 +11,11 @@
   "chat.conversation_not_found": "Conversation not found.",
   "memory.item_not_found": "No remembered item found for that key.",
   "admin.document_not_found": "Document not found.",
+  "admin.invalid_permissions": "One or more permissions are not recognized: {permissions}",
+  "admin.role_name_taken": "A role with that name already exists in this workspace.",
+  "admin.role_not_found": "Role not found.",
+  "admin.email_already_in_use": "A user with that email already exists in this workspace.",
+  "admin.user_not_found": "User not found.",
   "tools.approval_required_message": "This action requires approval before it can run. An administrator can approve or reject it from the admin panel.",
   "tools.approval_not_found": "Pending approval not found.",
   "tools.approval_already_resolved": "This approval has already been resolved."
