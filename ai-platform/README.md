@@ -24,12 +24,35 @@ suite is re-run before the next step starts, so nothing regresses silently.
 | 14. Actually running it — first real dev-server walkthrough | First time both dev servers were run together (not `TestClient`/`HttpTestingController` against each other) and every feature driven through the real proxy with a real seeded account. Found and fixed three real gaps none of the 270 automated tests could have caught (below): no CSS existed anywhere, the dev-server API proxy was silently broken end to end, and the seeded demo admin was missing 3 of 5 real permissions | No new automated tests — this phase is what those tests structurally cannot cover; see "why" below |
 | 15. Chat UX polish + user/role management | Chat: avatars, chat-bubble layout with tails, a typing indicator while waiting for the first token, per-message timestamps, and auto-scroll-to-latest — all CSS/template-only, zero backend change. Admin: the user-management gap found in Phase 14 (an unused `GET /v1/tenants/{id}/users` and a vestigial `users:write` permission) is now closed for real — `GET/POST /v1/admin/roles`, `GET/POST /v1/admin/users`, `PATCH /v1/admin/users/{id}/role`; invites generate a one-time temporary password (no SMTP infra exists to email one, same "mock what needs a real external system" pattern as every other adapter here) | 216 backend + 85 frontend passed |
 | 16. Dark theme + persistent sidebar shell | A full visual redesign, not incremental polish — the flat light theme from Phase 14 read as a bare CRUD form set, not a product. New: a single dark "control plane" palette (slate background, amber accent, status colors for success/warning/danger/info), a persistent sidebar shell (`app.html`) replacing the per-page duplicate nav/logout that used to live separately in `chat.html` and `admin.html`, a `badge`/chip system replacing plain-text metadata lines (citations, tool results, approvals, role permissions, chunk counts), and a full-height chat layout with a pinned input bar instead of a card that just grows. `logout()` moved from `ChatComponent` to the shell `App` component — the old test for it moved with it, not just deleted | 216 backend + 90 frontend passed |
+| 17. Admin restructure: real sections, drill-down, a real audit log | Phase 16 was a reskin, not a structural fix — Admin was still one flat page. Split into 5 routed pages (`/admin/overview`, `/documents`, `/documents/:id`, `/team`, `/approvals`, `/audit`), each its own lazy chunk, mirroring a reference control-panel's per-concern navigation instead of one scrolling stack of cards. Two of five reference-inspired ideas were deliberately **not** built — see "why" below. The other three are real: a document detail drill-down page (`GET /v1/admin/documents/{id}`), and a genuine Audit & Logs viewer (`GET /v1/admin/audit-log`, filterable by event type) backed by the `telemetry_events` table that already existed but had no viewer at all | 227 backend + 102 frontend passed |
 
 **Next up:** the platform blueprint's remaining phases are largely enterprise-hardening (SSO/SCIM, schema-per-tenant provisioning) and scale/deployment concerns (§T's managed-cloud topology) — both explicitly gated in the blueprint's own roadmap on "a real tenant/load demanding it," which doesn't exist here, so building them now would be exactly the speculative work §30 warns against. The core product surface (chat, RAG, memory, tools/agents, admin — now including user/role management — eval) is feature-complete end to end, has automated CI enforcing it stays that way, and now has a coverage-audited test suite proving that CI gate actually exercises the code it claims to.
 
 ### Why user management stayed out of scope until asked for, then got built for real
 
 Phase 14's dev-server walkthrough surfaced a real gap: `GET /v1/tenants/{id}/users` existed on the backend but no frontend code ever called it, and the `users:write` permission was granted to the seeded admin role but checked by zero routes — scaffolded but never finished. Rather than build a possibly-unwanted feature speculatively, that gap was reported and confirmed before writing any code (§30 — the same anti-speculation discipline behind every other "not built yet" line in this README). Once confirmed: `POST /v1/admin/roles` validates permission strings against the exact fixed vocabulary every `require_permission(...)` call site in the codebase actually checks (grepped, not guessed) and rejects both unknown permissions and duplicate role names; `POST /v1/admin/users` generates a random temporary password server-side (`secrets.token_urlsafe`) since there's no SMTP infrastructure to email an invite link, and returns it exactly once in the response body — it is never stored or logged in plaintext, only its bcrypt hash. `test_update_user_role_changes_the_users_permissions` is the test worth reading in full: it proves a role change is real by showing the user's OLD JWT keeps the OLD (narrower) permissions after the change — permissions are baked into the token at login, not re-checked live — the exact JWT-snapshot behavior Phase 14 hit for real with the seed-data bug, now covered by a test instead of only a bug-fix commit.
+
+### Why 2 of the 5 reference-inspired admin pages were refused, not built
+
+A reference dashboard shown for this redesign had five pages: Overview, Documents, Indexing
+Pipeline, Audit & Logs, Model Parameters. Two do not correspond to anything real in this platform,
+and building them anyway would have been the exact dishonesty this project has refused everywhere
+else — fake tool-calling (§ tools/intent.py), fake LLM-based memory extraction
+(§ memory/extraction.py), fake OTel infrastructure (§20). Consistency demanded refusing these too:
+
+- **"Indexing Pipeline"** — this platform's document ingestion is synchronous: `POST /v1/documents`
+  chunks, embeds, and stores in one request/response cycle. There is no job queue, no "Queued" or
+  "Failed" state, nothing that runs in the background. A stage-by-stage progress tracker here would
+  be animating a process that doesn't exist.
+- **"Model Parameters" as an editable settings form** — `llm_provider`/`embedding_provider` are
+  config-resolved (`resolve_config`, §M) and read-only from the API's perspective; there is no
+  `PATCH` endpoint that changes them. A "Save Configuration" button that doesn't call anything real
+  would be UI theater, not a feature.
+
+The other three — restructuring Admin into real navigable sections, a document detail drill-down,
+and an Audit & Logs viewer — map directly onto capability that already exists (the documents table,
+the `telemetry_events` table) and got built for real, with a real backend endpoint and a real test
+suite behind each, not just new components pointed at nothing.
 
 ### Three real bugs no automated test could have caught — only found by actually running it
 

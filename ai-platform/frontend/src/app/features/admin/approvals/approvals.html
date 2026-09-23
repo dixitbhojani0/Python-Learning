@@ -1,0 +1,27 @@
+<div class="app-shell">
+  <header class="app-header">
+    <h1>{{ 'admin.pendingApprovals' | transloco }}</h1>
+  </header>
+
+  <section data-testid="approvals-section" class="card">
+    @if (approvalsError(); as key) {
+      <p role="alert" data-testid="approvals-error">{{ key | transloco }}</p>
+    }
+    @if (pendingApprovals().length === 0 && !approvalsError()) {
+      <p data-testid="approvals-empty" class="empty-state">{{ 'admin.noPendingApprovals' | transloco }}</p>
+    }
+    <ul>
+      @for (approval of pendingApprovals(); track approval.id) {
+        <li [attr.data-testid]="'approval-' + $index" class="list-item">
+          <span><span class="badge badge-warning">{{ approval.tool_name }}</span> {{ approval.tool_args | json }}</span>
+          <button type="button" (click)="approveToolCall(approval.id)" [attr.data-testid]="'approve-' + $index">
+            {{ 'admin.approve' | transloco }}
+          </button>
+          <button type="button" (click)="rejectToolCall(approval.id)" [attr.data-testid]="'reject-' + $index">
+            {{ 'admin.reject' | transloco }}
+          </button>
+        </li>
+      }
+    </ul>
+  </section>
+</div>

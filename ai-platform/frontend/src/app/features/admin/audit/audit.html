@@ -1,0 +1,50 @@
+<div class="app-shell">
+  <header class="app-header">
+    <h1>{{ 'admin.auditLog' | transloco }}</h1>
+  </header>
+
+  <section class="card">
+    <form (ngSubmit)="load()" class="field-row">
+      <label>
+        {{ 'admin.category' | transloco }}
+        <select name="eventType" [(ngModel)]="selectedEventType" data-testid="audit-category-select">
+          <option value="">{{ 'admin.allCategories' | transloco }}</option>
+          @for (type of knownEventTypes; track type) {
+            <option [value]="type">{{ type }}</option>
+          }
+        </select>
+      </label>
+      <button type="submit" [disabled]="loading()" data-testid="audit-apply">{{ 'admin.apply' | transloco }}</button>
+    </form>
+
+    @if (error(); as key) {
+      <p role="alert" data-testid="audit-error">{{ key | transloco }}</p>
+    }
+    @if (events().length === 0 && !error() && !loading()) {
+      <p data-testid="audit-empty" class="empty-state">{{ 'admin.noAuditEvents' | transloco }}</p>
+    }
+
+    @if (events().length > 0) {
+      <div class="table-scroll">
+        <table data-testid="audit-table">
+          <thead>
+            <tr>
+              <th>{{ 'admin.timestamp' | transloco }}</th>
+              <th>{{ 'admin.category' | transloco }}</th>
+              <th>{{ 'admin.details' | transloco }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (event of events(); track event.id) {
+              <tr [attr.data-testid]="'audit-row-' + $index">
+                <td>{{ event.created_at | date: 'medium' }}</td>
+                <td><span class="badge" [class]="eventBadgeClass(event.event_type)">{{ event.event_type }}</span></td>
+                <td class="audit-payload">{{ event.payload | json }}</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    }
+  </section>
+</div>

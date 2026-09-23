@@ -17,7 +17,7 @@ import secrets
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -62,6 +62,23 @@ class DocumentSummaryOut(BaseModel):
     id: uuid.UUID
     title: str
     chunk_count: int
+
+
+class DocumentDetailOut(BaseModel):
+    id: uuid.UUID
+    title: str
+    content: str
+    chunk_count: int
+    created_at: datetime
+
+
+class AuditLogEntryOut(BaseModel):
+    id: uuid.UUID
+    event_type: str
+    payload: dict
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
 
 
 class TelemetrySummaryOut(BaseModel):
@@ -155,6 +172,32 @@ async def list_documents(
         )
     ).all()
     return [DocumentSummaryOut(id=doc.id, title=doc.title, chunk_count=count) for doc, count in rows]
+
+
+@router.get("/documents/{document_id}", response_model=DocumentDetailOut)
+async def get_document(
+    document_id: uuid.UUID,
+    _principal: Principal = Depends(require_permission("documents:read")),
+    session: AsyncSession = Depends(get_scoped_session),
+    accept_language: str | None = Header(default=None, alias="Accept-Language"),
+) -> DocumentDetailOut:
+    locale = (accept_language or DEFAULT_LOCALE).split(",")[0].split("-")[0]
+
+    document = await session.get(Document, document_id)
+    if document is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=t("admin.document_not_found", locale=locale))
+
+    chunk_count = (
+        await session.execute(select(func.count(Chunk.id)).where(Chunk.document_id == document_id))
+    ).scalar_one()
+
+    return DocumentDetailOut(
+        id=document.id,
+        title=document.title,
+        content=document.content,
+        chunk_count=chunk_count,
+        created_at=document.created_at,
+    )
 
 
 @router.delete("/documents/{document_id}")
@@ -318,3 +361,30 @@ async def update_user_role(
     user.role_id = role.id
     await session.flush()
     return UserManagementOut(id=user.id, email=user.email, role_id=user.role_id, role_name=role.name, created_at=user.created_at)
+
+
+# The complete, real set of event types anything in this codebase actually
+# records (grepped from every record_event(...) call site) — the frontend's
+# category filter dropdown is built from this, not invented ahead of a real
+# event type existing.
+KNOWN_AUDIT_EVENT_TYPES = (
+    "chat_turn",
+    "tool_call",
+    "tool_call_pending_approval",
+    "tool_call_approved",
+    "tool_call_rejected",
+)
+
+
+@router.get("/audit-log", response_model=list[AuditLogEntryOut])
+async def list_audit_log(
+    event_type: str | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=200),
+    _principal: Principal = Depends(require_permission("users:read")),
+    session: AsyncSession = Depends(get_scoped_session),
+) -> list[AuditLogEntryOut]:
+    query = select(TelemetryEvent).order_by(TelemetryEvent.created_at.desc()).limit(limit)
+    if event_type:
+        query = query.where(TelemetryEvent.event_type == event_type)
+    events = (await session.execute(query)).scalars().all()
+    return [AuditLogEntryOut.model_validate(e) for e in events]

@@ -7,7 +7,12 @@
       </div>
       <nav class="sidebar-nav">
         <a routerLink="/chat" routerLinkActive="active" data-testid="nav-chat">{{ 'chat.title' | transloco }}</a>
-        <a routerLink="/admin" routerLinkActive="active" data-testid="nav-admin">{{ 'admin.title' | transloco }}</a>
+        <span class="sidebar-section-label">{{ 'admin.title' | transloco }}</span>
+        <a routerLink="/admin/overview" routerLinkActive="active" data-testid="nav-overview">{{ 'admin.overview' | transloco }}</a>
+        <a routerLink="/admin/documents" routerLinkActive="active" data-testid="nav-documents">{{ 'admin.documents' | transloco }}</a>
+        <a routerLink="/admin/team" routerLinkActive="active" data-testid="nav-team">{{ 'admin.team' | transloco }}</a>
+        <a routerLink="/admin/approvals" routerLinkActive="active" data-testid="nav-approvals">{{ 'admin.pendingApprovals' | transloco }}</a>
+        <a routerLink="/admin/audit" routerLinkActive="active" data-testid="nav-audit">{{ 'admin.auditLog' | transloco }}</a>
       </nav>
       <button type="button" class="sidebar-signout" (click)="logout()" data-testid="nav-logout">
         {{ 'chat.logout' | transloco }}

@@ -1,0 +1,50 @@
+<div class="app-shell">
+  <header class="app-header">
+    <h1>{{ 'admin.documents' | transloco }}</h1>
+  </header>
+
+  <section data-testid="documents-section" class="card">
+    @if (documentsError(); as key) {
+      <p role="alert" data-testid="documents-error">{{ key | transloco }}</p>
+    }
+    @if (documents().length === 0 && !documentsError()) {
+      <p data-testid="documents-empty" class="empty-state">{{ 'admin.noDocuments' | transloco }}</p>
+    }
+    <ul>
+      @for (doc of documents(); track doc.id) {
+        <li [attr.data-testid]="'document-' + $index" class="list-item">
+          <span>
+            <a [routerLink]="['/admin/documents', doc.id]" [attr.data-testid]="'document-link-' + $index">{{ doc.title }}</a>
+            <span class="badge badge-neutral">{{ 'admin.chunkCount' | transloco: { count: doc.chunk_count } }}</span>
+          </span>
+          <button type="button" (click)="deleteDocument(doc.id)" [attr.data-testid]="'delete-document-' + $index">
+            {{ 'admin.delete' | transloco }}
+          </button>
+        </li>
+      }
+    </ul>
+
+    <form (ngSubmit)="ingest()">
+      <h3>{{ 'admin.ingestTitle' | transloco }}</h3>
+      <input
+        name="title"
+        type="text"
+        [(ngModel)]="ingestTitle"
+        [placeholder]="'admin.documentTitle' | transloco"
+        data-testid="ingest-title-input"
+      />
+      <textarea
+        name="content"
+        [(ngModel)]="ingestContent"
+        [placeholder]="'admin.documentContent' | transloco"
+        data-testid="ingest-content-input"
+      ></textarea>
+      <button type="submit" [disabled]="ingesting()" data-testid="ingest-submit">
+        {{ (ingesting() ? 'admin.ingesting' : 'admin.ingest') | transloco }}
+      </button>
+      @if (ingestError(); as key) {
+        <p role="alert" data-testid="ingest-error">{{ key | transloco }}</p>
+      }
+    </form>
+  </section>
+</div>

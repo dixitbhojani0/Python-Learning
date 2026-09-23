@@ -1,5 +1,5 @@
 import { Injectable, inject } from '@angular/core';
-import { HttpClient } from '@angular/common/http';
+import { HttpClient, HttpParams } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
 
 export interface TenantInfo {
@@ -20,6 +20,21 @@ export interface DocumentSummary {
   id: string;
   title: string;
   chunk_count: number;
+}
+
+export interface DocumentDetail {
+  id: string;
+  title: string;
+  content: string;
+  chunk_count: number;
+  created_at: string;
+}
+
+export interface AuditLogEntry {
+  id: string;
+  event_type: string;
+  payload: Record<string, unknown>;
+  created_at: string;
 }
 
 export interface TelemetrySummary {
@@ -119,5 +134,17 @@ export class AdminService {
 
   updateUserRole(userId: string, roleId: string) {
     return firstValueFrom(this.http.patch<ManagedUser>(`/api/v1/admin/users/${userId}/role`, { role_id: roleId }));
+  }
+
+  getDocument(id: string) {
+    return firstValueFrom(this.http.get<DocumentDetail>(`/api/v1/admin/documents/${id}`));
+  }
+
+  listAuditLog(eventType: string | null) {
+    let params = new HttpParams();
+    if (eventType) {
+      params = params.set('event_type', eventType);
+    }
+    return firstValueFrom(this.http.get<AuditLogEntry[]>('/api/v1/admin/audit-log', { params }));
   }
 }

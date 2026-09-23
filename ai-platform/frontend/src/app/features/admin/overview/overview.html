@@ -1,0 +1,44 @@
+<div class="app-shell">
+  <header class="app-header">
+    <h1>{{ 'admin.overview' | transloco }}</h1>
+  </header>
+
+  <section data-testid="tenant-section" class="card">
+    <h2>{{ 'admin.tenant' | transloco }}</h2>
+    @if (tenantError(); as key) {
+      <p role="alert" data-testid="tenant-error">{{ key | transloco }}</p>
+    } @else if (tenant(); as t) {
+      <p data-testid="tenant-info">{{ t.name }} ({{ t.slug }}) — {{ t.compliance_profile }}</p>
+    }
+  </section>
+
+  <section data-testid="providers-section" class="card">
+    <h2>{{ 'admin.providers' | transloco }}</h2>
+    @if (providersError(); as key) {
+      <p role="alert" data-testid="providers-error">{{ key | transloco }}</p>
+    } @else if (providers(); as p) {
+      <p data-testid="provider-info">
+        {{ 'admin.llmProvider' | transloco }}: {{ p.llm_provider }} ({{ p.available_llm_providers.join(', ') }})
+      </p>
+      <p>
+        {{ 'admin.embeddingProvider' | transloco }}: {{ p.embedding_provider }}
+        ({{ p.available_embedding_providers.join(', ') }})
+      </p>
+    }
+  </section>
+
+  <section data-testid="telemetry-section" class="card">
+    <h2>{{ 'admin.telemetry' | transloco }}</h2>
+    @if (telemetryError(); as key) {
+      <p role="alert" data-testid="telemetry-error">{{ key | transloco }}</p>
+    } @else if (telemetry(); as stats) {
+      <p data-testid="telemetry-info">
+        {{ 'admin.totalChatTurns' | transloco }}: {{ stats.total_chat_turns }} ·
+        {{ 'admin.ragUsageRate' | transloco }}: {{ stats.rag_usage_rate }} ·
+        {{ 'admin.memoryUsageRate' | transloco }}: {{ stats.memory_usage_rate }} ·
+        {{ 'admin.avgLatency' | transloco }}: {{ stats.avg_latency_ms }} ·
+        {{ 'admin.avgResponseLength' | transloco }}: {{ stats.avg_response_word_count }}
+      </p>
+    }
+  </section>
+</div>

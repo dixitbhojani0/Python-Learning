@@ -83,6 +83,23 @@ async def test_list_documents_reports_chunk_counts(make_tenant):
     assert docs[0]["chunk_count"] == 1
 
 
+async def test_get_document_returns_full_detail_with_chunk_count(make_tenant):
+    tenant = await make_tenant(permissions=["documents:read", "documents:write"])
+    async with await _client() as client:
+        token = await _login(client, tenant.slug, tenant.admin_email, tenant.admin_password)
+        content = " ".join(f"w{i}" for i in range(25))
+        doc_id = await _ingest(client, token, "Detail me", content)
+
+        response = await client.get(f"/v1/admin/documents/{doc_id}", headers=_auth_header(token))
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["title"] == "Detail me"
+    assert body["content"] == content
+    assert body["chunk_count"] == 1
+    assert body["created_at"]
+
+
 async def test_delete_document_removes_it_and_its_chunks(make_tenant):
     tenant = await make_tenant(permissions=["documents:read", "documents:write"])
     async with await _client() as client:
@@ -137,6 +154,24 @@ async def test_delete_document_without_documents_write_permission_is_403(make_te
     assert response.status_code == 403
 
 
+async def test_get_document_without_documents_read_permission_is_403(make_tenant):
+    tenant = await make_tenant(permissions=[])
+    async with await _client() as client:
+        token = await _login(client, tenant.slug, tenant.admin_email, tenant.admin_password)
+        response = await client.get(
+            "/v1/admin/documents/00000000-0000-0000-0000-000000000000", headers=_auth_header(token)
+        )
+    assert response.status_code == 403
+
+
+async def test_list_audit_log_without_users_read_permission_is_403(make_tenant):
+    tenant = await make_tenant(permissions=[])
+    async with await _client() as client:
+        token = await _login(client, tenant.slug, tenant.admin_email, tenant.admin_password)
+        response = await client.get("/v1/admin/audit-log", headers=_auth_header(token))
+    assert response.status_code == 403
+
+
 # ── Edge ──────────────────────────────────────────────────────────────────
 
 async def test_delete_nonexistent_document_is_404(make_tenant):
@@ -147,6 +182,80 @@ async def test_delete_nonexistent_document_is_404(make_tenant):
             "/v1/admin/documents/00000000-0000-0000-0000-000000000000", headers=_auth_header(token)
         )
     assert response.status_code == 404
+
+
+async def test_get_nonexistent_document_is_404(make_tenant):
+    tenant = await make_tenant(permissions=["documents:read"])
+    async with await _client() as client:
+        token = await _login(client, tenant.slug, tenant.admin_email, tenant.admin_password)
+        response = await client.get(
+            "/v1/admin/documents/00000000-0000-0000-0000-000000000000", headers=_auth_header(token)
+        )
+    assert response.status_code == 404
+
+
+async def test_audit_log_is_empty_before_anything_happens(make_tenant):
+    tenant = await make_tenant(permissions=["users:read"])
+    async with await _client() as client:
+        token = await _login(client, tenant.slug, tenant.admin_email, tenant.admin_password)
+        response = await client.get("/v1/admin/audit-log", headers=_auth_header(token))
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+async def test_audit_log_records_a_chat_turn_event(make_tenant):
+    tenant = await make_tenant(permissions=["users:read"])
+    async with await _client() as client:
+        token = await _login(client, tenant.slug, tenant.admin_email, tenant.admin_password)
+        await _send_chat(client, token, "hello there")
+
+        response = await client.get("/v1/admin/audit-log", headers=_auth_header(token))
+
+    events = response.json()
+    assert len(events) == 1
+    assert events[0]["event_type"] == "chat_turn"
+    assert events[0]["payload"]["conversation_id"]
+
+
+async def test_audit_log_filters_by_event_type(make_tenant):
+    tenant = await make_tenant(permissions=["users:read", "users:write", "documents:read", "documents:write"])
+    async with await _client() as client:
+        token = await _login(client, tenant.slug, tenant.admin_email, tenant.admin_password)
+        await _send_chat(client, token, "hello there")
+        await _send_chat(client, token, "calculate 2 + 2")
+
+        chat_only = await client.get("/v1/admin/audit-log", params={"event_type": "tool_call"}, headers=_auth_header(token))
+
+    events = chat_only.json()
+    assert len(events) == 1
+    assert events[0]["event_type"] == "tool_call"
+
+
+async def test_audit_log_unknown_event_type_returns_empty_not_an_error(make_tenant):
+    tenant = await make_tenant(permissions=["users:read"])
+    async with await _client() as client:
+        token = await _login(client, tenant.slug, tenant.admin_email, tenant.admin_password)
+        await _send_chat(client, token, "hello there")
+
+        response = await client.get(
+            "/v1/admin/audit-log", params={"event_type": "not_a_real_type"}, headers=_auth_header(token)
+        )
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+async def test_audit_log_respects_the_limit_parameter(make_tenant):
+    tenant = await make_tenant(permissions=["users:read"])
+    async with await _client() as client:
+        token = await _login(client, tenant.slug, tenant.admin_email, tenant.admin_password)
+        await _send_chat(client, token, "first")
+        await _send_chat(client, token, "second")
+        await _send_chat(client, token, "third")
+
+        response = await client.get("/v1/admin/audit-log", params={"limit": 2}, headers=_auth_header(token))
+
+    assert len(response.json()) == 2
 
 
 async def test_list_documents_empty_tenant_returns_empty_list(make_tenant):
@@ -257,3 +366,33 @@ async def test_telemetry_summary_never_mixes_tenants(make_tenant):
         response_b = await client.get("/v1/admin/telemetry", headers=_auth_header(token_b))
 
     assert response_b.json()["total_chat_turns"] == 0  # A's chat turn must not show up in B's summary
+
+
+# ── Document detail + audit log (Phase 17) — tenant isolation ────────────
+
+async def test_cannot_get_another_tenants_document_by_id(make_tenant):
+    tenant_a = await make_tenant(permissions=["documents:read", "documents:write"])
+    tenant_b = await make_tenant(permissions=["documents:read"])
+
+    async with await _client() as client:
+        token_a = await _login(client, tenant_a.slug, tenant_a.admin_email, tenant_a.admin_password)
+        doc_id = await _ingest(client, token_a, "A's doc", "some content here")
+
+        token_b = await _login(client, tenant_b.slug, tenant_b.admin_email, tenant_b.admin_password)
+        response = await client.get(f"/v1/admin/documents/{doc_id}", headers=_auth_header(token_b))
+
+    assert response.status_code == 404  # RLS makes it invisible, not a cross-tenant read
+
+
+async def test_audit_log_never_shows_another_tenants_events(make_tenant):
+    tenant_a = await make_tenant(permissions=["users:read"])
+    tenant_b = await make_tenant(permissions=["users:read"])
+
+    async with await _client() as client:
+        token_a = await _login(client, tenant_a.slug, tenant_a.admin_email, tenant_a.admin_password)
+        await _send_chat(client, token_a, "tenant A's message")
+
+        token_b = await _login(client, tenant_b.slug, tenant_b.admin_email, tenant_b.admin_password)
+        response_b = await client.get("/v1/admin/audit-log", headers=_auth_header(token_b))
+
+    assert response_b.json() == []

@@ -1,0 +1,22 @@
+<div class="app-shell">
+  <a routerLink="/admin/documents" data-testid="back-to-documents-link">{{ 'admin.backToDocuments' | transloco }}</a>
+
+  @if (error(); as key) {
+    <p role="alert" data-testid="document-detail-error">{{ key | transloco }}</p>
+  } @else if (document(); as doc) {
+    <header class="app-header">
+      <h1 data-testid="document-detail-title">{{ doc.title }}</h1>
+    </header>
+
+    <section class="card">
+      <div class="badge-row">
+        <span class="badge badge-neutral">{{ 'admin.chunkCount' | transloco: { count: doc.chunk_count } }}</span>
+        <span class="badge badge-info" data-testid="document-detail-created">
+          {{ 'admin.ingestedOn' | transloco }}: {{ doc.created_at | date: 'medium' }}
+        </span>
+      </div>
+      <h3>{{ 'admin.documentContent' | transloco }}</h3>
+      <p data-testid="document-detail-content" class="document-content">{{ doc.content }}</p>
+    </section>
+  }
+</div>

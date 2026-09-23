@@ -9,7 +9,10 @@ const LANGS = {
   en: {
     app: { brandName: 'AI Platform' },
     chat: { title: 'Chat', logout: 'Sign out' },
-    admin: { title: 'Admin' },
+    admin: {
+      title: 'Admin', overview: 'Overview', documents: 'Knowledge base', team: 'Team & roles',
+      pendingApprovals: 'Pending tool approvals', auditLog: 'Audit & logs',
+    },
   },
 };
 
@@ -48,7 +51,11 @@ describe('App', () => {
     const fixture = await setup(true);
     const el = fixture.nativeElement as HTMLElement;
     expect(el.querySelector('[data-testid="nav-chat"]')).toBeTruthy();
-    expect(el.querySelector('[data-testid="nav-admin"]')).toBeTruthy();
+    expect(el.querySelector('[data-testid="nav-overview"]')).toBeTruthy();
+    expect(el.querySelector('[data-testid="nav-documents"]')).toBeTruthy();
+    expect(el.querySelector('[data-testid="nav-team"]')).toBeTruthy();
+    expect(el.querySelector('[data-testid="nav-approvals"]')).toBeTruthy();
+    expect(el.querySelector('[data-testid="nav-audit"]')).toBeTruthy();
     expect(el.querySelector('[data-testid="nav-logout"]')).toBeTruthy();
   });
 
@@ -69,7 +76,7 @@ describe('App', () => {
     const fixture = await setup(false);
     const el = fixture.nativeElement as HTMLElement;
     expect(el.querySelector('[data-testid="nav-chat"]')).toBeNull();
-    expect(el.querySelector('[data-testid="nav-admin"]')).toBeNull();
+    expect(el.querySelector('[data-testid="nav-overview"]')).toBeNull();
     expect(el.querySelector('[data-testid="nav-logout"]')).toBeNull();
   });
 });
