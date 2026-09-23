@@ -198,6 +198,20 @@ describe('ChatComponent', () => {
     expect(el.querySelector('[data-testid="message-1"]')).toBeNull(); // placeholder removed, only the user message remains
   });
 
+  it('shows a translated error and removes the placeholder when the backend sends an error event (e.g. a misconfigured provider)', async () => {
+    const fixture = await setup();
+    chatStub.sendMessage.mockReturnValue(
+      genFrom([{ type: 'error', message: 'chat.error' }, { type: 'done', conversation_id: 'c1' }])
+    );
+
+    await setDraftAndSend(fixture, 'hi');
+    fixture.detectChanges();
+
+    const el = fixture.nativeElement as HTMLElement;
+    expect(el.querySelector('[data-testid="chat-error"]')).toBeTruthy();
+    expect(el.querySelector('[data-testid="message-1"]')).toBeNull();
+  });
+
   // ── Edge ────────────────────────────────────────────────────────────────
 
   it('does nothing when sending an empty/whitespace-only draft', async () => {

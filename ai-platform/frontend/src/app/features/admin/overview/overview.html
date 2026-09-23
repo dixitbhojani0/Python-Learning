@@ -18,12 +18,39 @@
       <p role="alert" data-testid="providers-error">{{ key | transloco }}</p>
     } @else if (providers(); as p) {
       <p data-testid="provider-info">
-        {{ 'admin.llmProvider' | transloco }}: {{ p.llm_provider }} ({{ p.available_llm_providers.join(', ') }})
-      </p>
-      <p>
+        {{ 'admin.llmProvider' | transloco }}: {{ p.llm_provider }} ·
         {{ 'admin.embeddingProvider' | transloco }}: {{ p.embedding_provider }}
-        ({{ p.available_embedding_providers.join(', ') }})
       </p>
+
+      <form (ngSubmit)="saveConfig()">
+        <div class="field-row">
+          <label>
+            {{ 'admin.llmProvider' | transloco }}
+            <select name="llmProvider" [(ngModel)]="selectedLlmProvider" data-testid="llm-provider-select">
+              @for (name of p.available_llm_providers; track name) {
+                <option [value]="name">{{ name }}</option>
+              }
+            </select>
+          </label>
+          <label>
+            {{ 'admin.embeddingProvider' | transloco }}
+            <select name="embeddingProvider" [(ngModel)]="selectedEmbeddingProvider" data-testid="embedding-provider-select">
+              @for (name of p.available_embedding_providers; track name) {
+                <option [value]="name">{{ name }}</option>
+              }
+            </select>
+          </label>
+        </div>
+        <button type="submit" [disabled]="savingConfig()" data-testid="save-config-submit">
+          {{ (savingConfig() ? 'admin.savingConfig' : 'admin.saveConfig') | transloco }}
+        </button>
+        @if (configError(); as key) {
+          <p role="alert" data-testid="config-error">{{ key | transloco }}</p>
+        }
+        @if (configSaved()) {
+          <p role="status" class="success-banner" data-testid="config-saved">{{ 'admin.configSaved' | transloco }}</p>
+        }
+      </form>
     }
   </section>
 

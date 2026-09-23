@@ -12,6 +12,8 @@ const LANGS = {
       accessDenied: "You don't have permission to view this section.",
       telemetry: 'Usage', totalChatTurns: 'Chat turns', ragUsageRate: 'RAG usage rate',
       memoryUsageRate: 'Memory usage rate', avgLatency: 'Avg. latency (ms)', avgResponseLength: 'Avg. response length (words)',
+      saveConfig: 'Save configuration', savingConfig: 'Saving…', configSaved: 'Configuration saved.',
+      configSaveFailed: 'Could not save configuration.',
     },
   },
 };
@@ -20,6 +22,7 @@ type AdminStub = {
   getTenant: ReturnType<typeof vi.fn>;
   getProviders: ReturnType<typeof vi.fn>;
   getTelemetry: ReturnType<typeof vi.fn>;
+  updateConfig: ReturnType<typeof vi.fn>;
 };
 
 describe('AdminOverviewComponent', () => {
@@ -34,6 +37,7 @@ describe('AdminOverviewComponent', () => {
       getTelemetry: vi.fn().mockResolvedValue({
         total_chat_turns: 0, rag_usage_rate: 0, memory_usage_rate: 0, avg_latency_ms: 0, avg_response_word_count: 0,
       }),
+      updateConfig: vi.fn(),
       ...overrides,
     };
 
@@ -94,5 +98,45 @@ describe('AdminOverviewComponent', () => {
     const el = fixture.nativeElement as HTMLElement;
     expect(el.querySelector('[data-testid="telemetry-error"]')).toBeTruthy();
     expect(el.querySelector('[data-testid="tenant-info"]')).toBeTruthy();
+  });
+
+  // ── Config save (Phase 18) ─────────────────────────────────────────────
+
+  it('preselects the dropdowns from the currently active providers', async () => {
+    const fixture = await setup({
+      getProviders: vi.fn().mockResolvedValue({
+        llm_provider: 'groq', embedding_provider: 'gemini',
+        available_llm_providers: ['mock', 'groq'], available_embedding_providers: ['mock', 'gemini'],
+      }),
+    });
+    const component = fixture.componentInstance as unknown as { selectedLlmProvider: string; selectedEmbeddingProvider: string };
+    expect(component.selectedLlmProvider).toBe('groq');
+    expect(component.selectedEmbeddingProvider).toBe('gemini');
+  });
+
+  it('saving config calls the service with the selected providers and shows a success banner', async () => {
+    const fixture = await setup({
+      updateConfig: vi.fn().mockResolvedValue({ llm_provider: 'groq', embedding_provider: 'mock' }),
+    });
+    const component = fixture.componentInstance as unknown as { selectedLlmProvider: string; saveConfig: () => Promise<void> };
+    component.selectedLlmProvider = 'groq';
+
+    await component.saveConfig();
+    fixture.detectChanges();
+
+    expect(adminStub.updateConfig).toHaveBeenCalledWith('groq', 'mock');
+    expect((fixture.nativeElement as HTMLElement).querySelector('[data-testid="config-saved"]')).toBeTruthy();
+  });
+
+  it('a failed save shows an error and does not show the success banner', async () => {
+    const fixture = await setup({ updateConfig: vi.fn().mockRejectedValue(new Error('400')) });
+    const component = fixture.componentInstance as unknown as { saveConfig: () => Promise<void> };
+
+    await component.saveConfig();
+    fixture.detectChanges();
+
+    const el = fixture.nativeElement as HTMLElement;
+    expect(el.querySelector('[data-testid="config-error"]')).toBeTruthy();
+    expect(el.querySelector('[data-testid="config-saved"]')).toBeNull();
   });
 });

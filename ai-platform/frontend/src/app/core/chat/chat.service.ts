@@ -11,6 +11,7 @@ export type ChatEvent =
   | { type: 'citations'; chunks: Citation[] }
   | { type: 'tool_result'; tool: string; text: string }
   | { type: 'approval_required'; approval_id: string; tool: string; args: Record<string, unknown> }
+  | { type: 'error'; message: string }
   | { type: 'done'; conversation_id: string };
 
 export class ChatRequestError extends Error {

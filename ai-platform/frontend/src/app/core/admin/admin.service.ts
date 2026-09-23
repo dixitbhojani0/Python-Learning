@@ -136,6 +136,17 @@ export class AdminService {
     return firstValueFrom(this.http.patch<ManagedUser>(`/api/v1/admin/users/${userId}/role`, { role_id: roleId }));
   }
 
+  updateConfig(llmProvider: string | null, embeddingProvider: string | null) {
+    const body: Record<string, string> = {};
+    if (llmProvider) {
+      body['llm_provider'] = llmProvider;
+    }
+    if (embeddingProvider) {
+      body['embedding_provider'] = embeddingProvider;
+    }
+    return firstValueFrom(this.http.patch<ProviderStatus>('/api/v1/admin/config', body));
+  }
+
   getDocument(id: string) {
     return firstValueFrom(this.http.get<DocumentDetail>(`/api/v1/admin/documents/${id}`));
   }

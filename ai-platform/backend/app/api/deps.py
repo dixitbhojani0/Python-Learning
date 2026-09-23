@@ -16,8 +16,10 @@ from dataclasses import dataclass
 from fastapi import Depends, Header, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.app.core.config import PLATFORM_DEFAULTS, PlatformConfig, resolve_config
 from backend.app.core.i18n import DEFAULT_LOCALE, t
 from backend.app.core.security import InvalidTokenError, decode_access_token
+from backend.app.db.models import Tenant
 from backend.app.db.session import tenant_scoped_session
 
 
@@ -78,3 +80,19 @@ async def get_scoped_session(principal: Principal = Depends(get_current_principa
     """The only way a route should reach the DB — ties every query to the caller's tenant."""
     async with tenant_scoped_session(principal.tenant_id) as session:
         yield session
+
+
+async def get_tenant_config(
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_scoped_session),
+) -> PlatformConfig:
+    """
+    Resolves config with the tenant layer actually wired in (§7) — every call
+    site used to call resolve_config(PLATFORM_DEFAULTS) alone, so a tenant's
+    config_overrides never took effect no matter what an admin saved. This is
+    the one place that changes, not every caller (the whole point of a single
+    resolver seam).
+    """
+    tenant = await session.get(Tenant, principal.tenant_id)
+    overrides = tenant.config_overrides if tenant is not None else {}
+    return resolve_config(PLATFORM_DEFAULTS, overrides)

@@ -44,6 +44,10 @@ class Tenant(Base):
     # "standard" | "healthcare" | ... — the compliance-profile switch from §K/§L.
     # Just the flag in Phase 2; the profile's actual behavior differences are Phase 11.
     compliance_profile: Mapped[str] = mapped_column(String(32), default="standard")
+    # The tenant layer of the hierarchical config resolver (§7, core/config.py)
+    # — a partial PlatformConfig dict merged on top of platform defaults.
+    # Empty dict means "no overrides, inherit platform defaults entirely."
+    config_overrides: Mapped[dict] = mapped_column(JSONB, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 

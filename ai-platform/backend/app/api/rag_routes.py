@@ -16,16 +16,13 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.adapters.embedding import providers as _embedding_providers  # noqa: F401  (triggers registration)
-from backend.app.api.deps import Principal, get_current_principal, get_scoped_session
-from backend.app.core.config import resolve_config
-from backend.app.core.i18n import DEFAULT_LOCALE
+from backend.app.api.deps import Principal, get_current_principal, get_scoped_session, get_tenant_config
+from backend.app.core.config import PlatformConfig
 from backend.app.db.session import tenant_scoped_session
 from backend.app.rag.ingestion import ingest_document
 from backend.app.rag.retrieval import search_chunks
 
 router = APIRouter(prefix="/v1", tags=["rag"])
-
-_PLATFORM_DEFAULTS = {"default_locale": DEFAULT_LOCALE, "embedding_provider": "mock"}
 
 
 class IngestRequest(BaseModel):
@@ -50,8 +47,8 @@ class SearchResult(BaseModel):
 async def create_document(
     body: IngestRequest,
     principal: Principal = Depends(get_current_principal),
+    config: PlatformConfig = Depends(get_tenant_config),
 ) -> IngestResponse:
-    config = resolve_config(_PLATFORM_DEFAULTS)
     async with tenant_scoped_session(principal.tenant_id) as session:
         result = await ingest_document(
             session,
@@ -70,8 +67,8 @@ async def search(
     # get_scoped_session already depends on get_current_principal — this
     # route needs auth+tenant-scoping, not the principal's fields directly.
     session: AsyncSession = Depends(get_scoped_session),
+    config: PlatformConfig = Depends(get_tenant_config),
 ) -> list[SearchResult]:
-    config = resolve_config(_PLATFORM_DEFAULTS)
     results = await search_chunks(session, query=q, top_k=top_k, embedding_provider=config.embedding_provider)
     return [
         SearchResult(chunk_id=r.chunk.id, document_id=r.chunk.document_id, content=r.chunk.content, distance=r.distance)

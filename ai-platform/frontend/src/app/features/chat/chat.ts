@@ -83,6 +83,9 @@ export class ChatComponent {
           this.setToolResultOnLastAssistantMessage(event.text);
         } else if (event.type === 'approval_required') {
           this.setApprovalRequiredOnLastAssistantMessage();
+        } else if (event.type === 'error') {
+          this.errorMessage.set(event.message);
+          this.messages.update((current) => current.slice(0, -1));
         } else {
           this.conversationId = event.conversation_id;
         }

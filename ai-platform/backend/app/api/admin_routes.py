@@ -25,15 +25,13 @@ from sqlalchemy.orm import selectinload
 
 from backend.app.adapters.embedding.registry import EmbeddingRegistry
 from backend.app.adapters.llm.registry import LLMRegistry
-from backend.app.api.deps import Principal, get_scoped_session, require_permission
-from backend.app.core.config import resolve_config
+from backend.app.api.deps import Principal, get_scoped_session, get_tenant_config, require_permission
+from backend.app.core.config import PLATFORM_DEFAULTS, PlatformConfig, resolve_config
 from backend.app.core.i18n import DEFAULT_LOCALE, t
 from backend.app.core.security import hash_password
 from backend.app.db.models import Chunk, Document, Role, Tenant, TelemetryEvent, User
 
 router = APIRouter(prefix="/v1/admin", tags=["admin"])
-
-_PLATFORM_DEFAULTS = {"default_locale": DEFAULT_LOCALE, "llm_provider": "mock", "embedding_provider": "mock"}
 
 # The complete, fixed permission-string vocabulary every route in this
 # codebase actually checks (grepped from every `require_permission(...)`
@@ -56,6 +54,14 @@ class ProviderStatusOut(BaseModel):
     embedding_provider: str
     available_llm_providers: list[str]
     available_embedding_providers: list[str]
+
+
+class TenantConfigUpdateIn(BaseModel):
+    # Both optional and independently settable — PATCH semantics, not PUT:
+    # changing just the embedding provider must not require re-sending the
+    # LLM provider too.
+    llm_provider: str | None = None
+    embedding_provider: str | None = None
 
 
 class DocumentSummaryOut(BaseModel):
@@ -148,11 +154,71 @@ async def get_tenant(
 @router.get("/providers", response_model=ProviderStatusOut)
 async def get_provider_status(
     _principal: Principal = Depends(require_permission("users:read")),  # gates access; value itself unused
+    config: PlatformConfig = Depends(get_tenant_config),
 ) -> ProviderStatusOut:
-    config = resolve_config(_PLATFORM_DEFAULTS)
     return ProviderStatusOut(
         llm_provider=config.llm_provider,
         embedding_provider=config.embedding_provider,
+        available_llm_providers=LLMRegistry.available(),
+        available_embedding_providers=EmbeddingRegistry.available(),
+    )
+
+
+@router.patch("/config", response_model=ProviderStatusOut)
+async def update_tenant_config(
+    body: TenantConfigUpdateIn,
+    principal: Principal = Depends(require_permission("users:write")),
+    session: AsyncSession = Depends(get_scoped_session),
+    accept_language: str | None = Header(default=None, alias="Accept-Language"),
+) -> ProviderStatusOut:
+    """
+    Writes the tenant layer of the config hierarchy (§7) for real — the
+    resolver has always supported this layer; nothing ever persisted to it
+    until this endpoint existed. Validates against the actual provider
+    registries before saving, the same fail-closed discipline as every other
+    layer: an admin can never save an override that would make every
+    subsequent chat/RAG request in this tenant start 500ing.
+    """
+    locale = (accept_language or DEFAULT_LOCALE).split(",")[0].split("-")[0]
+
+    if body.llm_provider is not None and body.llm_provider not in LLMRegistry.available():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=t(
+                "admin.unknown_provider",
+                locale=locale,
+                kind="LLM",
+                name=body.llm_provider,
+                available=", ".join(LLMRegistry.available()),
+            ),
+        )
+    if body.embedding_provider is not None and body.embedding_provider not in EmbeddingRegistry.available():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=t(
+                "admin.unknown_provider",
+                locale=locale,
+                kind="embedding",
+                name=body.embedding_provider,
+                available=", ".join(EmbeddingRegistry.available()),
+            ),
+        )
+
+    tenant = await session.get(Tenant, principal.tenant_id)
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+
+    updates = body.model_dump(exclude_none=True)
+    # JSONB columns don't track in-place mutation (SQLAlchemy sees the same
+    # dict object, not a reassignment) — build a new dict so the UPDATE
+    # actually fires, the same pitfall as any ORM JSON column.
+    tenant.config_overrides = {**tenant.config_overrides, **updates}
+    await session.flush()
+
+    resolved = resolve_config(PLATFORM_DEFAULTS, tenant.config_overrides)
+    return ProviderStatusOut(
+        llm_provider=resolved.llm_provider,
+        embedding_provider=resolved.embedding_provider,
         available_llm_providers=LLMRegistry.available(),
         available_embedding_providers=EmbeddingRegistry.available(),
     )

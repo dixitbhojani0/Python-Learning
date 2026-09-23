@@ -15,7 +15,7 @@ from pydantic import BaseModel
 from backend.app.adapters.llm import providers as _providers  # noqa: F401  (triggers registration)
 from backend.app.adapters.llm.registry import LLMRegistry, UnknownProviderError
 from backend.app.api import admin_routes, auth_routes, chat_routes, memory_routes, rag_routes, tenant_routes, tool_approval_routes
-from backend.app.core.config import ConfigValidationError, resolve_config
+from backend.app.core.config import PLATFORM_DEFAULTS, ConfigValidationError, resolve_config
 from backend.app.core.i18n import DEFAULT_LOCALE, t
 
 app = FastAPI(title="AI Platform", version="0.11.0")
@@ -27,13 +27,10 @@ app.include_router(memory_routes.router)
 app.include_router(admin_routes.router)
 app.include_router(tool_approval_routes.router)
 
-# Platform-defaults layer — the lowest-precedence config layer (§7). Later
-# phases add environment/tenant/project/assistant/user layers on top of this
-# via resolve_config(platform_defaults, environment, tenant, ...).
-_PLATFORM_DEFAULTS = {
-    "default_locale": DEFAULT_LOCALE,
-    "llm_provider": "mock",
-}
+# The tenant layer (§7) is now wired up for real — see api/deps.py's
+# get_tenant_config(). This module's /v1/echo predates auth/tenancy entirely
+# ("No auth/tenancy/RAG yet" above) and has no principal to resolve a tenant
+# from, so it deliberately stays platform-defaults-only.
 
 
 def _resolve_locale(accept_language: str | None) -> str:
@@ -67,7 +64,7 @@ async def echo(
     """
     locale = _resolve_locale(accept_language)
     try:
-        config = resolve_config(_PLATFORM_DEFAULTS)
+        config = resolve_config(PLATFORM_DEFAULTS)
     except ConfigValidationError as exc:
         return {"error": t("config.invalid", locale=locale, layer="platform_defaults", detail=str(exc))}
 

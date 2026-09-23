@@ -46,18 +46,18 @@ def test_echo_missing_prompt_field_is_rejected():
 
 
 def test_echo_reports_a_translated_error_when_platform_config_is_invalid(monkeypatch):
-    # _PLATFORM_DEFAULTS is hardcoded-valid in normal operation — this branch
+    # PLATFORM_DEFAULTS is hardcoded-valid in normal operation — this branch
     # is genuinely dead in practice today, but it's real defensive code
     # (§7 fail-closed config) and deserves proof it actually does what it
     # says, not just an assumption that the try/except is correct.
-    monkeypatch.setitem(main._PLATFORM_DEFAULTS, "llm_provider", 12345)  # wrong type for a str field
+    monkeypatch.setitem(main.PLATFORM_DEFAULTS, "llm_provider", 12345)  # wrong type for a str field
     response = client.post("/v1/echo", json={"prompt": "hi"})
     assert response.status_code == 200  # the route itself doesn't 500 — it returns a structured error
     assert "error" in response.json()
 
 
 def test_echo_reports_a_translated_error_when_configured_provider_is_unregistered(monkeypatch):
-    monkeypatch.setitem(main._PLATFORM_DEFAULTS, "llm_provider", "totally-bogus-provider")
+    monkeypatch.setitem(main.PLATFORM_DEFAULTS, "llm_provider", "totally-bogus-provider")
     response = client.post("/v1/echo", json={"prompt": "hi"})
     assert response.status_code == 200
     assert "mock" in response.json()["error"]  # the available-providers list is included, not just "unknown"

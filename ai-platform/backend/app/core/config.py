@@ -20,9 +20,21 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from backend.app.core.i18n import DEFAULT_LOCALE
+
 # Ordered names for error messages only — resolve() itself is layer-count-agnostic
 # so a new layer (e.g. a future "Region" tier) doesn't require editing this list.
 LAYER_NAMES = ("platform_defaults", "environment", "tenant", "project", "assistant", "user")
+
+# The single canonical platform-defaults layer — previously copy-pasted with
+# drifting subsets of keys across admin_routes.py/chat_routes.py/rag_routes.py/
+# main.py (Phase 18 cleanup, found while wiring up the tenant layer for real).
+PLATFORM_DEFAULTS: dict[str, Any] = {
+    "default_locale": DEFAULT_LOCALE,
+    "llm_provider": "mock",
+    "embedding_provider": "mock",
+    "feature_flags": {"rag_enabled": True},
+}
 
 
 class ConfigValidationError(Exception):

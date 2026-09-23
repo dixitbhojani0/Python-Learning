@@ -31,11 +31,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.adapters.embedding import providers as _embedding_providers  # noqa: F401  (triggers registration)
 from backend.app.adapters.llm import providers as _providers  # noqa: F401  (triggers registration)
+from backend.app.adapters.llm.base import ProviderMisconfiguredError
 from backend.app.adapters.llm.registry import LLMRegistry
 from backend.app.api.deps import Principal, get_current_principal, get_scoped_session
-from backend.app.core.config import resolve_config
+from backend.app.core.config import PLATFORM_DEFAULTS, resolve_config
 from backend.app.core.i18n import DEFAULT_LOCALE, t
-from backend.app.db.models import Conversation, Message, PendingToolApproval, User
+from backend.app.db.models import Conversation, Message, PendingToolApproval, Tenant, User
 from backend.app.db.session import tenant_scoped_session
 from backend.app.memory.service import apply_extracted_memory, get_user_memory_context
 from backend.app.observability.telemetry import record_event
@@ -48,12 +49,6 @@ from backend.app.tools.registry import ToolRegistry
 
 router = APIRouter(prefix="/v1", tags=["chat"])
 
-_PLATFORM_DEFAULTS = {
-    "default_locale": DEFAULT_LOCALE,
-    "llm_provider": "mock",
-    "embedding_provider": "mock",
-    "feature_flags": {"rag_enabled": True},
-}
 _RAG_TOP_K = 3
 # Bounded autonomy (§15): a tool call that hangs must not hang the whole
 # chat turn — this is the actual enforced bound, not a documented intention.
@@ -104,6 +99,15 @@ async def chat(
     locale = (accept_language or DEFAULT_LOCALE).split(",")[0].split("-")[0]
 
     async with tenant_scoped_session(principal.tenant_id) as session:
+        # Resolved here, inside the session this route already opens for its
+        # own documented reason (see module docstring) — not via
+        # Depends(get_tenant_config), which would open a second, separate
+        # scoped session just for this one lookup. The resolved PlatformConfig
+        # is plain data afterward, safe to close over in event_stream() below
+        # even after this session block (and the request handler) has returned.
+        tenant = await session.get(Tenant, principal.tenant_id)
+        resolved_config = resolve_config(PLATFORM_DEFAULTS, tenant.config_overrides if tenant is not None else {})
+
         if body.conversation_id is None:
             conversation = Conversation(
                 id=uuid.uuid4(),
@@ -148,8 +152,18 @@ async def chat(
 
     async def event_stream():
         start_time = time.perf_counter()
-        config = resolve_config(_PLATFORM_DEFAULTS)
-        provider = LLMRegistry.create(config.llm_provider)
+        config = resolved_config
+        try:
+            provider = LLMRegistry.create(config.llm_provider)
+        except ProviderMisconfiguredError:
+            # Newly reachable now that llm_provider is admin-configurable
+            # (Phase 18) — previously this could only happen via an env var
+            # + redeploy, never a live request. A generic message, same as
+            # any other failure: never leak "which provider/API key" to an
+            # end user, only to logs (§V auth-error-uniformity's same logic
+            # applied to provider errors, not just auth ones).
+            yield f"data: {json.dumps({'type': 'error', 'message': 'chat.error'})}\n\n"
+            return
 
         # ── Tool agent loop (§15) — at most one tool call per turn, enforced
         # by detect_tool_intent() returning at most one match, not by a loop
