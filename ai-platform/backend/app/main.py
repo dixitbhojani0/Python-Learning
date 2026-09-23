@@ -14,7 +14,16 @@ from pydantic import BaseModel
 
 from backend.app.adapters.llm import providers as _providers  # noqa: F401  (triggers registration)
 from backend.app.adapters.llm.registry import LLMRegistry, UnknownProviderError
-from backend.app.api import admin_routes, auth_routes, chat_routes, memory_routes, rag_routes, tenant_routes, tool_approval_routes
+from backend.app.api import (
+    admin_routes,
+    auth_routes,
+    chat_routes,
+    ingestion_routes,
+    memory_routes,
+    rag_routes,
+    tenant_routes,
+    tool_approval_routes,
+)
 from backend.app.core.config import PLATFORM_DEFAULTS, ConfigValidationError, resolve_config
 from backend.app.core.i18n import DEFAULT_LOCALE, t
 
@@ -26,6 +35,7 @@ app.include_router(rag_routes.router)
 app.include_router(memory_routes.router)
 app.include_router(admin_routes.router)
 app.include_router(tool_approval_routes.router)
+app.include_router(ingestion_routes.router)
 
 # The tenant layer (§7) is now wired up for real — see api/deps.py's
 # get_tenant_config(). This module's /v1/echo predates auth/tenancy entirely

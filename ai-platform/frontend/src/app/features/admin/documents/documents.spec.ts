@@ -9,9 +9,8 @@ const LANGS = {
   en: {
     admin: {
       documents: 'Knowledge base', noDocuments: 'No documents ingested yet.', chunkCount: '{{count}} chunks',
-      delete: 'Delete', ingestTitle: 'Add a document', documentTitle: 'Title', documentContent: 'Content',
-      ingest: 'Ingest', ingesting: 'Ingesting…', ingestFailed: 'Could not ingest this document.',
-      deleteFailed: 'Could not delete this document.', accessDenied: "You don't have permission to view this section.",
+      delete: 'Delete', deleteFailed: 'Could not delete this document.', accessDenied: "You don't have permission to view this section.",
+      addDocumentHint: 'Add documents from the', pipeline: 'Indexing Pipeline',
     },
   },
 };
@@ -19,7 +18,6 @@ const LANGS = {
 type AdminStub = {
   listDocuments: ReturnType<typeof vi.fn>;
   deleteDocument: ReturnType<typeof vi.fn>;
-  ingestDocument: ReturnType<typeof vi.fn>;
 };
 
 describe('AdminDocumentsComponent', () => {
@@ -29,7 +27,6 @@ describe('AdminDocumentsComponent', () => {
     adminStub = {
       listDocuments: vi.fn().mockResolvedValue([]),
       deleteDocument: vi.fn(),
-      ingestDocument: vi.fn(),
       ...overrides,
     };
 
@@ -61,26 +58,6 @@ describe('AdminDocumentsComponent', () => {
     expect(link.getAttribute('href')).toBe('/admin/documents/d1');
   });
 
-  it('ingesting a document clears the form and refreshes the list', async () => {
-    const listDocuments = vi.fn().mockResolvedValueOnce([]).mockResolvedValue([{ id: 'd2', title: 'New doc', chunk_count: 1 }]);
-    const fixture = await setup({
-      ingestDocument: vi.fn().mockResolvedValue({ id: 'd2', title: 'New doc', chunk_count: 1 }),
-      listDocuments,
-    });
-    const component = fixture.componentInstance as unknown as {
-      ingestTitle: string; ingestContent: string; ingest: () => Promise<void>;
-    };
-    component.ingestTitle = 'New doc';
-    component.ingestContent = 'Some content';
-
-    await component.ingest();
-    fixture.detectChanges();
-
-    expect(adminStub.ingestDocument).toHaveBeenCalledWith('New doc', 'Some content');
-    expect(component.ingestTitle).toBe('');
-    expect((fixture.nativeElement as HTMLElement).querySelector('[data-testid="document-0"]')!.textContent).toContain('New doc');
-  });
-
   it('deleting a document removes only that document from the list', async () => {
     const fixture = await setup({
       listDocuments: vi.fn().mockResolvedValue([
@@ -106,21 +83,6 @@ describe('AdminDocumentsComponent', () => {
     expect((fixture.nativeElement as HTMLElement).querySelector('[data-testid="documents-error"]')).toBeTruthy();
   });
 
-  it('ingest failure shows an error and does not clear the typed form', async () => {
-    const fixture = await setup({ ingestDocument: vi.fn().mockRejectedValue(new Error('500')) });
-    const component = fixture.componentInstance as unknown as {
-      ingestTitle: string; ingestContent: string; ingest: () => Promise<void>;
-    };
-    component.ingestTitle = 'Keep this';
-    component.ingestContent = 'Keep this too';
-
-    await component.ingest();
-    fixture.detectChanges();
-
-    expect((fixture.nativeElement as HTMLElement).querySelector('[data-testid="ingest-error"]')).toBeTruthy();
-    expect(component.ingestTitle).toBe('Keep this');
-  });
-
   it('a failed delete shows an error without removing the document from the list', async () => {
     const fixture = await setup({
       listDocuments: vi.fn().mockResolvedValue([{ id: 'd1', title: 'Doc A', chunk_count: 1 }]),
@@ -137,19 +99,6 @@ describe('AdminDocumentsComponent', () => {
   });
 
   // ── Edge ────────────────────────────────────────────────────────────────
-
-  it('does nothing when submitting with an empty title or content', async () => {
-    const fixture = await setup();
-    const component = fixture.componentInstance as unknown as {
-      ingestTitle: string; ingestContent: string; ingest: () => Promise<void>;
-    };
-    component.ingestTitle = '';
-    component.ingestContent = 'has content but no title';
-
-    await component.ingest();
-
-    expect(adminStub.ingestDocument).not.toHaveBeenCalled();
-  });
 
   it('shows the empty-documents message when the tenant has ingested nothing', async () => {
     const fixture = await setup();

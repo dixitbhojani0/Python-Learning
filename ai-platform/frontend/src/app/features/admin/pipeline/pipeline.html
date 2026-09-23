@@ -1,0 +1,77 @@
+<div class="app-shell">
+  <header class="app-header">
+    <h1>{{ 'admin.pipeline' | transloco }}</h1>
+  </header>
+
+  <section class="card">
+    <h2>{{ 'admin.ingestTitle' | transloco }}</h2>
+    <form (ngSubmit)="ingest()">
+      <input
+        name="title"
+        type="text"
+        [(ngModel)]="ingestTitle"
+        [placeholder]="'admin.documentTitle' | transloco"
+        data-testid="ingest-title-input"
+      />
+      <textarea
+        name="content"
+        [(ngModel)]="ingestContent"
+        [placeholder]="'admin.documentContent' | transloco"
+        data-testid="ingest-content-input"
+      ></textarea>
+      <button type="submit" [disabled]="ingesting()" data-testid="ingest-submit">
+        {{ (ingesting() ? 'admin.ingesting' : 'admin.ingest') | transloco }}
+      </button>
+      @if (ingestError(); as key) {
+        <p role="alert" data-testid="ingest-error">{{ key | transloco }}</p>
+      }
+    </form>
+  </section>
+
+  <section class="card">
+    <form (ngSubmit)="loadJobs()" class="field-row">
+      <label>
+        {{ 'admin.stage' | transloco }}
+        <select name="stage" [(ngModel)]="selectedStage" data-testid="pipeline-stage-select">
+          <option value="">{{ 'admin.allStages' | transloco }}</option>
+          @for (s of knownStages; track s) {
+            <option [value]="s">{{ s }}</option>
+          }
+        </select>
+      </label>
+      <button type="submit" [disabled]="loading()" data-testid="pipeline-apply">{{ 'admin.apply' | transloco }}</button>
+    </form>
+
+    @if (jobsError(); as key) {
+      <p role="alert" data-testid="jobs-error">{{ key | transloco }}</p>
+    }
+    @if (jobs().length === 0 && !jobsError() && !loading()) {
+      <p data-testid="jobs-empty" class="empty-state">{{ 'admin.noJobs' | transloco }}</p>
+    }
+
+    @if (jobs().length > 0) {
+      <div class="table-scroll">
+        <table data-testid="jobs-table">
+          <thead>
+            <tr>
+              <th>{{ 'admin.documentTitle' | transloco }}</th>
+              <th>{{ 'admin.stage' | transloco }}</th>
+              <th>{{ 'admin.chunks' | transloco }}</th>
+              <th>{{ 'admin.timestamp' | transloco }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (job of jobs(); track job.id) {
+              <tr [attr.data-testid]="'job-row-' + $index">
+                <td><a [routerLink]="['/admin/pipeline', job.id]" [attr.data-testid]="'job-link-' + $index">{{ job.title }}</a></td>
+                <td><span class="badge" [class]="badgeClass(job.stage)">{{ job.stage }}</span></td>
+                <td>{{ job.chunk_count }}</td>
+                <td>{{ job.created_at | date: 'medium' }}</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    }
+  </section>
+</div>

@@ -439,6 +439,8 @@ KNOWN_AUDIT_EVENT_TYPES = (
     "tool_call_pending_approval",
     "tool_call_approved",
     "tool_call_rejected",
+    "ingestion_job_completed",
+    "ingestion_job_failed",
 )
 
 

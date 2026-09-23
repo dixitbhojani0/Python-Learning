@@ -17,6 +17,7 @@ from backend.app.db.models import (
     Chunk,
     Conversation,
     Document,
+    IngestionJob,
     Message,
     PendingToolApproval,
     Role,
@@ -84,8 +85,10 @@ async def make_tenant():
             # they can be deleted in any order relative to that pair — but
             # both groups must clear before the tenant row itself.
             # PendingToolApproval references users + conversations — clear
-            # before either of those.
+            # before either of those. IngestionJob references documents —
+            # clear before Document, same reasoning as Chunk.
             await session.execute(delete(PendingToolApproval).where(PendingToolApproval.tenant_id == tenant_id))
+            await session.execute(delete(IngestionJob).where(IngestionJob.tenant_id == tenant_id))
             await session.execute(delete(Chunk).where(Chunk.tenant_id == tenant_id))
             await session.execute(delete(Document).where(Document.tenant_id == tenant_id))
             await session.execute(delete(UserMemory).where(UserMemory.tenant_id == tenant_id))

@@ -633,3 +633,119 @@ tbody tr:last-child td {
   word-break: break-word;
   color: var(--color-text);
 }
+
+/* ── Two-column detail layout (job details + stage log) ───────────────────── */
+
+.two-column {
+  display: flex;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.two-column > .card {
+  flex: 1 1 300px;
+}
+
+/* ── Ingestion job stage tracker ──────────────────────────────────────────── */
+
+.stage-tracker {
+  display: flex;
+  list-style: none;
+  margin: 0 0 var(--space-3);
+  padding: 0;
+}
+
+.stage-tracker-node {
+  position: relative;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.stage-tracker-node:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  top: 11px;
+  left: 50%;
+  width: 100%;
+  height: 2px;
+  background: var(--color-border);
+}
+
+.stage-tracker-node[data-status="done"]:not(:last-child)::after {
+  background: var(--color-success);
+}
+
+.stage-tracker-dot {
+  position: relative;
+  z-index: 1;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--color-surface-raised);
+  border: 2px solid var(--color-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.stage-tracker-node[data-status="done"] .stage-tracker-dot {
+  background: var(--color-success);
+  border-color: var(--color-success);
+}
+
+.stage-tracker-node[data-status="done"] .stage-tracker-dot::before {
+  content: "✓";
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.stage-tracker-node[data-status="current"] .stage-tracker-dot {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px var(--color-warning-bg);
+  animation: stage-pulse 1.5s infinite;
+}
+
+.stage-tracker-node[data-status="failed"] .stage-tracker-dot {
+  background: var(--color-danger);
+  border-color: var(--color-danger);
+}
+
+.stage-tracker-node[data-status="failed"] .stage-tracker-dot::before {
+  content: "✕";
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.stage-tracker-label {
+  margin-top: var(--space-1);
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  text-transform: capitalize;
+}
+
+.stage-tracker-node[data-status="done"] .stage-tracker-label,
+.stage-tracker-node[data-status="current"] .stage-tracker-label {
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+@keyframes stage-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 3px var(--color-warning-bg);
+  }
+  50% {
+    box-shadow: 0 0 0 6px var(--color-warning-bg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stage-tracker-node[data-status="current"] .stage-tracker-dot {
+    animation: none;
+  }
+}

@@ -3,6 +3,11 @@
     <h1>{{ 'admin.documents' | transloco }}</h1>
   </header>
 
+  <p class="empty-state">
+    {{ 'admin.addDocumentHint' | transloco }}
+    <a routerLink="/admin/pipeline">{{ 'admin.pipeline' | transloco }}</a>
+  </p>
+
   <section data-testid="documents-section" class="card">
     @if (documentsError(); as key) {
       <p role="alert" data-testid="documents-error">{{ key | transloco }}</p>
@@ -23,28 +28,5 @@
         </li>
       }
     </ul>
-
-    <form (ngSubmit)="ingest()">
-      <h3>{{ 'admin.ingestTitle' | transloco }}</h3>
-      <input
-        name="title"
-        type="text"
-        [(ngModel)]="ingestTitle"
-        [placeholder]="'admin.documentTitle' | transloco"
-        data-testid="ingest-title-input"
-      />
-      <textarea
-        name="content"
-        [(ngModel)]="ingestContent"
-        [placeholder]="'admin.documentContent' | transloco"
-        data-testid="ingest-content-input"
-      ></textarea>
-      <button type="submit" [disabled]="ingesting()" data-testid="ingest-submit">
-        {{ (ingesting() ? 'admin.ingesting' : 'admin.ingest') | transloco }}
-      </button>
-      @if (ingestError(); as key) {
-        <p role="alert" data-testid="ingest-error">{{ key | transloco }}</p>
-      }
-    </form>
   </section>
 </div>

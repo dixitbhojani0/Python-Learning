@@ -10,7 +10,7 @@ const LANGS = {
     app: { brandName: 'AI Platform' },
     chat: { title: 'Chat', logout: 'Sign out' },
     admin: {
-      title: 'Admin', overview: 'Overview', documents: 'Knowledge base', team: 'Team & roles',
+      title: 'Admin', overview: 'Overview', documents: 'Knowledge base', pipeline: 'Indexing Pipeline', team: 'Team & roles',
       pendingApprovals: 'Pending tool approvals', auditLog: 'Audit & logs',
     },
   },
@@ -53,6 +53,7 @@ describe('App', () => {
     expect(el.querySelector('[data-testid="nav-chat"]')).toBeTruthy();
     expect(el.querySelector('[data-testid="nav-overview"]')).toBeTruthy();
     expect(el.querySelector('[data-testid="nav-documents"]')).toBeTruthy();
+    expect(el.querySelector('[data-testid="nav-pipeline"]')).toBeTruthy();
     expect(el.querySelector('[data-testid="nav-team"]')).toBeTruthy();
     expect(el.querySelector('[data-testid="nav-approvals"]')).toBeTruthy();
     expect(el.querySelector('[data-testid="nav-audit"]')).toBeTruthy();

@@ -194,3 +194,42 @@ class PendingToolApproval(Base):
     resolved_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class IngestionJob(Base):
+    """
+    Phase 19: real async ingestion, executed via FastAPI BackgroundTasks (no
+    Celery/Redis — the same "boring infra first" call as telemetry avoiding a
+    full OTel stack). `stage` values are the actual code sections
+    rag/ingestion.py runs, in order — "chunking" -> "embedding" -> "storing"
+    -> "complete" (or "failed") — not invented pipeline theater; there is
+    genuinely no "parsing" stage because this platform accepts raw pasted
+    text, never a file to parse, and no "vector store upsert" distinct from
+    "storing" because chunks+embeddings land in the same Postgres/pgvector
+    table in one step.
+
+    `document_id` is nullable because the Document row doesn't exist until
+    the "storing" stage actually succeeds — chunking and embedding are pure
+    computation with nothing persisted yet, specifically so a failure in
+    either of them never leaves a permanently orphaned, chunk-less document
+    behind. A job can fail before ever creating one.
+    """
+
+    __tablename__ = "ingestion_jobs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id"), index=True)
+    document_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("documents.id"), nullable=True)
+    title: Mapped[str] = mapped_column(String(255))
+    embedding_provider: Mapped[str] = mapped_column(String(32))
+    # "queued" | "chunking" | "embedding" | "storing" | "complete" | "failed"
+    stage: Mapped[str] = mapped_column(String(16), default="queued")
+    chunk_count: Mapped[int] = mapped_column(Integer, default=0)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # [{"stage": "...", "message": "...", "at": "<iso timestamp>"}, ...] — the
+    # visible stage-by-stage trace, appended to as each real transition
+    # happens, not reconstructed after the fact.
+    stage_log: Mapped[list] = mapped_column(JSONB, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

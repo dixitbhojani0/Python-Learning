@@ -1,0 +1,64 @@
+<div class="app-shell">
+  <a routerLink="/admin/pipeline" data-testid="back-to-pipeline-link">{{ 'admin.backToPipeline' | transloco }}</a>
+
+  @if (error(); as key) {
+    <p role="alert" data-testid="job-detail-error">{{ key | transloco }}</p>
+  } @else if (job(); as j) {
+    <header class="app-header">
+      <h1 data-testid="job-detail-title">{{ j.title }}</h1>
+      <span class="badge" [class]="j.stage === 'failed' ? 'badge-danger' : j.stage === 'complete' ? 'badge-success' : 'badge-warning'" data-testid="job-detail-stage-badge">
+        {{ j.stage }}
+      </span>
+      <button type="button" (click)="refresh()" data-testid="job-detail-refresh">{{ 'admin.refresh' | transloco }}</button>
+    </header>
+
+    <section class="card">
+      <h2>{{ 'admin.pipelineProgress' | transloco }}</h2>
+      <ol class="stage-tracker" data-testid="stage-tracker">
+        @for (node of trackerNodes(); track node.key) {
+          <li class="stage-tracker-node" [attr.data-status]="node.status" [attr.data-testid]="'stage-node-' + node.key">
+            <span class="stage-tracker-dot" aria-hidden="true"></span>
+            <span class="stage-tracker-label">{{ node.key }}</span>
+          </li>
+        }
+      </ol>
+      @if (j.error_message; as err) {
+        <p role="alert" data-testid="job-detail-error-message">{{ err }}</p>
+      }
+    </section>
+
+    <div class="two-column">
+      <section class="card">
+        <h2>{{ 'admin.jobDetails' | transloco }}</h2>
+        <p><strong>{{ 'admin.embeddingProvider' | transloco }}:</strong> {{ j.embedding_provider }}</p>
+        <p><strong>{{ 'admin.chunks' | transloco }}:</strong> {{ j.chunk_count }}</p>
+        <p><strong>{{ 'admin.startedAt' | transloco }}:</strong> {{ j.started_at ? (j.started_at | date: 'medium') : '—' }}</p>
+        <p><strong>{{ 'admin.finishedAt' | transloco }}:</strong> {{ j.finished_at ? (j.finished_at | date: 'medium') : '—' }}</p>
+        @if (j.document_id) {
+          <p>
+            <a [routerLink]="['/admin/documents', j.document_id]" data-testid="job-detail-document-link">
+              {{ 'admin.viewDocument' | transloco }}
+            </a>
+          </p>
+        }
+      </section>
+
+      <section class="card">
+        <h2>{{ 'admin.stageLog' | transloco }}</h2>
+        @if (j.stage_log.length === 0) {
+          <p class="empty-state">{{ 'admin.noStageLogYet' | transloco }}</p>
+        }
+        <ul>
+          @for (entry of j.stage_log; track $index) {
+            <li [attr.data-testid]="'stage-log-' + $index" class="list-item">
+              <span>
+                <span class="badge badge-neutral">{{ entry.stage }}</span>
+                {{ entry.message }}
+              </span>
+            </li>
+          }
+        </ul>
+      </section>
+    </div>
+  }
+</div>

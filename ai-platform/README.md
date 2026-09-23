@@ -26,12 +26,42 @@ suite is re-run before the next step starts, so nothing regresses silently.
 | 16. Dark theme + persistent sidebar shell | A full visual redesign, not incremental polish — the flat light theme from Phase 14 read as a bare CRUD form set, not a product. New: a single dark "control plane" palette (slate background, amber accent, status colors for success/warning/danger/info), a persistent sidebar shell (`app.html`) replacing the per-page duplicate nav/logout that used to live separately in `chat.html` and `admin.html`, a `badge`/chip system replacing plain-text metadata lines (citations, tool results, approvals, role permissions, chunk counts), and a full-height chat layout with a pinned input bar instead of a card that just grows. `logout()` moved from `ChatComponent` to the shell `App` component — the old test for it moved with it, not just deleted | 216 backend + 90 frontend passed |
 | 17. Admin restructure: real sections, drill-down, a real audit log | Phase 16 was a reskin, not a structural fix — Admin was still one flat page. Split into 5 routed pages (`/admin/overview`, `/documents`, `/documents/:id`, `/team`, `/approvals`, `/audit`), each its own lazy chunk, mirroring a reference control-panel's per-concern navigation instead of one scrolling stack of cards. Two of five reference-inspired ideas were deliberately **not** built — see "why" below. The other three are real: a document detail drill-down page (`GET /v1/admin/documents/{id}`), and a genuine Audit & Logs viewer (`GET /v1/admin/audit-log`, filterable by event type) backed by the `telemetry_events` table that already existed but had no viewer at all | 227 backend + 102 frontend passed |
 | 18. Making the config hierarchy real: a live, editable settings panel | The two ideas refused in Phase 17 (an editable settings page, a real async pipeline) came back as an explicit ask to build the *real* capability behind them, not fake UI — a legitimately different request. Built the settings half: `tenants.config_overrides` (new column + migration) is the tenant layer of the hierarchical config resolver (§7) — architected since Phase 1, wired to real storage for the first time. `PATCH /v1/admin/config` validates against the actual provider registries before saving (fail-closed, §7) and every `resolve_config()` call site across chat/RAG/admin now goes through one shared `get_tenant_config()` dependency instead of 4 copy-pasted `_PLATFORM_DEFAULTS` dicts that had quietly drifted out of sync with each other. A new chat SSE `error` event handles the failure mode this feature newly makes reachable (an admin selecting a provider with no API key configured) with a clean translated message instead of an unhandled crash. The async ingestion pipeline is its own follow-up phase | 238 backend + 106 frontend passed |
+| 19. The real async ingestion pipeline | The other Phase 17 refusal, built for real: a new `ingestion_jobs` table (RLS-scoped) and `rag/pipeline.py`, executed via FastAPI `BackgroundTasks` (no Celery/Redis at this scale). Stages are the actual code sections ingestion runs — `chunking` → `embedding` → `storing` → `complete`/`failed` — not invented pipeline theater; there's no "parsing" stage because this platform accepts raw pasted text, never a file to parse. A genuine FastAPI ordering bug was found and fixed while building this — see "why" below — plus a real design flaw (an orphaned, chunk-less document could survive an embedding-stage failure), caught before it ever shipped. Admin gets a new "Indexing Pipeline" page: a job list with a stage filter, and a detail page with a real animated stage tracker and a stage-by-stage log, both driven by data a job actually produced, not a canned demo state | 253 backend + 121 frontend passed |
 
 **Next up:** the platform blueprint's remaining phases are largely enterprise-hardening (SSO/SCIM, schema-per-tenant provisioning) and scale/deployment concerns (§T's managed-cloud topology) — both explicitly gated in the blueprint's own roadmap on "a real tenant/load demanding it," which doesn't exist here, so building them now would be exactly the speculative work §30 warns against. The core product surface (chat, RAG, memory, tools/agents, admin — now including user/role management — eval) is feature-complete end to end, has automated CI enforcing it stays that way, and now has a coverage-audited test suite proving that CI gate actually exercises the code it claims to.
 
 ### Why user management stayed out of scope until asked for, then got built for real
 
 Phase 14's dev-server walkthrough surfaced a real gap: `GET /v1/tenants/{id}/users` existed on the backend but no frontend code ever called it, and the `users:write` permission was granted to the seeded admin role but checked by zero routes — scaffolded but never finished. Rather than build a possibly-unwanted feature speculatively, that gap was reported and confirmed before writing any code (§30 — the same anti-speculation discipline behind every other "not built yet" line in this README). Once confirmed: `POST /v1/admin/roles` validates permission strings against the exact fixed vocabulary every `require_permission(...)` call site in the codebase actually checks (grepped, not guessed) and rejects both unknown permissions and duplicate role names; `POST /v1/admin/users` generates a random temporary password server-side (`secrets.token_urlsafe`) since there's no SMTP infrastructure to email an invite link, and returns it exactly once in the response body — it is never stored or logged in plaintext, only its bcrypt hash. `test_update_user_role_changes_the_users_permissions` is the test worth reading in full: it proves a role change is real by showing the user's OLD JWT keeps the OLD (narrower) permissions after the change — permissions are baked into the token at login, not re-checked live — the exact JWT-snapshot behavior Phase 14 hit for real with the seed-data bug, now covered by a test instead of only a bug-fix commit.
+
+### A real FastAPI ordering bug, found by tracing — not by reading the docs harder
+
+Building Phase 19's `POST /v1/admin/ingestion-jobs`, the first version created the job row through
+the route's own `Depends(get_scoped_session)`, then called `background_tasks.add_task(...)` and
+returned. Every job stayed stuck at `"queued"` forever, with an empty `stage_log` — no exception,
+no crash, `run_ingestion_job` visibly ran and returned cleanly. Reading the code suggested this
+*shouldn't* be possible: FastAPI's dependency cleanup (which commits the session) should run before
+the response — with its attached `BackgroundTasks` — is ever sent. Rather than trust that reasoning,
+it was tested directly: `_advance()` (the function that updates a job's stage) was patched to log
+every lookup, and the trace showed the background task's very first database read for that job
+returned nothing — the same row, created two lines earlier in the same request, simply wasn't
+committed yet by the time the background task queried for it. Confirmed, not assumed, by then
+manually calling `run_ingestion_job()` directly outside the request cycle and watching it complete
+correctly — isolating the bug to the *ordering*, not the pipeline logic itself. Fixed by wrapping
+the job's creation in its own explicit `tenant_scoped_session` block that commits before
+`background_tasks.add_task(...)` is ever reached — the same pattern `chat_routes.py` already uses,
+for the same reason, documented in its own module docstring since Phase 3. `test_creating_a_job_returns_202_with_queued_stage`
+alone wouldn't have caught this (the initial response is correct either way);
+`test_a_completed_job_progresses_through_every_real_stage_in_order` is the one that actually
+depends on the fix holding.
+
+A second, unrelated flaw was caught while writing tests, not by the tests themselves: the first
+pipeline design created the `Document` row during the `"chunking"` stage, before embedding could
+still fail — meaning a failed job could leave a real, permanently orphaned, chunk-less document
+sitting in the tenant's corpus. Fixed by moving `Document` creation into the same transaction as
+`Chunk` creation at the `"storing"` stage, so a document exists if and only if ingestion actually
+succeeded. `test_a_failed_job_records_the_error_and_never_creates_a_document` is the regression test
+for exactly this.
 
 ### Why the config hierarchy was "decorative" until Phase 18, and a real bug that proves it now isn't
 

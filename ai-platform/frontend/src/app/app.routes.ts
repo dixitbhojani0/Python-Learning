@@ -40,6 +40,17 @@ export const routes: Routes = [
     canActivate: [authGuard],
   },
   {
+    path: 'admin/pipeline',
+    loadComponent: () => import('./features/admin/pipeline/pipeline').then((m) => m.AdminPipelineComponent),
+    canActivate: [authGuard],
+  },
+  {
+    path: 'admin/pipeline/:id',
+    loadComponent: () =>
+      import('./features/admin/pipeline/pipeline-detail').then((m) => m.AdminPipelineDetailComponent),
+    canActivate: [authGuard],
+  },
+  {
     path: 'admin/team',
     loadComponent: () => import('./features/admin/team/team').then((m) => m.AdminTeamComponent),
     canActivate: [authGuard],

@@ -37,6 +37,23 @@ export interface AuditLogEntry {
   created_at: string;
 }
 
+export interface IngestionJobSummary {
+  id: string;
+  document_id: string | null;
+  title: string;
+  stage: string;
+  chunk_count: number;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+export interface IngestionJobDetail extends IngestionJobSummary {
+  embedding_provider: string;
+  error_message: string | null;
+  stage_log: { stage: string; message: string; at: string }[];
+}
+
 export interface TelemetrySummary {
   total_chat_turns: number;
   rag_usage_rate: number;
@@ -157,5 +174,21 @@ export class AdminService {
       params = params.set('event_type', eventType);
     }
     return firstValueFrom(this.http.get<AuditLogEntry[]>('/api/v1/admin/audit-log', { params }));
+  }
+
+  createIngestionJob(title: string, content: string) {
+    return firstValueFrom(this.http.post<IngestionJobSummary>('/api/v1/admin/ingestion-jobs', { title, content }));
+  }
+
+  listIngestionJobs(stage: string | null) {
+    let params = new HttpParams();
+    if (stage) {
+      params = params.set('stage', stage);
+    }
+    return firstValueFrom(this.http.get<IngestionJobSummary[]>('/api/v1/admin/ingestion-jobs', { params }));
+  }
+
+  getIngestionJob(id: string) {
+    return firstValueFrom(this.http.get<IngestionJobDetail>(`/api/v1/admin/ingestion-jobs/${id}`));
   }
 }
