@@ -20,6 +20,9 @@
   "admin.unknown_provider": "अज्ञात {kind} प्रदाता '{name}'। पंजीकृत प्रदाता: {available}।",
   "admin.email_already_in_use": "इस ईमेल वाला उपयोगकर्ता इस वर्कस्पेस में पहले से मौजूद है।",
   "admin.user_not_found": "उपयोगकर्ता नहीं मिला।",
+  "admin.mcp_server_not_found": "MCP सर्वर नहीं मिला।",
+  "admin.mcp_server_disabled": "यह MCP सर्वर अक्षम है। कोई टूल चलाने से पहले इसे सक्षम करें।",
+  "admin.mcp_connection_failed": "MCP सर्वर से कनेक्ट नहीं हो सका: {detail}",
   "tools.approval_required_message": "इस कार्रवाई को चलाने से पहले स्वीकृति आवश्यक है। एक व्यवस्थापक इसे एडमिन पैनल से स्वीकृत या अस्वीकृत कर सकता है।",
   "tools.approval_not_found": "लंबित स्वीकृति नहीं मिली।",
   "tools.approval_already_resolved": "यह स्वीकृति पहले ही हल चुकी है।"

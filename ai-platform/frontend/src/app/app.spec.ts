@@ -55,6 +55,7 @@ describe('App', () => {
     expect(el.querySelector('[data-testid="nav-documents"]')).toBeTruthy();
     expect(el.querySelector('[data-testid="nav-pipeline"]')).toBeTruthy();
     expect(el.querySelector('[data-testid="nav-team"]')).toBeTruthy();
+    expect(el.querySelector('[data-testid="nav-mcp"]')).toBeTruthy();
     expect(el.querySelector('[data-testid="nav-approvals"]')).toBeTruthy();
     expect(el.querySelector('[data-testid="nav-audit"]')).toBeTruthy();
     expect(el.querySelector('[data-testid="nav-logout"]')).toBeTruthy();

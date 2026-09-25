@@ -174,21 +174,38 @@ h1, h2, h3, .brand { font-family: "Space Grotesk", "Inter", sans-serif; }
 #speak-overlay .waveform i:nth-child(4n) { animation-delay: 0.45s; }
 #speak-overlay .waveform i:nth-child(5n) { animation-delay: 0.6s; }
 
-#mic-btn {
+#call-controls {
   position: absolute;
   bottom: 24px;
   left: 50%;
   transform: translateX(-50%);
+  display: flex;
+  gap: 14px;
+  z-index: 6;
+}
+
+.control-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   width: 54px; height: 54px;
   border-radius: 50%;
   border: 1px solid var(--panel-border);
   background: var(--accent);
+  color: #04212f;
   cursor: pointer;
   box-shadow: 0 4px 18px var(--glow);
-  transition: transform 0.15s ease;
-  z-index: 6;
+  transition: transform 0.15s ease, background 0.15s ease;
 }
-#mic-btn:hover { transform: translateX(-50%) scale(1.08); }
+.control-btn:hover { transform: scale(1.08); }
+.control-btn.off {
+  background: var(--panel);
+  backdrop-filter: var(--glass-blur);
+  color: #f87171;
+  box-shadow: var(--glass-edge);
+}
+.control-btn:disabled { opacity: 0.45; cursor: default; }
+.control-btn:disabled:hover { transform: none; }
 
 /* ---------- Conversation panel (right) ---------- */
 #conversation {

@@ -56,6 +56,11 @@ export const routes: Routes = [
     canActivate: [authGuard],
   },
   {
+    path: 'admin/mcp',
+    loadComponent: () => import('./features/admin/mcp/mcp').then((m) => m.AdminMcpComponent),
+    canActivate: [authGuard],
+  },
+  {
     path: 'admin/approvals',
     loadComponent: () => import('./features/admin/approvals/approvals').then((m) => m.AdminApprovalsComponent),
     canActivate: [authGuard],

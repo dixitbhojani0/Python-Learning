@@ -20,6 +20,9 @@
   "admin.unknown_provider": "Unknown {kind} provider '{name}'. Registered providers: {available}.",
   "admin.email_already_in_use": "A user with that email already exists in this workspace.",
   "admin.user_not_found": "User not found.",
+  "admin.mcp_server_not_found": "MCP server not found.",
+  "admin.mcp_server_disabled": "This MCP server is disabled. Enable it before calling a tool on it.",
+  "admin.mcp_connection_failed": "Could not connect to the MCP server: {detail}",
   "tools.approval_required_message": "This action requires approval before it can run. An administrator can approve or reject it from the admin panel.",
   "tools.approval_not_found": "Pending approval not found.",
   "tools.approval_already_resolved": "This approval has already been resolved."

@@ -28,6 +28,7 @@ suite is re-run before the next step starts, so nothing regresses silently.
 | 18. Making the config hierarchy real: a live, editable settings panel | The two ideas refused in Phase 17 (an editable settings page, a real async pipeline) came back as an explicit ask to build the *real* capability behind them, not fake UI — a legitimately different request. Built the settings half: `tenants.config_overrides` (new column + migration) is the tenant layer of the hierarchical config resolver (§7) — architected since Phase 1, wired to real storage for the first time. `PATCH /v1/admin/config` validates against the actual provider registries before saving (fail-closed, §7) and every `resolve_config()` call site across chat/RAG/admin now goes through one shared `get_tenant_config()` dependency instead of 4 copy-pasted `_PLATFORM_DEFAULTS` dicts that had quietly drifted out of sync with each other. A new chat SSE `error` event handles the failure mode this feature newly makes reachable (an admin selecting a provider with no API key configured) with a clean translated message instead of an unhandled crash. The async ingestion pipeline is its own follow-up phase | 238 backend + 106 frontend passed |
 | 19. The real async ingestion pipeline | The other Phase 17 refusal, built for real: a new `ingestion_jobs` table (RLS-scoped) and `rag/pipeline.py`, executed via FastAPI `BackgroundTasks` (no Celery/Redis at this scale). Stages are the actual code sections ingestion runs — `chunking` → `embedding` → `storing` → `complete`/`failed` — not invented pipeline theater; there's no "parsing" stage because this platform accepts raw pasted text, never a file to parse *(**update, Phase 20**: it does now — a real "parsing" stage was added)*. A genuine FastAPI ordering bug was found and fixed while building this — see "why" below — plus a real design flaw (an orphaned, chunk-less document could survive an embedding-stage failure), caught before it ever shipped. Admin gets a new "Indexing Pipeline" page: a job list with a stage filter, and a detail page with a real animated stage tracker and a stage-by-stage log, both driven by data a job actually produced, not a canned demo state | 253 backend + 121 frontend passed |
 | 20. Real file upload — "is this really RAG without it?" | A fair question, and no: a paste-text box alone isn't what most RAG systems mean by ingestion. Added a self-registering `DocumentParserRegistry` (rag/parsers/ — the same plugin pattern as the LLM/embedding/tool registries, a fourth concrete ~30-line registry rather than one generic abstraction bent to fit all four, per §30) with real parsers for `.txt`/`.md` (stdlib), `.csv` (stdlib, rendered as labeled `header: value` pairs so a mid-table chunk boundary stays legible), `.pdf` (`pypdf`, pure Python, verified current/maintained before pinning), and `.docx` (`python-docx`). `POST /v1/admin/ingestion-jobs/upload` accepts a real multipart file; the pipeline gained a genuine "parsing" stage (extraction happens there for files, and — for consistency — a trivial pass-through for pasted text) rather than only adding parsing to one of the two entry points. Every parser's error handling was verified empirically against a real malformed file per format, not assumed from one guessed exception type — one parser needed 3 distinct except clauses once actually tested against 3 distinct ways a file can be wrong. Also fixed the UI: `.app-shell`'s 720px max-width was leaving most of a real monitor as dead space on every data-dense admin page | 279 backend + 126 frontend passed |
+| 21. MCP (Model Context Protocol) server connectivity | "Able to connect [an] MCP server... think pluggable product" was the ask. Scope was explicitly negotiated before writing code (§30): connect/discover/manually-test-a-tool from the admin panel, *not* wiring MCP tools into the autonomous chat loop — a real architectural ceiling, not laziness, see "why" below. New `mcp_servers` table (RLS-scoped, admin-managed Postgres config — not a YAML file, unlike the sibling `ai-sdlc-assistant` project's MCP client — consistent with how this platform already stores tenant config) plus `backend/app/mcp/client.py`, a thin wrapper around the official `mcp` SDK v2's `Client` (not `langchain-mcp-adapters`, which the sibling project uses — too heavy, and philosophically inconsistent with this platform's "raw REST over vendor SDK" stance everywhere else). `POST /v1/admin/mcp-servers/{id}/test-connection` calls a real `list_tools()`; `POST .../call-tool` invokes one manually with JSON arguments, both against a real MCP server the admin configured, with optional bearer-token auth (verified against actual `mcp` SDK source, not the docs — the simple `Client(url_string)` path has no header support, but the lower-level `streamable_http_client(url, http_client=...)` it calls internally does). Every failure mode was tested against a real server, not mocked, including a real discovery of *how* the SDK actually fails (see "why" below) | 303 backend + 139 frontend passed |
 
 **Next up:** the platform blueprint's remaining phases are largely enterprise-hardening (SSO/SCIM, schema-per-tenant provisioning) and scale/deployment concerns (§T's managed-cloud topology) — both explicitly gated in the blueprint's own roadmap on "a real tenant/load demanding it," which doesn't exist here, so building them now would be exactly the speculative work §30 warns against. The core product surface (chat, RAG, memory, tools/agents, admin — now including user/role management — eval) is feature-complete end to end, has automated CI enforcing it stays that way, and now has a coverage-audited test suite proving that CI gate actually exercises the code it claims to.
 
@@ -51,6 +52,35 @@ broadly in that one parser (with a comment explaining exactly why, so it doesn't
 error handling) and re-raising as the single `DocumentParseError` every parser in the registry
 promises. `test_docx_parser_rejects_a_zip_that_is_not_a_docx_package` is the regression test for the
 specific case the first two attempts both missed.
+
+### Why MCP connects only from the admin panel, not from chat
+
+Every chat turn's tool use in this platform goes through `tools/intent.py`'s deterministic regex
+matching (§30 — see "Why tool-trigger detection is a regex" below), and none of the 3 LLM adapters
+(mock/Gemini/Groq) implement real structured function-calling. A regex can't be written ahead of
+time for an arbitrary tool an admin connects at runtime from an external MCP server — there's no
+fixed vocabulary to match against. Making MCP tools chat-callable needs the LLM function-calling
+rewrite first, a separate and much larger piece of work. This was surfaced and the narrower scope
+(connect/discover/manually test) was explicitly confirmed before writing any code, rather than
+building a version that silently half-wires MCP into chat and calls it done.
+
+### Why the MCP test server runs as a separate OS process, not inside pytest's own event loop
+
+The first version of `tests/unit/test_mcp_client.py` hosted the test MCP server the obvious way —
+`uvicorn.Server(...).serve()` as a task inside the same pytest-asyncio session-scoped event loop
+the tests themselves run in, exactly like the standalone verification script that proved the
+wrapper's design worked in the first place. Every test involving a bearer-token-authenticated
+request then hung until a `httpx2.ReadTimeout`, while the identical server code answered instantly
+when run as a plain `asyncio.run()` script outside pytest. Requests the server rejected before
+reaching the real MCP session handler (no token, wrong token) worked fine either way — only
+requests that reached the SDK's actual `streamable_http` session manager hung, which pointed at an
+`anyio` task-group/loop interaction specific to pytest-asyncio's shared session loop, not a bug in
+the wrapper itself. Rather than chase a Windows-specific asyncio scheduling interaction with an
+unclear payoff, the server was moved into a genuine separate process
+(`tests/unit/_mcp_test_server.py`, launched via `subprocess.Popen` and polled for its port to
+accept connections) — sidesteps the hang entirely and is arguably a more faithful "real server"
+test besides. `backend/app/mcp/client.py` itself needed no changes; this was purely a test-harness
+finding, confirmed by running the exact same server code both ways before settling on the fix.
 
 ### A real FastAPI ordering bug, found by tracing — not by reading the docs harder
 

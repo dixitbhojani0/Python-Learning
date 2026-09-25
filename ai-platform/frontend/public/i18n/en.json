@@ -120,6 +120,29 @@
       "documents:read": "View knowledge base",
       "documents:write": "Manage knowledge base",
       "tools:approve": "Approve tool actions"
-    }
+    },
+    "mcpServers": "MCP servers",
+    "mcpServersHint": "Connect to an external MCP (Model Context Protocol) server, discover the tools it offers, and manually call one to test it. Not yet wired into chat — this is connect/discover/test only.",
+    "addMcpServer": "Add server",
+    "addingMcpServer": "Adding…",
+    "addMcpServerFailed": "Could not add this server. Please try again.",
+    "mcpServerName": "Name",
+    "mcpServerUrl": "Server URL",
+    "mcpServerAuthTokenHint": "Bearer token (optional)",
+    "noMcpServers": "No MCP servers connected yet.",
+    "mcpServerDeleteFailed": "Could not remove this server. Please try again.",
+    "enabled": "Enabled",
+    "disabled": "Disabled",
+    "testConnection": "Test connection",
+    "testingConnection": "Testing…",
+    "testConnectionFailed": "Could not connect to this server.",
+    "noToolsDiscovered": "This server did not report any tools.",
+    "discoveredTools": "Discovered tools",
+    "toolToCall": "Tool",
+    "toolArguments": "Arguments (JSON)",
+    "invalidToolArguments": "Arguments must be valid JSON.",
+    "callTool": "Call tool",
+    "callingTool": "Calling…",
+    "toolCallFailed": "Could not call this tool."
   }
 }

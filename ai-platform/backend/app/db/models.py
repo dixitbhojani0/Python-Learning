@@ -233,3 +233,32 @@ class IngestionJob(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class McpServer(Base):
+    """
+    Phase 21: an admin-configured external MCP (Model Context Protocol)
+    server this tenant can connect to, discover tools from, and manually
+    invoke a tool on for testing — see backend/app/mcp/client.py and
+    api/mcp_routes.py. `auth_token` is stored as plain text like every other
+    tenant-scoped row in this RLS-protected table (there is no
+    secrets-manager/encryption-at-rest layer anywhere else in this codebase
+    either — bcrypt-hashed passwords are a different category, a one-way
+    hash, not reversible storage); a KMS-backed secrets layer is the upgrade
+    path if a second real need for one shows up.
+
+    Deliberately NOT wired into the chat/agent tool-execution loop — see
+    api/mcp_routes.py's module docstring for the honest architectural reason
+    (the platform's 3 LLM adapters don't implement real function-calling
+    yet). This table only backs connect/discover/manual-test.
+    """
+
+    __tablename__ = "mcp_servers"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id"), index=True)
+    name: Mapped[str] = mapped_column(String(255))
+    url: Mapped[str] = mapped_column(String(2048))
+    auth_token: Mapped[str | None] = mapped_column(Text, nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)

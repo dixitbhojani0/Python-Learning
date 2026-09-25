@@ -18,6 +18,7 @@ from backend.app.db.models import (
     Conversation,
     Document,
     IngestionJob,
+    McpServer,
     Message,
     PendingToolApproval,
     Role,
@@ -89,6 +90,7 @@ async def make_tenant():
             # clear before Document, same reasoning as Chunk.
             await session.execute(delete(PendingToolApproval).where(PendingToolApproval.tenant_id == tenant_id))
             await session.execute(delete(IngestionJob).where(IngestionJob.tenant_id == tenant_id))
+            await session.execute(delete(McpServer).where(McpServer.tenant_id == tenant_id))
             await session.execute(delete(Chunk).where(Chunk.tenant_id == tenant_id))
             await session.execute(delete(Document).where(Document.tenant_id == tenant_id))
             await session.execute(delete(UserMemory).where(UserMemory.tenant_id == tenant_id))

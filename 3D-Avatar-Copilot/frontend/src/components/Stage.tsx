@@ -1,4 +1,4 @@
-import { Mic, UserRoundSearch } from "lucide-react";
+import { Mic, MicOff, UserRoundSearch, Volume2, VolumeX } from "lucide-react";
 import type { RefObject } from "react";
 
 import type { ChatMessage, Status } from "../types";
@@ -13,15 +13,19 @@ interface StageProps {
   status: Status;
   personaName: string;
   messages: ChatMessage[];
-  onMicClick: () => void;
+  micMuted: boolean;
+  outputMuted: boolean;
+  canListen: boolean;
+  onToggleMic: () => void;
+  onToggleOutput: () => void;
 }
 
-function statusLabel(status: Status, personaName: string): string {
+function statusLabel(status: Status, personaName: string, micMuted: boolean): string {
   switch (status) {
     case "connecting":
       return "Connecting…";
     case "listening":
-      return "Listening…";
+      return micMuted ? "Microphone muted" : "Listening…";
     case "thinking":
       return "Searching knowledge base…";
     case "speaking":
@@ -31,7 +35,20 @@ function statusLabel(status: Status, personaName: string): string {
   }
 }
 
-export function Stage({ videoRef, showVideo, connecting, dryMode, status, personaName, messages, onMicClick }: StageProps) {
+export function Stage({
+  videoRef,
+  showVideo,
+  connecting,
+  dryMode,
+  status,
+  personaName,
+  messages,
+  micMuted,
+  outputMuted,
+  canListen,
+  onToggleMic,
+  onToggleOutput,
+}: StageProps) {
   return (
     <main id="stage">
       <section id="avatar-pane">
@@ -51,13 +68,27 @@ export function Stage({ videoRef, showVideo, connecting, dryMode, status, person
 
         {/* speaking overlay: status + waveform, lower third of the avatar */}
         <div id="speak-overlay" data-state={status}>
-          <span className="speak-label">{statusLabel(status, personaName)}</span>
+          <span className="speak-label">{statusLabel(status, personaName, micMuted)}</span>
           <LiveWaveform videoRef={videoRef} live={showVideo} />
         </div>
 
-        <button id="mic-btn" title="Speak — or click to advance to the next step" onClick={onMicClick}>
-          <Mic size={24} />
-        </button>
+        <div id="call-controls">
+          <button
+            className={micMuted ? "control-btn off" : "control-btn"}
+            title={canListen ? (micMuted ? "Unmute microphone" : "Mute microphone") : "Microphone unavailable"}
+            disabled={!canListen}
+            onClick={onToggleMic}
+          >
+            {micMuted ? <MicOff size={22} /> : <Mic size={22} />}
+          </button>
+          <button
+            className={outputMuted ? "control-btn off" : "control-btn"}
+            title={outputMuted ? "Unmute voice" : "Mute voice"}
+            onClick={onToggleOutput}
+          >
+            {outputMuted ? <VolumeX size={22} /> : <Volume2 size={22} />}
+          </button>
+        </div>
       </section>
 
       <ConversationPanel messages={messages} personaName={personaName} status={status} />

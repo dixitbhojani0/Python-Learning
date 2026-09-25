@@ -91,6 +91,25 @@ export interface InvitedUser {
   temporary_password: string;
 }
 
+export interface McpServer {
+  id: string;
+  name: string;
+  url: string;
+  enabled: boolean;
+  created_at: string;
+}
+
+export interface McpTool {
+  name: string;
+  description: string | null;
+  input_schema: Record<string, unknown>;
+}
+
+export interface McpCallToolResult {
+  is_error: boolean;
+  content: Record<string, unknown>[];
+}
+
 @Injectable({ providedIn: 'root' })
 export class AdminService {
   private readonly http = inject(HttpClient);
@@ -199,5 +218,29 @@ export class AdminService {
 
   getIngestionJob(id: string) {
     return firstValueFrom(this.http.get<IngestionJobDetail>(`/api/v1/admin/ingestion-jobs/${id}`));
+  }
+
+  listMcpServers() {
+    return firstValueFrom(this.http.get<McpServer[]>('/api/v1/admin/mcp-servers'));
+  }
+
+  createMcpServer(name: string, url: string, authToken: string | null) {
+    return firstValueFrom(
+      this.http.post<McpServer>('/api/v1/admin/mcp-servers', { name, url, auth_token: authToken })
+    );
+  }
+
+  deleteMcpServer(id: string) {
+    return firstValueFrom(this.http.delete<{ deleted: string }>(`/api/v1/admin/mcp-servers/${id}`));
+  }
+
+  testMcpServerConnection(id: string) {
+    return firstValueFrom(this.http.post<{ tools: McpTool[] }>(`/api/v1/admin/mcp-servers/${id}/test-connection`, {}));
+  }
+
+  callMcpServerTool(id: string, toolName: string, args: Record<string, unknown>) {
+    return firstValueFrom(
+      this.http.post<McpCallToolResult>(`/api/v1/admin/mcp-servers/${id}/call-tool`, { tool_name: toolName, arguments: args })
+    );
   }
 }

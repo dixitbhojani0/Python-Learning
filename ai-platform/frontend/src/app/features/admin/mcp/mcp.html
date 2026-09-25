@@ -1,0 +1,124 @@
+<div class="app-shell">
+  <header class="app-header">
+    <h1>{{ 'admin.mcpServers' | transloco }}</h1>
+  </header>
+
+  <p class="empty-state">{{ 'admin.mcpServersHint' | transloco }}</p>
+
+  <section class="card">
+    <h2>{{ 'admin.addMcpServer' | transloco }}</h2>
+    <form (ngSubmit)="addServer()">
+      <input
+        name="mcpName"
+        type="text"
+        [(ngModel)]="name"
+        [placeholder]="'admin.mcpServerName' | transloco"
+        data-testid="mcp-name-input"
+      />
+      <input
+        name="mcpUrl"
+        type="text"
+        [(ngModel)]="url"
+        [placeholder]="'admin.mcpServerUrl' | transloco"
+        data-testid="mcp-url-input"
+      />
+      <input
+        name="mcpAuthToken"
+        type="password"
+        [(ngModel)]="authToken"
+        [placeholder]="'admin.mcpServerAuthTokenHint' | transloco"
+        data-testid="mcp-auth-token-input"
+      />
+      <button type="submit" [disabled]="adding()" data-testid="mcp-add-submit">
+        {{ (adding() ? 'admin.addingMcpServer' : 'admin.addMcpServer') | transloco }}
+      </button>
+      @if (addError(); as key) {
+        <p role="alert" data-testid="mcp-add-error">{{ key | transloco }}</p>
+      }
+    </form>
+  </section>
+
+  <section data-testid="mcp-servers-section" class="card">
+    @if (serversError(); as key) {
+      <p role="alert" data-testid="mcp-servers-error">{{ key | transloco }}</p>
+    }
+    @if (servers().length === 0 && !serversError()) {
+      <p data-testid="mcp-servers-empty" class="empty-state">{{ 'admin.noMcpServers' | transloco }}</p>
+    }
+    <ul>
+      @for (server of servers(); track server.id) {
+        <li [attr.data-testid]="'mcp-server-' + $index" class="list-item">
+          <span>
+            <strong>{{ server.name }}</strong>
+            <span class="badge" [class]="server.enabled ? 'badge-success' : 'badge-neutral'">
+              {{ (server.enabled ? 'admin.enabled' : 'admin.disabled') | transloco }}
+            </span>
+            <span class="empty-state">{{ server.url }}</span>
+          </span>
+          <span>
+            <button type="button" (click)="testConnection(server)" [attr.data-testid]="'mcp-test-' + $index">
+              {{ (testing() && expandedServerId() === server.id ? 'admin.testingConnection' : 'admin.testConnection') | transloco }}
+            </button>
+            <button type="button" (click)="deleteServer(server.id)" [attr.data-testid]="'mcp-delete-' + $index">
+              {{ 'admin.delete' | transloco }}
+            </button>
+          </span>
+        </li>
+
+        @if (expandedServerId() === server.id) {
+          <li class="list-item" data-testid="mcp-server-detail">
+            @if (testError(); as key) {
+              <p role="alert" data-testid="mcp-test-error">{{ key | transloco }}</p>
+            }
+            @if (!testing() && !testError()) {
+              @if (discoveredTools().length === 0) {
+                <p class="empty-state">{{ 'admin.noToolsDiscovered' | transloco }}</p>
+              } @else {
+                <div>
+                  <h3>{{ 'admin.discoveredTools' | transloco }}</h3>
+                  <ul>
+                    @for (tool of discoveredTools(); track tool.name) {
+                      <li>
+                        <code>{{ tool.name }}</code>
+                        @if (tool.description) {
+                          <span> — {{ tool.description }}</span>
+                        }
+                      </li>
+                    }
+                  </ul>
+
+                  <form (ngSubmit)="callTool()">
+                    <label>
+                      {{ 'admin.toolToCall' | transloco }}
+                      <select name="selectedTool" [(ngModel)]="selectedTool" data-testid="mcp-tool-select">
+                        <option value="" disabled>{{ 'admin.toolToCall' | transloco }}</option>
+                        @for (tool of discoveredTools(); track tool.name) {
+                          <option [value]="tool.name">{{ tool.name }}</option>
+                        }
+                      </select>
+                    </label>
+                    <textarea
+                      name="toolArgsJson"
+                      [(ngModel)]="toolArgsJson"
+                      [placeholder]="'admin.toolArguments' | transloco"
+                      data-testid="mcp-tool-args-input"
+                    ></textarea>
+                    <button type="submit" [disabled]="calling() || !selectedTool" data-testid="mcp-call-tool-submit">
+                      {{ (calling() ? 'admin.callingTool' : 'admin.callTool') | transloco }}
+                    </button>
+                    @if (callError(); as key) {
+                      <p role="alert" data-testid="mcp-call-error">{{ key | transloco }}</p>
+                    }
+                    @if (callResult(); as result) {
+                      <pre data-testid="mcp-call-result">{{ result | json }}</pre>
+                    }
+                  </form>
+                </div>
+              }
+            }
+          </li>
+        }
+      }
+    </ul>
+  </section>
+</div>

@@ -12,8 +12,12 @@ export interface EngineCallbacks {
   /** Autoplay awaits this — return a promise that resolves when the question has been presented (e.g. spoken). */
   onBubble: (text: string) => void | Promise<void>;
   onScenePlayed: (index: number) => void;
+  /** Spoken input matched nothing — a polite clarification is being given. */
+  onFallback: (text: string) => void;
   onClosing: () => void;
 }
+
+const FALLBACK_REPLY = "I'm sorry, I didn't quite catch that. Could you rephrase your question?";
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -37,12 +41,28 @@ export class SceneEngine {
     return this.played.findIndex((p) => !p);
   }
 
-  /** Advisor speech → first unplayed scene whose keyword matches; no match → next unplayed (linear script never stalls). */
+  /** Advisor speech → first unplayed scene whose keyword matches; no match → polite clarification (never a wrong answer). */
   routeTranscript(transcript: string): void {
     const t = transcript.toLowerCase();
-    let idx = this.scenes.findIndex((s, i) => !this.played[i] && s.keywords.some((k) => t.includes(k)));
-    if (idx === -1) idx = this.nextUnplayed();
+    const idx = this.scenes.findIndex((s, i) => !this.played[i] && s.keywords.some((k) => t.includes(k)));
     if (idx !== -1) void this.playScene(idx);
+    else void this.playFallbackReply();
+  }
+
+  private async playFallbackReply(): Promise<void> {
+    if (this.busy) return;
+    this.busy = true;
+    try {
+      this.callbacks.onFallback(FALLBACK_REPLY);
+      this.callbacks.onStatus("speaking");
+      try {
+        await this.provider.speak(FALLBACK_REPLY);
+      } finally {
+        this.callbacks.onStatus("listening");
+      }
+    } finally {
+      this.busy = false;
+    }
   }
 
   async playScene(index: number): Promise<void> {

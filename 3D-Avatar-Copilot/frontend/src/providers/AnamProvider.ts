@@ -9,10 +9,12 @@ export class AnamProvider extends ProviderEventEmitter implements AvatarProvider
   readonly capabilities = { video: true, listens: true };
 
   private client: AnamClient | null = null;
+  private videoEl: HTMLVideoElement | null = null;
   private speakingEndResolver: (() => void) | null = null;
   private safetyTimer: number | undefined;
 
   async connect(videoEl: HTMLVideoElement, session?: SessionInfo): Promise<void> {
+    this.videoEl = videoEl;
     session ??= await createSession();
     if (!session.sessionToken) throw new Error("backend returned no sessionToken");
 
@@ -56,6 +58,15 @@ export class AnamProvider extends ProviderEventEmitter implements AvatarProvider
     this.safetyTimer = window.setTimeout(() => this.finishSpeaking(), (text.split(" ").length / 2.0) * 1000 + 4000);
     await this.client.talk(text);
     await done;
+  }
+
+  setMicMuted(muted: boolean): void {
+    if (muted) this.client?.muteInputAudio();
+    else this.client?.unmuteInputAudio();
+  }
+
+  setOutputMuted(muted: boolean): void {
+    if (this.videoEl) this.videoEl.muted = muted;
   }
 
   disconnect(): void {

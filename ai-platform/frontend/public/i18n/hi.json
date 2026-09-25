@@ -120,6 +120,29 @@
       "documents:read": "नॉलेज आधार देखें",
       "documents:write": "नॉलेज आधार प्रबंधित करें",
       "tools:approve": "टूल कार्रवाइयां स्वीकृत करें"
-    }
+    },
+    "mcpServers": "MCP सर्वर",
+    "mcpServersHint": "किसी बाहरी MCP (Model Context Protocol) सर्वर से कनेक्ट करें, उसके टूल खोजें, और परीक्षण के लिए किसी एक को मैन्युअल रूप से चलाएं। यह अभी चैट से नहीं जुड़ा है — केवल कनेक्ट/खोज/परीक्षण के लिए है।",
+    "addMcpServer": "सर्वर जोड़ें",
+    "addingMcpServer": "जोड़ा जा रहा है…",
+    "addMcpServerFailed": "यह सर्वर नहीं जोड़ा जा सका। कृपया पुनः प्रयास करें।",
+    "mcpServerName": "नाम",
+    "mcpServerUrl": "सर्वर URL",
+    "mcpServerAuthTokenHint": "बेयरर टोकन (वैकल्पिक)",
+    "noMcpServers": "अभी तक कोई MCP सर्वर कनेक्ट नहीं है।",
+    "mcpServerDeleteFailed": "यह सर्वर हटाया नहीं जा सका। कृपया पुनः प्रयास करें।",
+    "enabled": "सक्षम",
+    "disabled": "अक्षम",
+    "testConnection": "कनेक्शन जांचें",
+    "testingConnection": "जांचा जा रहा है…",
+    "testConnectionFailed": "इस सर्वर से कनेक्ट नहीं हो सका।",
+    "noToolsDiscovered": "इस सर्वर ने कोई टूल नहीं बताया।",
+    "discoveredTools": "खोजे गए टूल",
+    "toolToCall": "टूल",
+    "toolArguments": "आर्गुमेंट्स (JSON)",
+    "invalidToolArguments": "आर्गुमेंट्स मान्य JSON होने चाहिए।",
+    "callTool": "टूल चलाएं",
+    "callingTool": "चलाया जा रहा है…",
+    "toolCallFailed": "यह टूल नहीं चलाया जा सका।"
   }
 }

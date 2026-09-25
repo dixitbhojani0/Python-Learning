@@ -19,6 +19,7 @@ from backend.app.api import (
     auth_routes,
     chat_routes,
     ingestion_routes,
+    mcp_routes,
     memory_routes,
     rag_routes,
     tenant_routes,
@@ -36,6 +37,7 @@ app.include_router(memory_routes.router)
 app.include_router(admin_routes.router)
 app.include_router(tool_approval_routes.router)
 app.include_router(ingestion_routes.router)
+app.include_router(mcp_routes.router)
 
 # The tenant layer (§7) is now wired up for real — see api/deps.py's
 # get_tenant_config(). This module's /v1/echo predates auth/tenancy entirely
