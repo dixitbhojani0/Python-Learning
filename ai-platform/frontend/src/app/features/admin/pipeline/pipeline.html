@@ -4,6 +4,34 @@
   </header>
 
   <section class="card">
+    <h2>{{ 'admin.uploadFile' | transloco }}</h2>
+    <p class="empty-state">{{ 'admin.supportedFileTypes' | transloco }}: {{ supportedFileTypes.join(', ') }}</p>
+    <form (ngSubmit)="upload()">
+      <input
+        name="uploadTitle"
+        type="text"
+        [(ngModel)]="uploadTitle"
+        [placeholder]="'admin.titleOptionalHint' | transloco"
+        data-testid="upload-title-input"
+      />
+      <input
+        #fileInput
+        name="file"
+        type="file"
+        [attr.accept]="supportedFileTypes.join(',')"
+        (change)="onFileSelected($event)"
+        data-testid="upload-file-input"
+      />
+      <button type="submit" [disabled]="uploading() || !selectedFile()" data-testid="upload-submit">
+        {{ (uploading() ? 'admin.uploading' : 'admin.upload') | transloco }}
+      </button>
+      @if (uploadError(); as key) {
+        <p role="alert" data-testid="upload-error">{{ key | transloco }}</p>
+      }
+    </form>
+  </section>
+
+  <section class="card">
     <h2>{{ 'admin.ingestTitle' | transloco }}</h2>
     <form (ngSubmit)="ingest()">
       <input

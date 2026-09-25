@@ -30,6 +30,7 @@ function completeJob(overrides: Partial<IngestionJobDetail> = {}): IngestionJobD
     error_message: null,
     stage_log: [
       { stage: 'queued', message: "Stage 'queued' completed successfully.", at: '2026-01-01T00:00:00Z' },
+      { stage: 'parsing', message: 'Received 11 character(s) of pasted text.', at: '2026-01-01T00:00:01Z' },
       { stage: 'chunking', message: 'Chunking produced 1 piece(s).', at: '2026-01-01T00:00:01Z' },
       { stage: 'embedding', message: 'Embedding generation complete.', at: '2026-01-01T00:00:01Z' },
       { stage: 'storing', message: "Stage 'storing' completed successfully.", at: '2026-01-01T00:00:02Z' },
@@ -79,7 +80,7 @@ describe('AdminPipelineDetailComponent', () => {
     const fixture = await setup('j1');
     const el = fixture.nativeElement as HTMLElement;
     expect(el.querySelector('[data-testid="stage-log-0"]')!.textContent).toContain('queued');
-    expect(el.querySelector('[data-testid="stage-log-3"]')!.textContent).toContain('storing');
+    expect(el.querySelector('[data-testid="stage-log-4"]')!.textContent).toContain('storing');
   });
 
   it('links to the resulting document when one exists', async () => {
@@ -92,7 +93,9 @@ describe('AdminPipelineDetailComponent', () => {
     const fixture = await setup('j1');
     const component = fixture.componentInstance as unknown as { trackerNodes: () => TrackerNode[] };
     expect(component.trackerNodes().every((n) => n.status === 'done')).toBe(true);
-    expect(component.trackerNodes().map((n) => n.key)).toEqual(['queued', 'chunking', 'embedding', 'storing', 'complete']);
+    expect(component.trackerNodes().map((n) => n.key)).toEqual([
+      'queued', 'parsing', 'chunking', 'embedding', 'storing', 'complete',
+    ]);
   });
 
   it('a failed job marks the failed stage and everything after it correctly', async () => {
@@ -104,6 +107,7 @@ describe('AdminPipelineDetailComponent', () => {
           error_message: 'GEMINI_API_KEY is not set',
           stage_log: [
             { stage: 'queued', message: "Stage 'queued' completed successfully.", at: '2026-01-01T00:00:00Z' },
+            { stage: 'parsing', message: 'Received 5 character(s) of pasted text.', at: '2026-01-01T00:00:01Z' },
             { stage: 'chunking', message: 'Chunking produced 1 piece(s).', at: '2026-01-01T00:00:01Z' },
             { stage: 'embedding', message: 'Failed: GEMINI_API_KEY is not set', at: '2026-01-01T00:00:02Z' },
           ],
@@ -114,6 +118,7 @@ describe('AdminPipelineDetailComponent', () => {
     const component = fixture.componentInstance as unknown as { trackerNodes: () => TrackerNode[] };
     const nodes = component.trackerNodes();
     expect(nodes.find((n) => n.key === 'queued')!.status).toBe('done');
+    expect(nodes.find((n) => n.key === 'parsing')!.status).toBe('done');
     expect(nodes.find((n) => n.key === 'chunking')!.status).toBe('done');
     expect(nodes.find((n) => n.key === 'embedding')!.status).toBe('failed');
     expect(nodes.find((n) => n.key === 'storing')!.status).toBe('pending');
@@ -133,6 +138,7 @@ describe('AdminPipelineDetailComponent', () => {
           finished_at: null,
           stage_log: [
             { stage: 'queued', message: "Stage 'queued' completed successfully.", at: '2026-01-01T00:00:00Z' },
+            { stage: 'parsing', message: 'Received 5 character(s) of pasted text.', at: '2026-01-01T00:00:01Z' },
             { stage: 'chunking', message: 'Chunking produced 1 piece(s).', at: '2026-01-01T00:00:01Z' },
           ],
         })

@@ -323,7 +323,11 @@ ul {
 }
 
 .app-shell {
-  max-width: 720px;
+  /* 720px left most of a real monitor as dead black space on every admin
+     page — these are data tables and multi-card layouts, not a reading
+     column. Widened so a table/two-column layout actually uses the screen;
+     .page-narrow (login, health) is the separate, deliberately-narrow case. */
+  max-width: 1100px;
   margin: 0 auto;
 }
 

@@ -15,6 +15,8 @@
   "admin.role_name_taken": "इस नाम की भूमिका इस वर्कस्पेस में पहले से मौजूद है।",
   "admin.role_not_found": "भूमिका नहीं मिली।",
   "admin.ingestion_job_not_found": "इंजेशन जॉब नहीं मिली।",
+  "admin.unsupported_file_type": "असमर्थित फ़ाइल प्रकार '.{extension}'। समर्थित: {available}।",
+  "admin.file_too_large": "फ़ाइल बहुत बड़ी है। अधिकतम आकार {max_mb} MB है।",
   "admin.unknown_provider": "अज्ञात {kind} प्रदाता '{name}'। पंजीकृत प्रदाता: {available}।",
   "admin.email_already_in_use": "इस ईमेल वाला उपयोगकर्ता इस वर्कस्पेस में पहले से मौजूद है।",
   "admin.user_not_found": "उपयोगकर्ता नहीं मिला।",

@@ -180,6 +180,15 @@ export class AdminService {
     return firstValueFrom(this.http.post<IngestionJobSummary>('/api/v1/admin/ingestion-jobs', { title, content }));
   }
 
+  createIngestionJobFromFile(file: File, title: string | null) {
+    const form = new FormData();
+    form.append('file', file);
+    if (title) {
+      form.append('title', title);
+    }
+    return firstValueFrom(this.http.post<IngestionJobSummary>('/api/v1/admin/ingestion-jobs/upload', form));
+  }
+
   listIngestionJobs(stage: string | null) {
     let params = new HttpParams();
     if (stage) {

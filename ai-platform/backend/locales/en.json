@@ -15,6 +15,8 @@
   "admin.role_name_taken": "A role with that name already exists in this workspace.",
   "admin.role_not_found": "Role not found.",
   "admin.ingestion_job_not_found": "Ingestion job not found.",
+  "admin.unsupported_file_type": "Unsupported file type '.{extension}'. Supported: {available}.",
+  "admin.file_too_large": "File is too large. Maximum size is {max_mb} MB.",
   "admin.unknown_provider": "Unknown {kind} provider '{name}'. Registered providers: {available}.",
   "admin.email_already_in_use": "A user with that email already exists in this workspace.",
   "admin.user_not_found": "User not found.",

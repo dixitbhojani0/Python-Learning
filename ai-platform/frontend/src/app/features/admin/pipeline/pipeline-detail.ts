@@ -6,7 +6,7 @@ import { AdminService, IngestionJobDetail } from '../../../core/admin/admin.serv
 
 // The real, complete stage order rag/pipeline.py ever assigns (see its own
 // module docstring) — this IS the tracker, not a decorative approximation.
-const STAGE_ORDER = ['queued', 'chunking', 'embedding', 'storing', 'complete'] as const;
+const STAGE_ORDER = ['queued', 'parsing', 'chunking', 'embedding', 'storing', 'complete'] as const;
 
 export interface TrackerNode {
   key: string;

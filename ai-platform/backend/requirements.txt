@@ -22,6 +22,24 @@ bcrypt==4.2.1
 # adapter pattern as the LLM providers (§M), not a local model.
 pgvector==0.3.6
 
+# Real file ingestion (Phase 20) — pypdf is pure Python with no further
+# dependencies (PyPDF2 was deprecated and merged back into it); python-docx
+# is the standard, actively-maintained library for .docx. Both verified
+# current/maintained before pinning, not assumed. python-multipart is
+# FastAPI's own requirement for parsing multipart/form-data file uploads.
+pypdf==6.19.0
+python-docx==1.2.0
+python-multipart==0.0.32
+
+# MCP (Model Context Protocol) server connectivity — the official Python
+# SDK, installed ahead of its own routes landing in the next phase. Pulls in
+# a newer pydantic/starlette transitively (verified compatible: full suite
+# re-run green after the bump, not just installed and hoped) and a separate
+# `httpx2` package (a real, distinct successor package from the same
+# maintainers, not a typo — coexists with this file's own pinned httpx with
+# no conflict per `pip check`).
+mcp==2.2.0
+
 # test-only — also bumped in the same pip-audit pass (dev-only, lower
 # severity than the runtime deps above, but fixed anyway since the upgrade
 # path was clean: full suite re-verified green, no config changes needed

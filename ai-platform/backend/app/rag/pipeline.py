@@ -27,6 +27,7 @@ from backend.app.db.models import Chunk, Document, IngestionJob
 from backend.app.db.session import tenant_scoped_session
 from backend.app.observability.telemetry import record_event
 from backend.app.rag.chunking import chunk_text
+from backend.app.rag.parsers.registry import DocumentParserRegistry
 
 
 async def _advance(job_id: uuid.UUID, tenant_id: uuid.UUID, *, log_stage: str, message: str, to_stage: str, **fields) -> None:
@@ -47,22 +48,51 @@ async def _advance(job_id: uuid.UUID, tenant_id: uuid.UUID, *, log_stage: str, m
         job.stage_log = [*job.stage_log, {"stage": log_stage, "message": message, "at": now_iso}]
 
 
-async def run_ingestion_job(job_id: uuid.UUID, tenant_id: uuid.UUID, title: str, content: str, embedding_provider: str) -> None:
+async def run_ingestion_job(
+    job_id: uuid.UUID,
+    tenant_id: uuid.UUID,
+    title: str,
+    embedding_provider: str,
+    *,
+    content: str | None = None,
+    file_bytes: bytes | None = None,
+    filename: str | None = None,
+) -> None:
+    """
+    Exactly one of `content` (pasted text) or `file_bytes`+`filename`
+    (uploaded file) is provided by the caller — see ingestion_routes.py's
+    two creation endpoints. Both paths go through the same real "parsing"
+    stage: for pasted text there is nothing to extract, so it's a trivial
+    pass-through; for a file it's real bytes-to-text extraction via
+    rag/parsers/registry.py. Unifying both here (rather than only adding
+    "parsing" for the file path) keeps every job's stage list identical
+    regardless of how it started.
+    """
     try:
         await _advance(
             job_id,
             tenant_id,
             log_stage="queued",
             message="Stage 'queued' completed successfully.",
-            to_stage="chunking",
+            to_stage="parsing",
             started_at=datetime.now(timezone.utc),
         )
+
+        if file_bytes is not None:
+            extension = filename.rsplit(".", 1)[-1] if filename and "." in filename else ""
+            resolved_content = DocumentParserRegistry.create(extension).parse(file_bytes)
+            parse_message = f"Extracted {len(resolved_content)} character(s) from '{filename}'."
+        else:
+            resolved_content = content or ""
+            parse_message = f"Received {len(resolved_content)} character(s) of pasted text."
+
+        await _advance(job_id, tenant_id, log_stage="parsing", message=parse_message, to_stage="chunking")
 
         # "chunking" is pure computation — no DB write. Persisting the
         # Document here (before embedding can still fail) would leave a real,
         # permanently orphaned document with zero chunks behind on any later
         # failure; the actual document only exists once "storing" succeeds.
-        pieces = chunk_text(content)
+        pieces = chunk_text(resolved_content)
         await _advance(
             job_id,
             tenant_id,
@@ -86,7 +116,7 @@ async def run_ingestion_job(job_id: uuid.UUID, tenant_id: uuid.UUID, title: str,
         )
 
         async with tenant_scoped_session(tenant_id) as session:
-            document = Document(id=uuid.uuid4(), tenant_id=tenant_id, title=title, content=content)
+            document = Document(id=uuid.uuid4(), tenant_id=tenant_id, title=title, content=resolved_content)
             session.add(document)
             await session.flush()
             document_id = document.id

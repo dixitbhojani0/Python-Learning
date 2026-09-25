@@ -69,7 +69,7 @@ async def test_a_completed_job_progresses_through_every_real_stage_in_order(make
     assert body["chunk_count"] == 1
     assert body["started_at"] is not None
     assert body["finished_at"] is not None
-    assert [entry["stage"] for entry in body["stage_log"]] == ["queued", "chunking", "embedding", "storing"]
+    assert [entry["stage"] for entry in body["stage_log"]] == ["queued", "parsing", "chunking", "embedding", "storing"]
 
 
 async def test_a_completed_jobs_document_is_actually_searchable(make_tenant):
@@ -253,3 +253,198 @@ async def test_cannot_get_another_tenants_job_by_id(make_tenant):
         response = await client.get(f"/v1/admin/ingestion-jobs/{job_id}", headers=_auth_header(token_b))
 
     assert response.status_code == 404
+
+
+# ── File upload (Phase 20) ───────────────────────────────────────────────
+# "Is this really RAG without file upload?" was a fair question — these
+# exercise real files through the real parser registry (rag/parsers/), not
+# just the pre-existing paste-text path.
+
+def _make_pdf_bytes(text: str) -> bytes:
+    """
+    A minimal, hand-built (but genuinely valid) single-page PDF 1.4 file with
+    one text-showing content stream — verified separately to actually
+    round-trip through pypdf's PdfReader.extract_text() before use here.
+    Not built via PdfWriter: pypdf has no high-level "draw this text" API on
+    a blank page, and a first attempt using its low-level ContentStream
+    object directly produced a PDF pypdf itself couldn't extract text back
+    out of. Real PDF structure (objects, xref table, trailer) written
+    directly is more reliable for a small, fixed test fixture than fighting
+    a writer API that isn't meant for this.
+    """
+    import io
+
+    content = f"BT /F1 24 Tf 72 720 Td ({text}) Tj ET".encode("latin-1")
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /Resources << /Font << /F1 4 0 R >> >> "
+        b"/MediaBox [0 0 612 792] /Contents 5 0 R >>",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        f"<< /Length {len(content)} >>\nstream\n".encode("latin-1") + content + b"\nendstream",
+    ]
+
+    out = io.BytesIO()
+    out.write(b"%PDF-1.4\n")
+    offsets = [0]
+    for i, obj in enumerate(objects, start=1):
+        offsets.append(out.tell())
+        out.write(f"{i} 0 obj\n".encode("latin-1"))
+        out.write(obj)
+        out.write(b"\nendobj\n")
+    xref_offset = out.tell()
+    out.write(f"xref\n0 {len(objects) + 1}\n".encode("latin-1"))
+    out.write(b"0000000000 65535 f \n")
+    for off in offsets[1:]:
+        out.write(f"{off:010d} 00000 n \n".encode("latin-1"))
+    out.write(f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref_offset}\n%%EOF".encode("latin-1"))
+    return out.getvalue()
+
+
+def _make_docx_bytes(text: str) -> bytes:
+    import io
+    import docx
+
+    document = docx.Document()
+    document.add_paragraph(text)
+    buf = io.BytesIO()
+    document.save(buf)
+    return buf.getvalue()
+
+
+async def test_uploading_a_txt_file_ingests_its_real_content(make_tenant):
+    tenant = await make_tenant(permissions=["documents:read", "documents:write"])
+    async with await _client() as client:
+        token = await _login(client, tenant.slug, tenant.admin_email, tenant.admin_password)
+        create = await client.post(
+            "/v1/admin/ingestion-jobs/upload",
+            files={"file": ("notes.txt", b"the quarterly revenue figures for the coffee division", "text/plain")},
+            headers=_auth_header(token),
+        )
+        job_id = create.json()["id"]
+        detail = await client.get(f"/v1/admin/ingestion-jobs/{job_id}", headers=_auth_header(token))
+        search = await client.get(
+            "/v1/search", params={"q": "the quarterly revenue figures for the coffee division"}, headers=_auth_header(token)
+        )
+
+    assert create.status_code == 202
+    assert detail.json()["stage"] == "complete"
+    assert len(search.json()) == 1  # the uploaded file's real, extracted text is searchable
+
+
+async def test_upload_without_a_title_defaults_to_the_filename(make_tenant):
+    tenant = await make_tenant(permissions=["documents:read", "documents:write"])
+    async with await _client() as client:
+        token = await _login(client, tenant.slug, tenant.admin_email, tenant.admin_password)
+        create = await client.post(
+            "/v1/admin/ingestion-jobs/upload",
+            files={"file": ("Employee Handbook.txt", b"hello", "text/plain")},
+            headers=_auth_header(token),
+        )
+
+    assert create.json()["title"] == "Employee Handbook"
+
+
+async def test_uploading_a_docx_file_extracts_its_paragraph_text(make_tenant):
+    tenant = await make_tenant(permissions=["documents:read", "documents:write"])
+    async with await _client() as client:
+        token = await _login(client, tenant.slug, tenant.admin_email, tenant.admin_password)
+        create = await client.post(
+            "/v1/admin/ingestion-jobs/upload",
+            files={
+                "file": (
+                    "policy.docx",
+                    _make_docx_bytes("remote work is allowed on fridays for the engineering team"),
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                )
+            },
+            headers=_auth_header(token),
+        )
+        job_id = create.json()["id"]
+        detail = await client.get(f"/v1/admin/ingestion-jobs/{job_id}", headers=_auth_header(token))
+
+    assert detail.json()["stage"] == "complete"
+    assert detail.json()["chunk_count"] == 1
+
+
+async def test_uploading_a_pdf_file_extracts_its_text(make_tenant):
+    tenant = await make_tenant(permissions=["documents:read", "documents:write"])
+    async with await _client() as client:
+        token = await _login(client, tenant.slug, tenant.admin_email, tenant.admin_password)
+        create = await client.post(
+            "/v1/admin/ingestion-jobs/upload",
+            files={"file": ("policy.pdf", _make_pdf_bytes("expense reports are due monthly"), "application/pdf")},
+            headers=_auth_header(token),
+        )
+        job_id = create.json()["id"]
+        detail = await client.get(f"/v1/admin/ingestion-jobs/{job_id}", headers=_auth_header(token))
+
+    assert detail.json()["stage"] == "complete"
+    assert detail.json()["chunk_count"] == 1
+
+
+async def test_uploading_an_unsupported_extension_is_400_before_any_job_is_created(make_tenant):
+    tenant = await make_tenant(permissions=["documents:write"])
+    async with await _client() as client:
+        token = await _login(client, tenant.slug, tenant.admin_email, tenant.admin_password)
+        response = await client.post(
+            "/v1/admin/ingestion-jobs/upload",
+            files={"file": ("virus.exe", b"binary junk", "application/octet-stream")},
+            headers=_auth_header(token),
+        )
+    assert response.status_code == 400
+
+
+async def test_uploading_a_corrupt_pdf_fails_the_job_cleanly_not_the_request(make_tenant):
+    tenant = await make_tenant(permissions=["documents:read", "documents:write"])
+    async with await _client() as client:
+        token = await _login(client, tenant.slug, tenant.admin_email, tenant.admin_password)
+        create = await client.post(
+            "/v1/admin/ingestion-jobs/upload",
+            files={"file": ("broken.pdf", b"this is not a real pdf file at all", "application/pdf")},
+            headers=_auth_header(token),
+        )
+        job_id = create.json()["id"]
+        detail = await client.get(f"/v1/admin/ingestion-jobs/{job_id}", headers=_auth_header(token))
+
+    # The upload request itself succeeds (202) — a corrupt file is a job
+    # failure, discovered during "parsing", not a request-level error.
+    assert create.status_code == 202
+    body = detail.json()
+    assert body["stage"] == "failed"
+    assert body["error_message"]
+
+
+async def test_upload_without_documents_write_permission_is_403(make_tenant):
+    tenant = await make_tenant(permissions=["documents:read"])
+    async with await _client() as client:
+        token = await _login(client, tenant.slug, tenant.admin_email, tenant.admin_password)
+        response = await client.post(
+            "/v1/admin/ingestion-jobs/upload",
+            files={"file": ("notes.txt", b"hello", "text/plain")},
+            headers=_auth_header(token),
+        )
+    assert response.status_code == 403
+
+
+async def test_upload_endpoint_requires_auth():
+    async with await _client() as client:
+        response = await client.post(
+            "/v1/admin/ingestion-jobs/upload", files={"file": ("notes.txt", b"hello", "text/plain")}
+        )
+    assert response.status_code == 401
+
+
+async def test_upload_larger_than_the_configured_limit_is_400(make_tenant, monkeypatch):
+    from backend.app.api import ingestion_routes
+
+    monkeypatch.setattr(ingestion_routes, "_MAX_UPLOAD_BYTES", 10)  # tiny limit, no need to build a real 20MB file
+    tenant = await make_tenant(permissions=["documents:write"])
+    async with await _client() as client:
+        token = await _login(client, tenant.slug, tenant.admin_email, tenant.admin_password)
+        response = await client.post(
+            "/v1/admin/ingestion-jobs/upload",
+            files={"file": ("notes.txt", b"this text is longer than ten bytes", "text/plain")},
+            headers=_auth_header(token),
+        )
+    assert response.status_code == 400

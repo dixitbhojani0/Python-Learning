@@ -1,9 +1,12 @@
 """
 backend/app/api/ingestion_routes.py
 
-Phase 19: the real async ingestion pipeline — a job is created and scheduled
-via FastAPI BackgroundTasks (see rag/pipeline.py), and this file's three
-routes are how an admin creates one and watches it progress. Reuses
+Phase 19/20: the real async ingestion pipeline — a job is created and
+scheduled via FastAPI BackgroundTasks (see rag/pipeline.py). Two creation
+routes feed the same pipeline: pasted text (JSON) and a real uploaded file
+(multipart), the latter added in Phase 20 once "is this really RAG without
+file upload" was raised — genuinely a fair question, since a paste-text box
+alone isn't what most RAG systems mean by ingestion. Reuses
 "documents:read"/"documents:write" (the same permissions that already gate
 the synchronous `POST /v1/documents` and the Documents admin page) rather
 than a new permission namespace — a job is just another way documents get
@@ -15,7 +18,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Header, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,14 +28,21 @@ from backend.app.core.config import PlatformConfig
 from backend.app.core.i18n import DEFAULT_LOCALE, t
 from backend.app.db.models import IngestionJob
 from backend.app.db.session import tenant_scoped_session
+from backend.app.rag.parsers import providers as _parser_providers  # noqa: F401  (triggers registration)
+from backend.app.rag.parsers.registry import DocumentParserRegistry
 from backend.app.rag.pipeline import run_ingestion_job
 
 router = APIRouter(prefix="/v1/admin/ingestion-jobs", tags=["ingestion"])
 
 # The real, complete set of stages rag/pipeline.py ever assigns — mirrors
-# IngestionJob's own docstring on why there's no "parsing" or "vector store
-# upsert" stage distinct from these.
-KNOWN_STAGES = ("queued", "chunking", "embedding", "storing", "complete", "failed")
+# IngestionJob's own docstring on why there's no "vector store upsert" or
+# "metadata sync" stage distinct from these.
+KNOWN_STAGES = ("queued", "parsing", "chunking", "embedding", "storing", "complete", "failed")
+
+# A real per-upload cap, not decorative — read fully into memory before
+# parsing (pypdf/python-docx both need a seekable buffer, not a stream), so
+# an unbounded upload is a real memory-exhaustion vector without one.
+_MAX_UPLOAD_BYTES = 20 * 1024 * 1024  # 20 MB
 
 
 class IngestRequest(BaseModel):
@@ -95,7 +105,70 @@ async def create_ingestion_job(
         job_out = JobSummaryOut.model_validate(job)
 
     background_tasks.add_task(
-        run_ingestion_job, job_id, tenant_id, body.title, body.content, config.embedding_provider
+        run_ingestion_job, job_id, tenant_id, body.title, config.embedding_provider, content=body.content
+    )
+    return job_out
+
+
+@router.post("/upload", response_model=JobSummaryOut, status_code=status.HTTP_202_ACCEPTED)
+async def create_ingestion_job_from_file(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    title: str | None = Form(default=None),
+    principal: Principal = Depends(require_permission("documents:write")),
+    config: PlatformConfig = Depends(get_tenant_config),
+    accept_language: str | None = Header(default=None, alias="Accept-Language"),
+) -> JobSummaryOut:
+    locale = (accept_language or DEFAULT_LOCALE).split(",")[0].split("-")[0]
+
+    filename = file.filename or ""
+    extension = filename.rsplit(".", 1)[-1] if "." in filename else ""
+    if extension.lower() not in DocumentParserRegistry.available():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=t(
+                "admin.unsupported_file_type",
+                locale=locale,
+                extension=extension or "(none)",
+                available=", ".join(DocumentParserRegistry.available()),
+            ),
+        )
+
+    # Read fully now, in the request (not the background task): a corrupt
+    # upload or a client that vanishes mid-transfer should fail the request
+    # itself, not create a job that immediately fails for a reason the
+    # client never even gets to see in the response.
+    file_bytes = await file.read(_MAX_UPLOAD_BYTES + 1)
+    if len(file_bytes) > _MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=t("admin.file_too_large", locale=locale, max_mb=_MAX_UPLOAD_BYTES // (1024 * 1024)),
+        )
+
+    resolved_title = title or filename.rsplit(".", 1)[0] or filename or "Untitled"
+
+    async with tenant_scoped_session(principal.tenant_id) as session:
+        job = IngestionJob(
+            id=uuid.uuid4(),
+            tenant_id=principal.tenant_id,
+            title=resolved_title,
+            embedding_provider=config.embedding_provider,
+            stage="queued",
+            stage_log=[],
+        )
+        session.add(job)
+        await session.flush()
+        job_id, tenant_id = job.id, principal.tenant_id
+        job_out = JobSummaryOut.model_validate(job)
+
+    background_tasks.add_task(
+        run_ingestion_job,
+        job_id,
+        tenant_id,
+        resolved_title,
+        config.embedding_provider,
+        file_bytes=file_bytes,
+        filename=filename,
     )
     return job_out
 
