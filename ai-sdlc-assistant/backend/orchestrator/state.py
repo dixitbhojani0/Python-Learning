@@ -26,6 +26,7 @@ class SDLCState(TypedDict):
     # ── Orchestrator fills these (classify_intent node)
     intent:               str       # cross_source | risk | ticket | pr_review | release_readiness | notify
     agents_to_run:        list[str] # which agents were selected for this request
+    routing_reason:       str       # LLM supervisor's one-line reason for the pick ("" on keyword fallback)
     tokens_budget:        int       # per-request token budget (for observability, not enforcement in v1)
     tokens_used:          int       # running total across all agents in this request
 

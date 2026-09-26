@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>E9 mockup — "Why this answer?" trace panel</title>
+<style>
+  body { font-family: Roboto, "Segoe UI", Arial, sans-serif; background: #f5f5f5; margin: 0; padding: 40px 0; }
+  .chat-container { max-width: 860px; margin: 0 auto; padding: 0 16px; }
+  .bubble { max-width: 75%; padding: 12px 16px; border-radius: 16px; line-height: 1.5; margin-bottom: 20px; }
+  .bubble.assistant { background: #fff; color: #212121; border-bottom-left-radius: 4px; box-shadow: 0 1px 4px rgba(0,0,0,0.1); }
+
+  .bubble-meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; align-items: center; }
+  .agent-chip { background: #ede7f6; color: #5e35b1; padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; }
+  .strategy-chip { background: #e8f5e9; color: #2e7d32; padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; }
+  .source-chip { background: #e3f2fd; color: #1565c0; padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; }
+  .faith-chip { background: #e8f5e9; color: #2e7d32; padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; }
+  .confidence { font-size: 0.75rem; color: #888; }
+
+  /* ── New: trace disclosure ─────────────────────────────────────────── */
+  .trace {
+    margin-top: 6px;
+  }
+  .trace summary {
+    font-size: 0.75rem;
+    color: #888;
+    cursor: pointer;
+    list-style: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    user-select: none;
+  }
+  .trace summary::-webkit-details-marker { display: none; }
+  .trace summary::before {
+    content: "▸";
+    font-size: 0.7rem;
+    transition: transform 0.15s ease-out;
+    color: #aaa;
+  }
+  .trace[open] summary::before { transform: rotate(90deg); }
+  .trace summary:hover { color: #1565c0; }
+  .trace summary:hover::before { color: #1565c0; }
+
+  .trace-body {
+    margin-top: 8px;
+    padding-left: 14px;
+    border-left: none; /* no side-stripe accents — see anti-pattern list */
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .trace-reason {
+    font-size: 0.8rem;
+    color: #555;
+    line-height: 1.4;
+  }
+  .trace-section-label {
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: #999;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    margin-bottom: 4px;
+  }
+  .trace-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .trace-list li {
+    font-size: 0.75rem;
+    color: #616161;
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+  }
+  .tool-ok::before { content: "✓"; color: #2e7d32; font-weight: 700; }
+  .tool-err::before { content: "✕"; color: #c62828; font-weight: 700; }
+  .chunk-score {
+    margin-left: auto;
+    color: #999;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .caption { font-size: 0.8rem; color: #999; margin: 28px 0 8px; }
+</style>
+</head>
+<body>
+<div class="chat-container">
+
+  <div class="bubble assistant">
+    <div>SDLC-1 was closed yesterday, so it's no longer a blocker. The dashboard PR (#312) is
+    still waiting on a reviewer — I'd flag that as the real risk to this sprint.</div>
+
+    <div class="bubble-meta">
+      <span class="agent-chip">🤖 Cross-Source</span>
+      <span class="strategy-chip">🔄 corrective RAG</span>
+      <span class="source-chip">mcp:jira_get_blocked_tickets</span>
+      <span class="source-chip">mcp:github_list_open_prs</span>
+      <span class="confidence">conf 82%</span>
+      <span class="faith-chip">faith 91%</span>
+    </div>
+
+    <!-- ── E9: collapsed by default, native <details> ── -->
+    <details class="trace">
+      <summary>Why this answer?</summary>
+      <div class="trace-body">
+        <div class="trace-reason">
+          <strong>Routing:</strong> query asks about current blockers and PR status across two
+          systems — the cross-source generalist can chain Jira + GitHub tools, so it was chosen
+          over the single-purpose risk or PR-review agents.
+        </div>
+
+        <div>
+          <div class="trace-section-label">Tools called</div>
+          <ul class="trace-list">
+            <li class="tool-ok">jira_get_blocked_tickets</li>
+            <li class="tool-ok">github_list_open_prs</li>
+          </ul>
+        </div>
+
+        <div>
+          <div class="trace-section-label">Top chunks used</div>
+          <ul class="trace-list">
+            <li>Sprint 12 Risk Notes <span class="chunk-score">0.74</span></li>
+            <li>PR Review Checklist <span class="chunk-score">0.61</span></li>
+          </ul>
+        </div>
+      </div>
+    </details>
+  </div>
+
+  <p class="caption">— expanded state, same panel —</p>
+
+  <div class="bubble assistant">
+    <div>SDLC-1 was closed yesterday, so it's no longer a blocker. The dashboard PR (#312) is
+    still waiting on a reviewer — I'd flag that as the real risk to this sprint.</div>
+
+    <div class="bubble-meta">
+      <span class="agent-chip">🤖 Cross-Source</span>
+      <span class="strategy-chip">🔄 corrective RAG</span>
+      <span class="confidence">conf 82%</span>
+      <span class="faith-chip">faith 91%</span>
+    </div>
+
+    <details class="trace" open>
+      <summary>Why this answer?</summary>
+      <div class="trace-body">
+        <div class="trace-reason">
+          <strong>Routing:</strong> query asks about current blockers and PR status across two
+          systems — the cross-source generalist can chain Jira + GitHub tools, so it was chosen
+          over the single-purpose risk or PR-review agents.
+        </div>
+        <div>
+          <div class="trace-section-label">Tools called</div>
+          <ul class="trace-list">
+            <li class="tool-ok">jira_get_blocked_tickets</li>
+            <li class="tool-err">github_list_open_prs — timed out, retried from cache</li>
+          </ul>
+        </div>
+        <div>
+          <div class="trace-section-label">Top chunks used</div>
+          <ul class="trace-list">
+            <li>Sprint 12 Risk Notes <span class="chunk-score">0.74</span></li>
+            <li>PR Review Checklist <span class="chunk-score">0.61</span></li>
+          </ul>
+        </div>
+      </div>
+    </details>
+  </div>
+
+  <p class="caption">— a query that only used RAG, no MCP tools: "Tools called" section is omitted, not shown empty —</p>
+
+  <div class="bubble assistant">
+    <div>The Clean Code checklist requires: no unused imports, functions under 40 lines, and no
+    confidential information in commits.</div>
+    <div class="bubble-meta">
+      <span class="agent-chip">🤖 Cross-Source</span>
+      <span class="source-chip">local:Clean Code Checklist</span>
+      <span class="confidence">conf 68%</span>
+    </div>
+    <details class="trace">
+      <summary>Why this answer?</summary>
+      <div class="trace-body">
+        <div class="trace-reason">
+          <strong>Routing:</strong> a document-lookup question with no live-system reference —
+          handled entirely from the knowledge base.
+        </div>
+        <div>
+          <div class="trace-section-label">Top chunks used</div>
+          <ul class="trace-list">
+            <li>Clean Code Checklist <span class="chunk-score">0.81</span></li>
+          </ul>
+        </div>
+      </div>
+    </details>
+  </div>
+
+  <p class="caption">— a blocked / HITL / no-evidence response: no panel at all —</p>
+
+  <div class="bubble assistant">
+    <div>I can't help with that request. Please ask about sprint docs, Jira tickets, pull
+    requests, release readiness, or team activity.</div>
+  </div>
+
+</div>
+</body>
+</html>

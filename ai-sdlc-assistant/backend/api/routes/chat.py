@@ -21,7 +21,7 @@ from fastapi import APIRouter, Depends, Request
 from langchain_core.messages import HumanMessage
 
 from backend.api.limiter import limiter
-from backend.api.models.schemas import ChatRequest, ChatResponse
+from backend.api.models.schemas import ChatRequest, ChatResponse, TraceInfo
 from backend.auth.middleware import UserContext, get_current_user
 from backend.core.prompt_safety import safety_guard
 from backend.memory.semantic_memory import semantic_memory
@@ -31,6 +31,41 @@ from backend.providers.groq_provider import set_stream_id, write_stream_done
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def _build_trace(result: dict) -> TraceInfo | None:
+    """
+    Assemble the E9 "why this answer?" trace from graph state.
+
+    Pure/sync so it's trivially unit-testable. Returns None (trace omitted from
+    the response) when there's nothing to explain: a HITL proposal card isn't a
+    final answer yet, and a blocked/no-evidence refusal never populated a
+    routing reason, tool call, or chunk to begin with.
+    """
+    if result.get("hitl_required"):
+        return None
+
+    routing_reason = result.get("routing_reason", "") or ""
+
+    tools_called: list[dict] = []
+    seen_tools: set[str] = set()
+    for payload in result.get("agent_payloads", []):
+        for call in getattr(payload, "structured", {}).get("mcp_calls", []):
+            name = call.get("tool", "")
+            if not name or name in seen_tools:
+                continue
+            seen_tools.add(name)
+            tools_called.append({"tool": name, "ok": not call.get("error")})
+
+    top_chunks = [
+        {"source": c.get("source", "unknown"), "score": round(float(c.get("score", 0.0)), 3)}
+        for c in result.get("rag_chunks", [])[:5]
+    ]
+
+    if not routing_reason and not tools_called and not top_chunks:
+        return None
+
+    return TraceInfo(routing_reason=routing_reason, tools_called=tools_called, top_chunks=top_chunks)
 
 
 @limiter.limit("10/minute")
@@ -114,6 +149,7 @@ async def chat(
         # ── Orchestrator fields — filled by graph nodes
         "intent":               "",
         "agents_to_run":        [],
+        "routing_reason":       "",
         "tokens_budget":        8000,
         "tokens_used":          0,
 
@@ -275,4 +311,5 @@ async def chat(
         hitl_action_id=hitl_action_id,
         response_cached=bool(result.get("response_cached")),
         images=images,
+        trace=_build_trace(result),
     )

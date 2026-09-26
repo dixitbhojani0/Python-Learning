@@ -323,7 +323,7 @@ async def classify_intent(state: SDLCState) -> dict:
     # else:
     #     agents = await llm_classify(query)
     score  = 0.0
-    agents = await llm_classify(query)   # GPT-4o decides all routing
+    agents, reason = await llm_classify(query)   # GPT-4o decides all routing
 
     # Single-agent routing (LangGraph "supervisor" default — the 2026 production
     # norm). We deliberately run ONE agent per query: parallel fan-out would need a
@@ -337,8 +337,9 @@ async def classify_intent(state: SDLCState) -> dict:
     primary = agents[0] if agents else "cross_source"
     logger.info("classify_intent: query='%s...' → intent='%s' (router top=%.3f)", query[:60], primary, score)
     return {
-        "intent":        primary,
-        "agents_to_run": [primary],
+        "intent":         primary,
+        "agents_to_run":  [primary],
+        "routing_reason": reason,   # surfaced in ChatResponse.trace (E9)
     }
 
 

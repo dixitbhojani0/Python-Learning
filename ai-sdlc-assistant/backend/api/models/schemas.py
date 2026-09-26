@@ -36,6 +36,30 @@ class ImageRef(BaseModel):
     caption:   str = ""       # OCR excerpt / placeholder, for alt text + display
 
 
+class ToolCallRef(BaseModel):
+    """One MCP tool call made while answering — for the E9 'why this answer?' trace."""
+    tool: str
+    ok:   bool = True   # False if the call errored
+
+
+class ChunkRef(BaseModel):
+    """One RAG chunk that backed the answer — for the E9 trace."""
+    source: str
+    score:  float
+
+
+class TraceInfo(BaseModel):
+    """
+    E9 — decision trace: why the supervisor picked this agent, which MCP tools
+    it called, and which RAG chunks backed the answer. Omitted from ChatResponse
+    (trace=None) when there's nothing to explain (blocked query, HITL proposal,
+    no-evidence refusal) rather than shipping an empty panel.
+    """
+    routing_reason: str             = ""
+    tools_called:   list[ToolCallRef] = []
+    top_chunks:     list[ChunkRef]    = []
+
+
 class ChatResponse(BaseModel):
     """
     Response from POST /api/chat.
@@ -65,6 +89,7 @@ class ChatResponse(BaseModel):
     hitl_action_id:  str | None = None
     response_cached: bool       = False
     images:          list[ImageRef] = []   # document images relevant to the answer
+    trace:           TraceInfo | None = None  # E9 — "why this answer?" (None = nothing to explain)
 
 
 class HITLRequest(BaseModel):

@@ -128,13 +128,17 @@ def keyword_classify(query: str) -> list[str]:
     return ["cross_source"]
 
 
-async def llm_classify(query: str) -> list[str]:
+async def llm_classify(query: str) -> tuple[list[str], str]:
     """
     LLM-based supervisor routing — the primary intent classifier.
 
     Reads routing_description from each agent in agents.yaml and asks the LLM
-    to pick the right agent(s). Now returns a list[str] to support multi-agent
-    fan-out (e.g. "create a ticket AND notify the team" → ["ticket", "notify"]).
+    to pick the right agent(s). Returns (agents, reason): agents is a list[str]
+    to support multi-agent fan-out (e.g. "create a ticket AND notify the team"
+    → ["ticket", "notify"]); reason is the LLM's one-line justification for the
+    pick, surfaced to the UI as the "why this answer?" routing explanation (E9).
+    keyword_classify() has no LLM reasoning behind it, so every fallback path
+    below returns reason="".
 
     Falls back to keyword_classify() on any failure:
       - LLM rate limit or empty response
@@ -158,7 +162,7 @@ async def llm_classify(query: str) -> list[str]:
 
     if not desc_lines:
         logger.warning("llm_classify: no routing_description found in agents.yaml — keyword fallback")
-        return keyword_classify(query)
+        return keyword_classify(query), ""
 
     agent_descriptions = "\n".join(desc_lines)
     prompt = config.get_prompt(
@@ -169,7 +173,7 @@ async def llm_classify(query: str) -> list[str]:
 
     if not prompt:
         logger.warning("llm_classify: supervisor_routing prompt missing — keyword fallback")
-        return keyword_classify(query)
+        return keyword_classify(query), ""
 
     try:
         provider = LLMFactory.get_provider()
@@ -185,7 +189,7 @@ async def llm_classify(query: str) -> list[str]:
                 "llm_classify: LLM returned unusable response (empty=%s, parse_error=%s) — keyword fallback",
                 resp.is_empty, resp.parse_error,
             )
-            return keyword_classify(query)
+            return keyword_classify(query), ""
 
         # Support both new list format {"agents": [...]} and legacy {"agent": "..."}.
         raw_agents = resp.structured.get("agents") or resp.structured.get("agent")
@@ -197,7 +201,7 @@ async def llm_classify(query: str) -> list[str]:
             raw_agents = [raw_agents]
         if not isinstance(raw_agents, list):
             logger.warning("llm_classify: unexpected 'agents' type %s — keyword fallback", type(raw_agents))
-            return keyword_classify(query)
+            return keyword_classify(query), ""
 
         # Validate every intent in the list; drop unknowns
         valid = [a.strip() for a in raw_agents if a.strip() in VALID_INTENTS]
@@ -205,14 +209,14 @@ async def llm_classify(query: str) -> list[str]:
             logger.warning(
                 "llm_classify: LLM returned no valid agents %s — keyword fallback", raw_agents,
             )
-            return keyword_classify(query)
+            return keyword_classify(query), ""
 
         logger.info(
             "llm_classify: '%s' → agents=%s (confidence=%.2f) | %s",
             query[:60], valid, conf, reason,
         )
-        return valid
+        return valid, reason
 
     except Exception:
         logger.exception("llm_classify: unexpected error — keyword fallback")
-        return keyword_classify(query)
+        return keyword_classify(query), ""
