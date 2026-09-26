@@ -53,6 +53,9 @@ try {
     & docker compose -f (Join-Path $Repo 'ai-sdlc-assistant\docker-compose.yml') up -d qdrant redis 2>&1 | ForEach-Object { Add-Content $Log "$_" }
 
     # --- the engineering session ---
+    # Separate Claude login for this loop only (personal account); the global ~/.claude login is untouched.
+    $env:CLAUDE_CONFIG_DIR = Join-Path $env:USERPROFILE '.claude-personal'
+    if (-not (Test-Path (Join-Path $env:CLAUDE_CONFIG_DIR '.credentials.json'))) { Log "ABORT: personal Claude login missing in $env:CLAUDE_CONFIG_DIR"; Git checkout master | Out-Null; Git branch -D $Branch | Out-Null; exit 1 }
     Log "claude session start"
     $claude = (Get-Command claude).Source
     $p = Start-Process -FilePath $claude -WorkingDirectory $Repo -NoNewWindow -PassThru `
