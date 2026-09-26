@@ -20,7 +20,7 @@ $ClaudeTimeoutMin = 240
 
 New-Item -ItemType Directory -Force $LogDir | Out-Null
 function Log($m) { $l = "$(Get-Date -Format 'HH:mm:ss') $m"; Write-Host $l; Add-Content -Path $Log -Value $l -Encoding utf8 }
-function Git { & git -C $Repo @args 2>&1 | ForEach-Object { "$_" }; if ($LASTEXITCODE -ne 0) { throw "git $args failed ($LASTEXITCODE)" } }
+function Git { & git.exe -C $Repo @args 2>&1 | ForEach-Object { "$_" }; if ($LASTEXITCODE -ne 0) { throw "git $args failed ($LASTEXITCODE)" } }
 function Run($name, $dir, $exe, [string[]]$argv) {
     Push-Location $dir
     try { $out = & $exe @argv 2>&1 | ForEach-Object { "$_" }; $code = $LASTEXITCODE } finally { Pop-Location }
@@ -35,19 +35,19 @@ try {
     Log "=== run $Date ==="
 
     # Identity guard: refuse to run unless the repo-local identity is set (keeps work email out of commits).
-    $email = (& git -C $Repo config --local user.email)
+    $email = (& git.exe -C $Repo config --local user.email)
     if (-not $email -or $email -like '*@azilen.com') { Log "ABORT: repo-local user.email not set to personal address"; exit 1 }
 
     # Never touch the user's own uncommitted work.
-    $dirty = (& git -C $Repo status --porcelain --untracked-files=no) + (& git -C $Repo status --porcelain -- ai-sdlc-assistant sdlc-mcp-server auto-sdlc)
+    $dirty = (& git.exe -C $Repo status --porcelain --untracked-files=no) + (& git.exe -C $Repo status --porcelain -- ai-sdlc-assistant sdlc-mcp-server auto-sdlc)
     if ($dirty) { Log "SKIP: uncommitted changes in scope - commit or stash them first:`n$($dirty -join "`n")"; exit 0 }
 
     Git checkout master | Out-Null
     Git fetch $Remote | Out-Null
     Git merge --ff-only "$Remote/master" | Out-Null
-    if ((& git -C $Repo branch --list $Branch)) { Log "SKIP: $Branch already exists (already ran today)"; exit 0 }
+    if ((& git.exe -C $Repo branch --list $Branch)) { Log "SKIP: $Branch already exists (already ran today)"; exit 0 }
     Git checkout -b $Branch | Out-Null
-    $base = (& git -C $Repo rev-parse HEAD)
+    $base = (& git.exe -C $Repo rev-parse HEAD)
 
     # Infra for retriever tests (best effort - if Docker is down, the gate fails and nothing merges).
     & docker compose -f (Join-Path $Repo 'ai-sdlc-assistant\docker-compose.yml') up -d qdrant redis 2>&1 | ForEach-Object { Add-Content $Log "$_" }
@@ -72,11 +72,11 @@ try {
     Log "claude session end"
 
     # Commit anything left uncommitted in scope (gitignore keeps .env / venvs out).
-    if ((& git -C $Repo status --porcelain -- ai-sdlc-assistant sdlc-mcp-server auto-sdlc)) {
+    if ((& git.exe -C $Repo status --porcelain -- ai-sdlc-assistant sdlc-mcp-server auto-sdlc)) {
         Git add -- ai-sdlc-assistant sdlc-mcp-server auto-sdlc | Out-Null
         Git commit -m "chore(auto): uncommitted leftovers from $Date run" | Out-Null
     }
-    if ((& git -C $Repo rev-parse HEAD) -eq $base) {
+    if ((& git.exe -C $Repo rev-parse HEAD) -eq $base) {
         Log "no commits today - dropping branch"
         Git checkout master | Out-Null; Git branch -D $Branch | Out-Null; exit 0
     }
@@ -109,5 +109,5 @@ try {
         Log "RED - $Branch pushed for review, master untouched"
     }
 }
-catch { Log "ERROR: $_"; try { & git -C $Repo checkout master 2>&1 | Out-Null } catch {} ; exit 1 }
+catch { Log "ERROR: $_"; try { & git.exe -C $Repo checkout master 2>&1 | Out-Null } catch {} ; exit 1 }
 finally { Remove-Item $Lock -ErrorAction SilentlyContinue }
