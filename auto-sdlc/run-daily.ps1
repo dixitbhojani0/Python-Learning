@@ -55,8 +55,16 @@ try {
     # --- the engineering session ---
     Log "claude session start"
     $claude = (Get-Command claude).Source
+    $argv = @('-p', '--settings', "`"$PSScriptRoot\settings.json`"", '--permission-mode', 'acceptEdits')
+    # Google Stitch (UI design) only when a key is present; key lives in gitignored auto-sdlc/.stitch-key, env of this process only.
+    $keyFile = Join-Path $PSScriptRoot '.stitch-key'
+    if (Test-Path $keyFile) {
+        $env:STITCH_API_KEY = (Get-Content $keyFile -Raw).Trim()
+        $argv += @('--mcp-config', "`"$PSScriptRoot\mcp.json`"")
+        Log "stitch MCP enabled"
+    }
     $p = Start-Process -FilePath $claude -WorkingDirectory $Repo -NoNewWindow -PassThru `
-        -ArgumentList @('-p', '--settings', "`"$PSScriptRoot\settings.json`"", '--permission-mode', 'acceptEdits') `
+        -ArgumentList $argv `
         -RedirectStandardInput (Join-Path $PSScriptRoot 'DAILY_PROMPT.md') `
         -RedirectStandardOutput (Join-Path $LogDir "$Date.claude.out.log") `
         -RedirectStandardError  (Join-Path $LogDir "$Date.claude.err.log")

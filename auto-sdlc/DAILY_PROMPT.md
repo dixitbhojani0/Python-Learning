@@ -27,14 +27,25 @@ and merges it into `master` only if everything is green.
      and search, keyboard shortcuts, empty/error/loading states, accessibility (WCAG AA), dark mode, responsive layout.
 3. **Pick 1–3 items** that fit one day. Priority: failing tests / broken full flow > 🔴 bugs > end-to-end flow gaps >
    MCP tools > 🟠 enhancements > UI polish.
-4. **Implement each item with tests.** Backend: pytest in `ai-sdlc-assistant/tests/unit`. MCP: `sdlc-mcp-server/tests`.
+4. **Design before code (features and UI; small bug fixes can skip this).**
+   - Gather everything first: the code paths involved, related REDESIGN_BUGS items, the standards file for the area,
+     and current external practice (WebSearch).
+   - Write `auto-sdlc/designs/<item-id>.md`: the problem, the SDLC phase it serves, user flow, API/MCP/schema changes,
+     UI states (loading/empty/error/streaming), acceptance criteria, and the test plan. Commit it before any code.
+   - UI items: generate the screen in **Google Stitch** (`mcp__stitch__*` tools, when loaded) and/or **Claude Design**
+     (Artifact tool: `action: "quickstart"`, `intent: "design"`, then build it on the design system it offers).
+     Put the links in the design doc. If neither is available, build a static HTML mockup with the `impeccable` skill in
+     `auto-sdlc/designs/<item-id>.html`.
+   - Then implement to match the design in Angular (Material + the app's existing tokens). Don't paste generated
+     markup in as-is: adapt it to the existing components and keep it a thin client.
+5. **Implement each item with tests.** Backend: pytest in `ai-sdlc-assistant/tests/unit`. MCP: `sdlc-mcp-server/tests`.
    UI: Angular spec next to the component. For UI changes, also run `impeccable` critique/polish on the changed screen.
-5. **Run the gate yourself before each commit.** Every command must pass:
+6. **Run the gate yourself before each commit.** Every command must pass:
    - `ai-sdlc-assistant/.venv/Scripts/python.exe -m pytest ai-sdlc-assistant/tests/unit -q -p no:cacheprovider`
    - `cd sdlc-mcp-server && ../ai-sdlc-assistant/.venv/Scripts/python.exe -m pytest -q -p no:cacheprovider`
    - `cd ai-sdlc-assistant/frontend-angular && npx ng test --watch=false && npx ng build`
-6. **Commit** each item separately, e.g. `fix(hitl): B2 — single ticket-creation path`. Mark the item ☑ in REDESIGN_BUGS.md in the same commit.
-7. **Log it.** Append today's entry to `auto-sdlc/CHANGELOG.md` (date, items done, tests added, anything left half-done
+7. **Commit** each item separately, e.g. `fix(hitl): B2 — single ticket-creation path`. Mark the item ☑ in REDESIGN_BUGS.md in the same commit.
+8. **Log it.** Append today's entry to `auto-sdlc/CHANGELOG.md` (date, items done, tests added, anything left half-done
    and why) and commit it last.
 
 If something is blocked (needs a credential, a paid API, or a product decision), write it in the CHANGELOG under

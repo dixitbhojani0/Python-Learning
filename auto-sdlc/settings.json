@@ -1,7 +1,7 @@
 {
   "permissions": {
     "allow": [
-      "Read", "Edit", "Write", "Glob", "Grep", "WebSearch", "WebFetch", "Skill",
+      "Read", "Edit", "Write", "Glob", "Grep", "WebSearch", "WebFetch", "Skill", "Artifact", "mcp__stitch",
       "Bash(ai-sdlc-assistant/.venv/Scripts/python.exe:*)",
       "Bash(../ai-sdlc-assistant/.venv/Scripts/python.exe:*)",
       "Bash(.venv/Scripts/python.exe:*)",
