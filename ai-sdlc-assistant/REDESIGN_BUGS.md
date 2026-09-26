@@ -11,35 +11,36 @@ Status: ☐ open · ◐ investigating · ☑ fixed
 
 ## A. Confirmed bugs
 
-### 🔴 B1 — Stale risk/blocker after Jira update (cache + blocked-detection)  ◐ PARTIAL
-- **Cause 1 (cache) — FIXED via B6:** the response cache is gone, so a repeat query can no longer serve a
-  stale risk report. **Cause 2 (blocked-detection) still OPEN** — verify `get_blocked_tickets()` clears
-  SDLC-1 once it's marked done in Jira (see below).
-- **Symptom:** Updated SDLC-1 to *done* (and added a comment) in Jira. Re-asked
-  "Are we at risk of missing the sprint? why?" → still lists **SDLC-1 as blocker**
-  (completion did move 0% → 14%, so *some* live data refreshed).
-- **Root cause 1 (cache):** "are we at risk / missing the sprint" does **not** match any
-  pattern in `_LIVE_QUERY_PATTERNS` (`nodes.py:118`) → the answer is cacheable for **1 hour**,
-  so a repeat query can serve a stale risk report.
-- **Root cause 2 (blocked detection):** `get_blocked_tickets()` may still return SDLC-1 if
-  "blocked" is derived from a flag/label/link that marking the ticket *done* doesn't clear.
-- **Where:** `nodes.py` `_LIVE_QUERY_PATTERNS`; `mcp/connectors/jira_connector.py` `get_blocked_tickets`.
-- **Fix direction:** add `risk|at risk|on track|miss(ing)? (the )?sprint|deadline` to live patterns;
-  verify how "blocked" is computed against Jira status.
+### 🔴 B1 — Stale risk/blocker after Jira update (cache + blocked-detection)  ☑ FIXED (verified 2026-09-27)
+- **Cause 1 (cache) — FIXED via B6:** the response cache is gone entirely, so no query can serve a
+  stale risk report anymore (moot — there's no cache left to bypass).
+- **Cause 2 (blocked-detection) — VERIFIED FIXED:** `sdlc-mcp-server/connectors/jira_connector.py`
+  `get_blocked_tickets()` JQL already carries `AND statusCategory != "Done"` (line ~213), so Jira
+  itself excludes done tickets server-side — a done ticket can no longer come back as a blocker.
+  Belt-and-suspenders: `MCPAgent._enrich_ticket_refs` (`backend/agents/mcp_agent.py`) additionally
+  fetches live status for every ticket ID mentioned in RAG chunks and the prompt's data-precedence
+  directive states "A ticket listed as DONE ... is NOT blocked — ignore any contradicting status
+  claim in the document content below."
+- **Regression test added:** `sdlc-mcp-server/tests/test_jira_connector.py` —
+  `test_get_blocked_tickets_jql_excludes_done_status` asserts the JQL clause is present, so a future
+  edit that drops the filter fails the gate instead of silently reintroducing B1.
+- **Original symptom (now historical):** Updated SDLC-1 to *done* in Jira; "are we at risk of missing
+  the sprint?" still listed SDLC-1 as a blocker.
+- **Where:** `sdlc-mcp-server/connectors/jira_connector.py` `get_blocked_tickets`; `backend/agents/mcp_agent.py`.
 
-### 🔴 B2 — Two ticket-creation paths produce different / wrong ticket numbers  ☐
-- **Symptom:** "The monitoring system detected 12% of traffic getting 500 errors. Please update."
-  → handled by **cross_source** (ticket *suggestion*), approval created **SDLC-1043**.
-  But "Create Ticket: performance issue" → handled by **ticket_agent**, created **SDLC-11**
-  (correct, visible in real Jira).
-- **Clue:** mock `create_ticket` returns **`SDLC-9999`** (`mock_jira.py:152`); real returns the
-  next sequence (**SDLC-11**). `SDLC-1043` = mock blocked-list max (1042) **+1** → it comes from
-  **neither** standard path. A third/older create path or a stale display is generating it.
-- **Where:** `cross_source_agent.py` `_check_ticket_needed` / `_format_ticket_suggestion_card`;
-  `hitl.py` `_execute_create_ticket`; `mock_jira.py`.
-- **Fix direction:** **one canonical create path** (ticket_agent → `jira.create_ticket`).
-  cross_source should hand off to it, not invent a number. Confirm `jira.is_available()` so we
-  never silently fall back to mock when real Jira is configured.
+### 🔴 B2 — Two ticket-creation paths produce different / wrong ticket numbers  ☑ FIXED (verified 2026-09-27)
+- **Fixed by the B7 MCP migration:** `backend/orchestrator/actions.py` `execute_create_ticket()` is now
+  the **one** execution path for HITL-approved ticket creation (shared by the REST approve route and the
+  Slack Approve button), and it always calls `jira_create_ticket` over real MCP — no local fallback
+  counter, no fabricated `SDLC-1043`. On failure it returns an honest error instead of inventing an id.
+- **Also confirmed:** `run_cross_source` (`nodes.py:361`) now routes to `MCPAgent`, not the legacy
+  `CrossSourceAgent` — so the old `_check_ticket_needed` / `_format_ticket_suggestion_card` path that
+  produced the phantom number is **dead code** on the live path (kept only for one-line revert).
+- **Gap this surfaces (tracked separately, not a bug):** MCPAgent doesn't yet raise a duplicate-ticket
+  *suggestion* itself — see B7 Step 4 "Still TODO: give MCPAgent write-intent → HITL proposal".
+- **Original symptom (now historical):** cross_source's suggestion path produced **SDLC-1043**
+  (mock blocked-list max **+1**) while ticket_agent produced the correct **SDLC-11**.
+- **Where:** `backend/orchestrator/actions.py` `execute_create_ticket`; `backend/orchestrator/nodes.py`.
 
 ### 🔴 B3 — Ticket comments not surfaced (the core communication gap)  ☑ FIXED (real path)
 - **Fixed:** `jira_connector._normalize_issue` now extracts the latest ≤5 `comment`s (author/date/body via
@@ -61,11 +62,11 @@ Status: ☐ open · ◐ investigating · ☑ fixed
 - **Fix direction:** stricter duplicate match (don't claim a ticket on weak similarity); trim the
   proposal to title / short description / priority / labels only.
 
-### 🟠 B5 — Routing inconsistency for ticket creation  ☐
-- **Symptom:** identical *intent* (create a ticket) is handled by **cross_source** for some phrasings
-  and **ticket_agent** for others → different quality, different numbers (ties to B2).
-- **Fix direction:** ticket creation should always converge on **ticket_agent**; cross_source only
-  *detects* the need and routes/handoffs.
+### 🟠 B5 — Routing inconsistency for ticket creation  ☑ FIXED (verified 2026-09-27, ties to B2)
+- **Confirmed:** `run_cross_source` routes to `MCPAgent` (read-only generalist, no ticket-creation
+  proposal today — see B7 Step 4 TODO), and `TicketAgent` (`nodes.py` `run_ticket`) is the only routed
+  node that produces a `create_ticket` HITL proposal. There is exactly one live path today; the old
+  "cross_source sometimes handles create-intent" behavior no longer exists (legacy agent unrouted).
 
 ### 🔴 B6 — Redis semantic cache is wrong for a live-data system  ☑ FIXED
 - **Fixed (Option A — cache off):** response cache fully removed — read node (`nodes.py check_semantic_cache`
