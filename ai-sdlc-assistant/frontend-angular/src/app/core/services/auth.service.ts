@@ -21,7 +21,14 @@ export class AuthService {
   getSession(): UserSession | null {
     const raw = localStorage.getItem(this.KEY);
     if (!raw) return null;
-    const session = JSON.parse(raw) as UserSession;
+    let session: UserSession;
+    try {
+      session = JSON.parse(raw) as UserSession;
+    } catch {
+      // Corrupt localStorage must not brick the app at load — treat as logged out.
+      localStorage.removeItem(this.KEY);
+      return null;
+    }
     // Self-heal: if project was saved under a different name (e.g. old 'antlog' session),
     // update it to the current environment value and re-persist so all API calls use it.
     if (session.project !== environment.defaultProject) {

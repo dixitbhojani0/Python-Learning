@@ -103,6 +103,11 @@ class Settings(BaseSettings):
     SLACK_SIGNING_SECRET: str = ""
     SLACK_BOT_TOKEN: str = ""
 
+    # ── GitHub Webhook (inbound PR events)
+    # GITHUB_WEBHOOK_SECRET: the secret configured on the GitHub webhook.
+    # Empty = signature verification skipped (logs a warning per request).
+    GITHUB_WEBHOOK_SECRET: str = ""
+
 
 @lru_cache()
 def get_settings() -> Settings:

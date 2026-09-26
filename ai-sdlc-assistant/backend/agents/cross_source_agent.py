@@ -695,6 +695,8 @@ class CrossSourceAgent(BaseAgent):
             structured={
                 "final_response": final_response,
                 "rag_strategy":  rag_strategy,
+                # Outage notice must reach the user verbatim — never persona-rewritten.
+                "skip_persona":  final_response == self.LLM_UNAVAILABLE_MSG,
                 "rag_chunks": [
                     {"text": c.text, "source": c.source, "score": c.score}
                     for c in chunks

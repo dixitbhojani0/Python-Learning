@@ -22,11 +22,7 @@ Design rule: these routes do real work (Qdrant queries, ingest, DB reads).
 They do NOT call the LangGraph graph or any agent — admin is infrastructure,
 not conversation.
 """
-import asyncio
 import logging
-import os
-import tempfile
-import time
 from pathlib import Path
 from typing import Literal
 
@@ -54,9 +50,19 @@ from backend.auth.middleware import UserContext, get_admin_user
 from backend.core.config_loader import config
 from backend.core.settings import settings
 from backend.memory.session_store import session_store
+from backend.rag import ingestion_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def _require_groq_key_for_llm(use_llm: bool) -> None:
+    """Contextual prefixes (use_llm=true) need a real Groq key — reject early."""
+    if use_llm and "placeholder" in settings.GROQ_API_KEY:
+        raise HTTPException(
+            status_code=422,
+            detail="use_llm=true requires GROQ_API_KEY to be set in .env. Use use_llm=false for demo mode.",
+        )
 
 # ── MCP outbound-host sub-router (admin manages connections to other MCP servers)
 from backend.api.routes.admin.mcp_servers import router as _mcp_servers_router  # noqa: E402
@@ -176,59 +182,12 @@ async def admin_ingest(
         body.project, body.use_llm, user.name,
     )
 
-    if body.use_llm and "placeholder" in settings.GROQ_API_KEY:
-        raise HTTPException(
-            status_code=422,
-            detail="use_llm=true requires GROQ_API_KEY to be set in .env. Use use_llm=false for demo mode.",
-        )
+    _require_groq_key_for_llm(body.use_llm)
 
     try:
-        from backend.rag.pipeline import RAGPipeline
-
-        pipeline  = RAGPipeline(use_llm_context=body.use_llm)
-        start     = time.monotonic()
-        total     = 0
-        data_root = Path(__file__).parents[4] / "data"
-
-        if body.directory:
-            ingest_jobs = [
-                {
-                    "dir":  data_root / body.directory,
-                    "meta": {"project": body.project, "source": body.directory, "type": "doc"},
-                }
-            ]
-        else:
-            ingest_jobs = [
-                {"dir": data_root / "sprint_docs",      "meta": {"project": body.project, "source": "local_sprint_docs",      "type": "doc"}},
-                {"dir": data_root / "adr_documents",    "meta": {"project": body.project, "source": "local_adr",              "type": "adr"}},
-                {"dir": data_root / "mock_slack",       "meta": {"project": body.project, "source": "local_slack_mock",       "type": "chat"}},
-                {"dir": data_root / "incidents",        "meta": {"project": body.project, "source": "local_incidents",        "type": "doc"}},
-                {"dir": data_root / "release_notes",    "meta": {"project": body.project, "source": "local_release_notes",   "type": "doc"}},
-                {"dir": data_root / "version_policies", "meta": {"project": body.project, "source": "local_version_policy",  "type": "doc"}},
-                {"dir": data_root / "coding_standards", "meta": {"project": body.project, "source": "local_coding_standards", "type": "doc"}},
-            ]
-
-        for job in ingest_jobs:
-            d = job["dir"]
-            if not d.exists():
-                logger.debug("admin/ingest: skipping missing dir %s", d)
-                continue
-            try:
-                pipeline.vector_store.mark_stale(project=body.project, source=job["meta"]["source"])
-            except Exception:
-                pass
-            total += pipeline.ingest_directory(d, job["meta"])
-
-        duration = time.monotonic() - start
-
-        # Invalidate the in-memory BM25 corpus index so the next retrieve()
-        # call rebuilds from the updated Qdrant corpus.
-        try:
-            from backend.orchestrator.nodes import get_retriever
-            get_retriever().clear_bm25_cache(body.project)
-        except Exception:
-            pass  # retriever may not be initialized yet — first-boot ingest
-
+        total, duration = await ingestion_service.ingest_local(
+            project=body.project, directory=body.directory, use_llm=body.use_llm,
+        )
         msg = (
             f"Ingested {total} chunks from project='{body.project}' "
             f"in {duration:.1f}s (LLM context: {'enabled' if body.use_llm else 'disabled'})."
@@ -321,18 +280,16 @@ async def admin_ingest_confluence(
     Falls back to mock pages when credentials are placeholders (dev mode).
     """
     logger.info(
-        "admin/ingest/confluence: space='%s' project='%s' user='%s'",
-        body.space_key, body.project, user.name,
+        "admin/ingest/confluence: space='%s' project='%s' use_llm=%s user='%s'",
+        body.space_key, body.project, body.use_llm, user.name,
     )
+    _require_groq_key_for_llm(body.use_llm)
+
     try:
-        import base64
-        from backend.rag.pipeline import RAGPipeline
-        from backend.mcp_client.client import as_list, call_mcp_tool
-
-        start = time.monotonic()
-        pages = as_list(await call_mcp_tool("confluence_get_all_page_texts", {"space_key": body.space_key}))
-
-        if not pages:
+        total, pages_fetched, duration = await ingestion_service.ingest_confluence(
+            space_key=body.space_key, project=body.project, use_llm=body.use_llm,
+        )
+        if total == 0 and pages_fetched == 0:
             return ConfluenceIngestResponse(
                 chunks_ingested=0,
                 pages_fetched=0,
@@ -340,73 +297,15 @@ async def admin_ingest_confluence(
                 message=f"No pages found in Confluence space '{body.space_key}'.",
             )
 
-        pipeline = RAGPipeline(use_llm_context=False)
-        source   = f"confluence_{body.space_key.lower()}"
-
-        try:
-            pipeline.vector_store.mark_stale(project=body.project, source=source)
-        except Exception:
-            pass
-
-        total         = 0
-        meta          = {"project": body.project, "source": source, "type": "doc"}
-        all_page_meta = as_list(await call_mcp_tool("confluence_get_pages", {"space_key": body.space_key}))
-
-        # Phase 1: Ingest body text from pages that have content
-        for page in pages:
-            count = pipeline._ingest_text(
-                text=page["content"],
-                doc_title=page["title"],
-                doc_type="doc",
-                metadata={**meta, "doc_title": page["title"], "url": page.get("url", "")},
-            )
-            total += count
-            logger.debug("admin/ingest/confluence: '%s' (text) → %d chunks", page["title"], count)
-
-        # Phase 2: Check all pages for PDF attachments (system page filtering is done server-side
-        # inside confluence_get_all_page_texts; get_pages returns all, so skip system pages here)
-        def _is_system(t: str) -> bool:
-            t = t.lower().strip()
-            return t in ("home", "overview") or t.endswith(" home") or t.startswith("welcome to")
-
-        for page_info in all_page_meta:
-            if _is_system(page_info["title"]):
-                continue
-            try:
-                attachments = as_list(await call_mcp_tool("confluence_get_page_attachments", {"page_id": page_info["id"]}))
-                for att in attachments:
-                    b64 = await call_mcp_tool("confluence_download_attachment", {"download_url": att["download_url"]})
-                    if not b64:
-                        continue
-                    pdf_bytes = base64.b64decode(b64)
-                    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
-                        tmp.write(pdf_bytes)
-                        tmp_path = tmp.name
-                    try:
-                        att_title = att["title"].replace(".pdf", "").replace("_", " ").replace("-", " ")
-                        att_count = pipeline.ingest_file(tmp_path, {**meta, "doc_title": att_title, "url": att["download_url"]})
-                        total += att_count
-                        logger.info("admin/ingest/confluence: '%s' (PDF) → %d chunks", att["title"], att_count)
-                    finally:
-                        try:
-                            os.unlink(tmp_path)
-                        except OSError:
-                            pass
-            except Exception:
-                logger.exception(
-                    "admin/ingest/confluence: attachment processing failed for page '%s'",
-                    page_info["title"],
-                )
-
-        duration = time.monotonic() - start
         msg = (
-            f"Ingested {total} chunks from {len(all_page_meta)} Confluence pages "
-            f"(space='{body.space_key}') in {duration:.1f}s."
+            f"Ingested {total} chunks from {pages_fetched} Confluence pages "
+            f"(space='{body.space_key}') in {duration:.1f}s "
+            f"(LLM context: {'enabled' if body.use_llm else 'disabled'})."
         )
         logger.info("admin/ingest/confluence: %s", msg)
         return ConfluenceIngestResponse(
             chunks_ingested=total,
-            pages_fetched=len(all_page_meta),
+            pages_fetched=pages_fetched,
             duration_seconds=round(duration, 2),
             message=msg,
         )
@@ -585,37 +484,19 @@ async def admin_ingest_jira(
         "admin/ingest/jira: project='%s' max=%d user='%s'",
         body.project, body.max_tickets, user.name,
     )
-    try:
-        from backend.rag.pipeline import RAGPipeline
-        from backend.mcp_client.client import as_list, call_mcp_tool
-        from backend.core.settings import settings as _s
-
-        if _s.JIRA_TOKEN == "placeholder":
-            raise HTTPException(
-                status_code=400,
-                detail="Jira credentials are not configured. Please set JIRA_TOKEN in .env to enable Jira ingestion."
-            )
-
-        start = time.monotonic()
-
-        sprint_board, blocked_tickets, all_tickets = await asyncio.gather(
-            call_mcp_tool("jira_get_sprint_board", {"project": body.project}),
-            call_mcp_tool("jira_get_blocked_tickets", {"project": body.project}),
-            call_mcp_tool("jira_search_tickets", {"query": "", "project": body.project}),
+    # Validate outside the try — an HTTPException raised inside would be caught
+    # by `except Exception` below and mis-reported as a 500.
+    if settings.JIRA_TOKEN == "placeholder":
+        raise HTTPException(
+            status_code=400,
+            detail="Jira credentials are not configured. Please set JIRA_TOKEN in .env to enable Jira ingestion."
         )
-        blocked_tickets = as_list(blocked_tickets)
-        all_tickets     = as_list(all_tickets)
 
-        seen: set[str] = set()
-        tickets: list[dict] = []
-        for t in [*all_tickets, *blocked_tickets]:
-            if t.get("id") and t["id"] not in seen:
-                seen.add(t["id"])
-                tickets.append(t)
-
-        tickets = tickets[: body.max_tickets]
-
-        if not tickets:
+    try:
+        total, tickets_fetched, duration = await ingestion_service.ingest_jira(
+            project=body.project, max_tickets=body.max_tickets,
+        )
+        if tickets_fetched == 0:
             return JiraIngestResponse(
                 chunks_ingested=0,
                 tickets_fetched=0,
@@ -623,50 +504,14 @@ async def admin_ingest_jira(
                 message=f"No tickets found for project '{body.project}'.",
             )
 
-        pipeline = RAGPipeline(use_llm_context=False)
-        source   = "jira_tickets"
-
-        try:
-            pipeline.vector_store.mark_stale(project=body.project, source=source)
-        except Exception:
-            pass
-
-        total = 0
-        for ticket in tickets:
-            text = (
-                f"Ticket {ticket.get('id', '')}: {ticket.get('title', '')}\n"
-                f"Status: {ticket.get('status', '')}\n"
-                f"Priority: {ticket.get('priority', '')}\n"
-                f"Assignee: {ticket.get('assignee', 'unassigned')}\n"
-                f"Labels: {', '.join(ticket.get('labels', []))}\n"
-                f"Blockers: {', '.join(ticket.get('blockers', []))}\n"
-                f"Sprint: {ticket.get('sprint', '')}\n"
-                f"Description: {ticket.get('description', '')}\n"
-                f"Created: {ticket.get('created', '')} Updated: {ticket.get('updated', '')}"
-            )
-            count = pipeline._ingest_text(
-                text=text,
-                doc_title=f"{ticket.get('id', '')} — {ticket.get('title', '')[:80]}",
-                doc_type="ticket",
-                metadata={
-                    "project":   body.project,
-                    "source":    source,
-                    "type":      "ticket",
-                    "doc_title": f"{ticket.get('id', '')} — {ticket.get('title', '')[:80]}",
-                    "url":       ticket.get("url", ""),
-                },
-            )
-            total += count
-
-        duration = time.monotonic() - start
         msg = (
-            f"Ingested {total} chunks from {len(tickets)} Jira tickets "
+            f"Ingested {total} chunks from {tickets_fetched} Jira tickets "
             f"(project='{body.project}') in {duration:.1f}s."
         )
         logger.info("admin/ingest/jira: %s", msg)
         return JiraIngestResponse(
             chunks_ingested=total,
-            tickets_fetched=len(tickets),
+            tickets_fetched=tickets_fetched,
             duration_seconds=round(duration, 2),
             message=msg,
         )
@@ -695,12 +540,7 @@ async def admin_build_links(
         project, min_similarity, user.name,
     )
     try:
-        from backend.rag.pipeline import RAGPipeline
-
-        pipeline = RAGPipeline(use_llm_context=False)
-        start    = time.monotonic()
-        linked   = pipeline.build_cross_document_links(project, min_similarity=min_similarity)
-        duration = time.monotonic() - start
+        linked, duration = await ingestion_service.build_links(project, min_similarity)
 
         msg = (
             f"Built cross-document links for {linked} chunks "

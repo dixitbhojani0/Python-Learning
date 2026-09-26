@@ -64,3 +64,4 @@ tool_safety:
     - send
     - post
     - close
+    - comment   # jira_add_comment writes to Jira — without this it was classified read-only

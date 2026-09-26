@@ -44,3 +44,9 @@ logs/
 
 # Model cache (sentence-transformers downloads here)
 .cache/
+
+# Generated at runtime — never commit
+data/images/
+data/eval_results.jsonl
+data/sessions.db
+*.zip

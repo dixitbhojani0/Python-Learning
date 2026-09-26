@@ -24,7 +24,7 @@ _PROPOSAL = {"pr_number": "PR-5", "suggested_reviewer": "dixitbhojani-blip", "pr
 @pytest.mark.asyncio
 async def test_success_reports_assigned():
     ok_result = {"pr": "PR-5", "reviewer": "dixitbhojani-blip", "status": "assigned"}
-    with patch("backend.api.routes.hitl.call_mcp_tool", new=AsyncMock(return_value=ok_result)):
+    with patch("backend.orchestrator.actions.call_mcp_tool", new=AsyncMock(return_value=ok_result)):
         text = await _execute_assign_reviewer(_PROPOSAL)
     assert "✅" in text
     assert "assigned to PR-5" in text
@@ -42,7 +42,7 @@ async def test_github_rejection_surfaces_githubs_real_message_not_a_guess():
         "pr": "PR-5", "reviewer": "dixitbhojani-blip", "status": "error",
         "http_code": 403, "message": "Resource not accessible by personal access token",
     }
-    with patch("backend.api.routes.hitl.call_mcp_tool", new=AsyncMock(return_value=error_result)):
+    with patch("backend.orchestrator.actions.call_mcp_tool", new=AsyncMock(return_value=error_result)):
         text = await _execute_assign_reviewer(_PROPOSAL)
     assert "❌" in text
     assert "Resource not accessible by personal access token" in text
@@ -65,7 +65,7 @@ async def test_github_silent_2xx_omission_reports_failure_not_false_success():
         "message": "GitHub accepted the request but did not add 'randomuser123' as a reviewer "
                    "— the user likely doesn't exist or can't be reached for this repo.",
     }
-    with patch("backend.api.routes.hitl.call_mcp_tool", new=AsyncMock(return_value=error_result)):
+    with patch("backend.orchestrator.actions.call_mcp_tool", new=AsyncMock(return_value=error_result)):
         text = await _execute_assign_reviewer({"pr_number": "PR-6", "suggested_reviewer": "randomuser123", "pr_title": "DB pool fix"})
     assert "❌" in text
     assert "did not add" in text
@@ -76,7 +76,7 @@ async def test_github_silent_2xx_omission_reports_failure_not_false_success():
 @pytest.mark.asyncio
 async def test_connector_unavailable_reports_failure_not_false_success():
     error_result = {"pr": "PR-5", "reviewer": "dixitbhojani-blip", "status": "error", "http_code": 0, "message": ""}
-    with patch("backend.api.routes.hitl.call_mcp_tool", new=AsyncMock(return_value=error_result)):
+    with patch("backend.orchestrator.actions.call_mcp_tool", new=AsyncMock(return_value=error_result)):
         text = await _execute_assign_reviewer(_PROPOSAL)
     assert "⚠️" in text
     assert "✅" not in text

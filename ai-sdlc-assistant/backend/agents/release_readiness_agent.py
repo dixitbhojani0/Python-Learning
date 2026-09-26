@@ -275,7 +275,10 @@ class ReleaseReadinessAgent(BaseAgent):
                 agent_name="release_readiness",
                 confidence=0.0,
                 summary="Assessment incomplete — AI model error",
-                structured={"final_response": error_response},
+                structured={
+                    "final_response": error_response,
+                    "skip_persona": True,   # system-error notice — persona rewrite would obscure it
+                },
                 sources=all_sources,
                 hitl_required=False,   # no fake HITL for a failed assessment
                 hitl_proposal={},

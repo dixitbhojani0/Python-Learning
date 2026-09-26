@@ -51,6 +51,10 @@ logger = logging.getLogger(__name__)
 _BATCH_SIZE  = 10    # number of LLM prefix calls per batch before sleeping
 _BATCH_SLEEP = 2.0   # seconds to sleep between batches (keeps Groq at ~25 req/min)
 
+# Dedicated worker thread for sync-bridged LLM calls (see _provider_generate_sync).
+# max_workers=1: prefix calls are sequential by design (Groq rate limit).
+_LLM_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="ingest-llm")
+
 # Where extracted document images are saved (served read-only by the API).
 # Lives under data/ so the docker-compose volume mount persists it across restarts.
 _IMAGES_DIR = Path(__file__).parents[2] / "data" / "images"
@@ -72,26 +76,19 @@ def _provider_generate_sync(
       asyncio.run() raises RuntimeError if called from inside a running event loop
       (which happens when admin.py calls ingest_directory from a FastAPI async route).
 
-    Solution: spin up a dedicated worker thread with its own brand-new event loop.
-      The thread has no existing loop, so asyncio.run() inside it always succeeds.
-      Works correctly from both:
+    Solution: run asyncio.run() on a dedicated worker thread — it has no loop of
+      its own, so asyncio.run() always succeeds. Works correctly from both:
         - CLI (scripts/ingest.py) — no event loop at all
-        - FastAPI routes (admin.py) — event loop exists but is on a different thread
+        - FastAPI routes (via ingestion_service) — event loop exists but is on a
+          different thread
+      The pool is module-level and reused: an ingest run makes one LLM call per
+      chunk, and spawning a fresh executor+thread for each was pure churn.
     """
-    def _run_in_new_loop() -> str:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            resp = loop.run_until_complete(
-                provider.generate_text(prompt, system, temperature, max_tokens)
-            )
-            return resp.text.strip()
-        finally:
-            loop.close()
-            asyncio.set_event_loop(None)
+    async def _call() -> str:
+        resp = await provider.generate_text(prompt, system, temperature, max_tokens)
+        return resp.text.strip()
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-        return pool.submit(_run_in_new_loop).result()
+    return _LLM_POOL.submit(asyncio.run, _call()).result()
 
 
 def _generate_context_prefix(provider: BaseLLMProvider, doc_title: str, doc_type: str, chunk_text: str) -> str:

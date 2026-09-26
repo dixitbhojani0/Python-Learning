@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from backend.agents.notify_agent import _NOTIFY_GATHER_SYSTEM, NotifyAgent
+from backend.agents.notify_agent import NotifyAgent
 from backend.mcp_client.tool_use import ToolCall, ToolGatherResult
 
 
@@ -166,7 +166,12 @@ async def test_gather_is_scoped_to_topic_not_audience():
     with patch("backend.agents.notify_agent.gather_via_tools", new=AsyncMock(return_value=gathered)) as mock_gather:
         await agent.run(state)
 
-    mock_gather.assert_called_once_with(state["query"], system=_NOTIFY_GATHER_SYSTEM)
+    # The prompt now lives in config/prompts.yaml (notify_gather_system) — the
+    # guard is that a NON-EMPTY custom system prompt is passed, not the default.
+    mock_gather.assert_called_once()
+    call_args = mock_gather.call_args
+    assert call_args.args[0] == state["query"]
+    assert call_args.kwargs.get("system"), "custom gather system prompt was dropped"
 
 
 @pytest.mark.asyncio

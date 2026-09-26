@@ -342,7 +342,7 @@ class RiskAgent(BaseAgent):
             risk_data = _compute_risk_from_jira(sprint_board, blocked_tickets)
             final_response = (
                 _format_risk_response(risk_data) if risk_data
-                else "I'm temporarily unavailable — please try again in a moment.\n\nIf the issue persists, contact your system administrator."
+                else self.LLM_UNAVAILABLE_MSG
             )
         elif resp.parse_error or not resp.structured:
             # LLM responded but not in JSON — compute deterministically from Jira data.

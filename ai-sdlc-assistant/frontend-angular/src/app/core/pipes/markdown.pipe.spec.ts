@@ -106,4 +106,42 @@ describe('MarkdownPipe', () => {
     expect(html).not.toContain('<strong>');
     expect(html).not.toContain('<em>');
   });
+
+  it('escapes raw HTML in normal text so it cannot execute (XSS)', () => {
+    const md = 'hello <script>alert(1)</script> and <img src=x onerror=alert(2)>';
+    const html = pipe.transform(md) as unknown as string;
+
+    expect(html).not.toContain('<script>');
+    expect(html).not.toContain('<img');
+    expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
+    expect(html).toContain('&lt;img src=x onerror=alert(2)&gt;');
+  });
+
+  it('escapes raw HTML inside headings, list items, table cells and code fences', () => {
+    const md = [
+      '## Heading <b>bold</b>',
+      '- item <script>x</script>',
+      '| a | <i>b</i> |',
+      '|---|---|',
+      '| <u>c</u> | d |',
+      '```',
+      '<script>in code</script>',
+      '```',
+    ].join('\n');
+    const html = pipe.transform(md) as unknown as string;
+
+    expect(html).not.toContain('<b>');
+    expect(html).not.toContain('<script>');
+    expect(html).not.toContain('<i>');
+    expect(html).not.toContain('<u>');
+    expect(html).toContain('<pre><code>&lt;script&gt;in code&lt;/script&gt;</code></pre>');
+  });
+
+  it('escapes ampersands without double-escaping', () => {
+    const md = 'AT&T and a < b';
+    const html = pipe.transform(md) as unknown as string;
+
+    expect(html).toContain('<p>AT&amp;T and a &lt; b</p>');
+    expect(html).not.toContain('&amp;amp;');
+  });
 });

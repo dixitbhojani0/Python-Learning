@@ -33,7 +33,10 @@ export class ConfigViewer {
     this.loading.set(true);
     this.admin.getConfig(this.selectedKey).subscribe({
       next:  (res) => { this.configJson.set(JSON.stringify(res.config, null, 2)); this.loading.set(false); },
-      error: ()    => { this.loading.set(false); },
+      error: (err) => {
+        this.loading.set(false);
+        this.snack.open(err?.error?.detail || `Failed to load '${this.selectedKey}' config`, 'OK', { duration: 4000 });
+      },
     });
   }
 
@@ -45,7 +48,10 @@ export class ConfigViewer {
         this.snack.open(res.message, 'OK', { duration: 3000 });
         this.loadConfig();
       },
-      error: () => { this.reloading.set(false); },
+      error: (err) => {
+        this.reloading.set(false);
+        this.snack.open(err?.error?.detail || 'Config reload failed', 'OK', { duration: 4000 });
+      },
     });
   }
 }

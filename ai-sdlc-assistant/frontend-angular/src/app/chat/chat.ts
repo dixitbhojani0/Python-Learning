@@ -72,7 +72,12 @@ export class Chat implements AfterViewChecked {
     // Open SSE first, before the POST fires.
     const sseSubscription = this.chatSvc.streamResponse(streamId).subscribe({
       next: (ev) => {
-        const data = JSON.parse(ev.data);
+        let data: { type?: string; text?: string };
+        try {
+          data = JSON.parse(ev.data);
+        } catch {
+          return; // one malformed frame must not kill the whole stream
+        }
         if (data.type === 'token') {
           this.messages.update(msgs => {
             const updated = [...msgs];
@@ -85,7 +90,22 @@ export class Chat implements AfterViewChecked {
         }
         if (data.type === 'done') sseSubscription.unsubscribe();
       },
-      error: () => sseSubscription.unsubscribe(),
+      error: () => {
+        sseSubscription.unsubscribe();
+        // Tell the user streaming died instead of freezing the partial bubble —
+        // the POST below still delivers the authoritative answer if it succeeds.
+        this.messages.update(msgs => {
+          const updated = [...msgs];
+          const last = updated[updated.length - 1];
+          if (last.role === 'assistant' && this.loading()) {
+            updated[updated.length - 1] = {
+              ...last,
+              text: last.text + '\n\n_…live streaming interrupted — waiting for the full response…_',
+            };
+          }
+          return updated;
+        });
+      },
     });
 
     const session = this.auth.getSession()!;
@@ -122,13 +142,17 @@ export class Chat implements AfterViewChecked {
           });
           this.loading.set(false);
         },
-        error: () => {
+        error: (err) => {
           sseSubscription.unsubscribe();
+          // Surface what actually failed — "something went wrong" hides
+          // rate limits (429), auth issues (401), and backend-down (0/503).
+          const detail = err?.error?.detail || err?.message || '';
+          const status = err?.status ? ` (HTTP ${err.status})` : '';
           this.messages.update(msgs => {
             const updated = [...msgs];
             updated[updated.length - 1] = {
               ...updated[updated.length - 1],
-              text: 'Something went wrong. Please try again.',
+              text: `⚠️ Request failed${status}${detail ? `: ${detail}` : '.'} Please try again.`,
             };
             return updated;
           });

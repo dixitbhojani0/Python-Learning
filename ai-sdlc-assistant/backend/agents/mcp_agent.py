@@ -385,7 +385,9 @@ class MCPAgent(BaseAgent):
             structured={
                 "final_response": response,
                 "rag_strategy":   rag_strategy,
-                "skip_persona":   False,   # LLM decides via output_mode_directive in prompt
+                # LLM decides tone via output_mode_directive in prompt — except the
+                # canned outage message, which must reach the user verbatim.
+                "skip_persona":   response == self.LLM_UNAVAILABLE_MSG,
                 "rag_chunks": [
                     {"text": c.text, "source": c.source, "score": c.score}
                     for c in chunks

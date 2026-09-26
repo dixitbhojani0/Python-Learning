@@ -237,7 +237,10 @@ class TicketAgent(BaseAgent):
                 agent_name="ticket_agent",
                 confidence=1.0,
                 summary=f"Ticket {ticket_id} not found",
-                structured={"final_response": f"Ticket **{ticket_id}** does not exist in Jira project `{project}`. Please check the ticket ID and try again."},
+                structured={
+                    "final_response": f"Ticket **{ticket_id}** does not exist in Jira project `{project}`. Please check the ticket ID and try again.",
+                    "skip_persona": True,   # factual validation message — must not be reworded
+                },
                 sources=["jira_live"],
                 hitl_required=False,
                 hitl_proposal={},
@@ -277,7 +280,7 @@ class TicketAgent(BaseAgent):
                         agent_name="ticket_agent",
                         confidence=0.9,
                         summary=f"Assignee '{named_target}' not found in project",
-                        structured={"final_response": clarification},
+                        structured={"final_response": clarification, "skip_persona": True},
                         sources=["jira_live"],
                         hitl_required=False,
                         hitl_proposal={},
@@ -299,7 +302,7 @@ class TicketAgent(BaseAgent):
                 agent_name="ticket_agent",
                 confidence=1.0,
                 summary=f"{ticket_id} already assigned to {current_assignee}",
-                structured={"final_response": already_msg},
+                structured={"final_response": already_msg, "skip_persona": True},
                 sources=["jira_live"],
                 hitl_required=False,
                 hitl_proposal={},
@@ -405,7 +408,8 @@ class TicketAgent(BaseAgent):
             return AgentPayload(
                 agent_name="ticket_agent", confidence=1.0,
                 summary=f"Ticket {ticket_id} not found",
-                structured={"final_response": msg}, sources=["jira_live"],
+                structured={"final_response": msg, "skip_persona": True},
+                sources=["jira_live"],
                 hitl_required=False, hitl_proposal={}, response=msg,
             )
 
@@ -428,7 +432,8 @@ class TicketAgent(BaseAgent):
                 return AgentPayload(
                     agent_name="ticket_agent", confidence=0.9,
                     summary=f"'{old_val}' not found in {ticket_id} {field}",
-                    structured={"final_response": msg}, sources=["jira_live"],
+                    structured={"final_response": msg, "skip_persona": True},
+                    sources=["jira_live"],
                     hitl_required=False, hitl_proposal={}, response=msg,
                 )
             new_value = re.sub(re.escape(old_val), new_val, current_value, flags=re.IGNORECASE)
@@ -442,7 +447,8 @@ class TicketAgent(BaseAgent):
                 return AgentPayload(
                     agent_name="ticket_agent", confidence=1.0,
                     summary="edit target value needed",
-                    structured={"final_response": msg}, sources=[], response=msg,
+                    structured={"final_response": msg, "skip_persona": True},
+                    sources=[], response=msg,
                 )
             new_value = to_only.group(1).strip()
 

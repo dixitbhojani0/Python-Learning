@@ -20,8 +20,9 @@ An AI-powered SDLC assistant where developers, managers, and stakeholders ask na
 | Reranker | CrossEncoder ms-marco-MiniLM-L-6-v2 | Local, free |
 | Orchestration | LangGraph | Stateful graph, HITL support |
 | API | FastAPI | Permanent contract, async, SSE |
-| Chat UI | Chainlit | Built-in streaming + action buttons |
-| Admin | Streamlit | Fast config/management UI |
+| Chat UI + Admin | Angular 21 (`frontend-angular/`) | Signals, Material, SSE streaming chat + `/admin` panel |
+| Legacy UIs | Chainlit (`frontend/`), Streamlit (`admin/`) | Kept for reference only — commented out in docker-compose |
+| MCP tools | sdlc-mcp-server (separate repo dir) | Jira/GitHub/Slack/Confluence over streamable-HTTP + OAuth 2.1 |
 | Cache | Redis (Docker) | Semantic cache, HITL state |
 | DB | SQLite (demo) / PostgreSQL (prod) | Session + episodic memory |
 | Observability | LangSmith | LLM + agent tracing |
@@ -31,15 +32,15 @@ An AI-powered SDLC assistant where developers, managers, and stakeholders ask na
 
 1. **No hardcoded strings in Python** — all prompts live in `config/prompts.yaml`, retrieved via `config.get_prompt(key)`.
 2. **No direct LLM imports in agents** — agents use `BaseLLMProvider` interface. Concrete provider injected at startup.
-3. **No direct API calls in agents** — MCP connectors handle all external tool calls. Agents call `self.mcp.get("jira").search_tickets(...)`.
-4. **Frontend is a thin client** — Chainlit calls FastAPI only. Zero business logic, zero direct imports from `backend/`.
+3. **No direct API calls in agents** — all external tool calls go through the sdlc-mcp-server via `backend/mcp_client/client.py` (`call_mcp_tool("jira_search_tickets", {...})`).
+4. **Frontend is a thin client** — the Angular app calls FastAPI only. Zero business logic, zero direct imports from `backend/`.
 5. **Config is the single source of truth** — temperatures, thresholds, TTLs, model names all come from YAML.
 6. **Every agent returns `AgentPayload`** — no raw text passed between agents.
 7. **HITL state always lives in Redis** — graph state survives container restarts this way.
 
 ## Key Design Decisions (Why things are the way they are)
 
-- **Parent-child chunking**: Child chunks (350 tokens) are embedded and searched. Parent chunks (1500 tokens) are returned to the LLM for full context. Small for precision, large for understanding.
+- **Parent-child chunking**: Child chunks (512 tokens, 50-token overlap) are embedded and searched. Parent chunks (2000 tokens) are returned to the LLM for full context. Small for precision, large for understanding. (Values live in `config/chunking.yaml` / `backend/rag/chunker.py`.)
 - **Contextual prefix before embedding**: Each chunk gets a 1-2 sentence LLM-generated summary prepended before embedding. This embeds document context, not just the text fragment.
 - **Hybrid BM25 + vector**: BM25 catches exact terms (ticket IDs, endpoint names). Vector catches semantic meaning. Together they cover what neither can alone.
 - **Persona layer after agents**: Agents produce structured facts. Persona layer rewrites them in role-appropriate language. Data and presentation are always separate.
@@ -50,21 +51,24 @@ An AI-powered SDLC assistant where developers, managers, and stakeholders ask na
 ```
 backend/
   agents/         ← specialist agents (extend BaseAgent)
-  api/            ← FastAPI routes and schemas
+  api/            ← FastAPI routes and schemas (chat, stream, hitl, webhooks, admin/)
   auth/           ← demo token middleware
-  core/           ← config loader, context builder, settings, scheduler
-  mcp/            ← MCP registry and connectors
+  core/           ← config loader, context builder, settings, scheduler, metrics
+  mcp_client/     ← MCP host client (connects to sdlc-mcp-server) + tool_use
+  mcp/            ← constants only (write-verb tool classification)
   memory/         ← Redis cache, session store, semantic/episodic memory
-  orchestrator/   ← LangGraph graph, HITL manager, state
+  orchestrator/   ← LangGraph graph, nodes, HITL manager, state, evaluation, actions
   persona/        ← role detector, response adapter
   providers/      ← LLM provider interface + implementations
-  rag/            ← chunker, pipeline, retriever, vector store
+  rag/            ← chunker, pipeline, ingestion_service, retriever, vector store
 config/           ← all YAML (hot-reloaded)
-data/             ← mock sprint docs, ADRs, Slack JSON
-frontend/         ← Chainlit app (thin client only)
-admin/            ← Streamlit admin panel
+data/             ← mock sprint docs, ADRs, Slack JSON (generated data is gitignored)
+frontend-angular/ ← ACTIVE UI — Angular 21 chat + /admin panel (thin client only)
+frontend/         ← legacy Chainlit app (reference only, not deployed)
+admin/            ← legacy Streamlit admin (reference only, not deployed)
 scripts/          ← CLI tools (ingest.py)
 .claude/standards/← domain-specific coding standards (see below)
+../sdlc-mcp-server/ ← standalone MCP server (Jira/GitHub/Slack/Confluence tools, OAuth 2.1)
 ```
 
 ## Standards Files
@@ -90,22 +94,16 @@ Each domain has its own standards file. Read the relevant one before writing cod
 
 ## Current Implementation Status
 
-- ✅ RAG pipeline (chunker, pipeline, retriever, vector store)
-- ✅ Config system (hot-reloading YAML, all 6 config files)
-- ✅ Core (context builder, settings, LangGraph state)
-- ✅ Base agent + AgentPayload
-- ✅ Demo auth middleware
-- ✅ Docker infrastructure (Qdrant + Redis)
-- ✅ Mock data (sprint docs, ADRs, Slack JSON)
-- ✅ Ingestion script
-- ⬜ LLM provider layer (backend/providers/)
-- ⬜ FastAPI app + routes
-- ⬜ LangGraph orchestrator graph
-- ⬜ Specialist agents
-- ⬜ MCP connectors (mock)
-- ⬜ Memory layer
-- ⬜ Persona layer
-- ⬜ Chainlit frontend
-- ⬜ Streamlit admin
-- ⬜ Scheduler
-- ⬜ LangSmith observability
+All layers are built and running (via docker-compose, plus ../sdlc-mcp-server):
+
+- ✅ RAG pipeline (parent-child chunker, contextual prefixes, hybrid BM25+vector+RRF+rerank, corrective RAG)
+- ✅ Config system (hot-reloading YAML) · Core (context builder, settings, metrics/eval)
+- ✅ LLM provider layer (Groq primary; Gemini/OpenAI fallbacks)
+- ✅ FastAPI app + routes (chat, SSE stream, HITL approve/reject, GitHub/Slack webhooks, admin)
+- ✅ LangGraph orchestrator (10-node graph, single-agent Send routing, live faithfulness eval + reflection)
+- ✅ Specialist agents (mcp/cross-source, ticket, risk, pr_review, release_readiness, notify)
+- ✅ MCP integration — real sdlc-mcp-server over streamable-HTTP with OAuth 2.1 service token
+- ✅ Memory (session store, semantic + episodic memory) · Persona layer
+- ✅ Angular frontend (chat + admin) — replaces Chainlit/Streamlit
+- ✅ Scheduler (APScheduler risk scan → Slack) · LangSmith observability
+- ✅ Ingestion from local dirs, Confluence (pages + PDF attachments), and Jira tickets

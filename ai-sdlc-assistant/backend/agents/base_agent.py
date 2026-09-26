@@ -78,6 +78,14 @@ class BaseAgent(ABC):
     # LLM to hallucinate answers sourced from its training data.
     _LOW_CONFIDENCE_THRESHOLD: float = 0.20
 
+    # Canned outage message returned by _guard_empty_llm. Single source of truth:
+    # agents compare against this constant (identity, not substring matching) to
+    # decide skip_persona — a system-error notice must never be persona-rewritten.
+    LLM_UNAVAILABLE_MSG: str = (
+        "I'm temporarily unavailable — please try again in a moment.\n\n"
+        "If the issue continues, contact your system administrator."
+    )
+
     def __init__(self, mcp_registry: Any, retriever: Any, llm: Any, config_loader: Any):
         """
         Args:
@@ -189,7 +197,4 @@ class BaseAgent(ABC):
             "likely rate limited or quota exhausted.",
             agent_name, query[:60],
         )
-        return (
-            "I'm temporarily unavailable — please try again in a moment.\n\n"
-            "If the issue continues, contact your system administrator."
-        )
+        return self.LLM_UNAVAILABLE_MSG

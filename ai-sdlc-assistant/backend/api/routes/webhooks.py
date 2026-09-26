@@ -198,8 +198,17 @@ async def _slack_post(channel: str, *, text: str = "", blocks: list | None = Non
             json=payload,
             timeout=10.0,
         )
-    if not resp.json().get("ok"):
-        logger.warning("webhooks/slack: chat.postMessage failed: %s", resp.text)
+    # A 5xx from Slack returns HTML, not JSON — .json() would raise inside this
+    # best-effort notifier and take the webhook handler down with it.
+    try:
+        ok = resp.status_code == 200 and resp.json().get("ok")
+    except ValueError:
+        ok = False
+    if not ok:
+        logger.warning(
+            "webhooks/slack: chat.postMessage failed (HTTP %d): %s",
+            resp.status_code, resp.text[:500],
+        )
 
 
 def _build_hitl_blocks(proposal: dict, hitl_id: str, final_response: str) -> list:
@@ -350,7 +359,7 @@ async def _handle_slack_decision(hitl_id: str, decision: str, clicker_slack_id: 
     result back to the original Slack thread.
     """
     try:
-        from backend.api.routes.hitl import _execute_create_ticket
+        from backend.orchestrator.actions import execute_create_ticket
         from backend.orchestrator.hitl import hitl_manager
 
         action = await hitl_manager.get(hitl_id)
@@ -364,7 +373,7 @@ async def _handle_slack_decision(hitl_id: str, decision: str, clicker_slack_id: 
         thread_ts = ctx.get("slack_thread_ts", "")
 
         if decision == "approve":
-            result_text = await _execute_create_ticket(
+            result_text = await execute_create_ticket(
                 proposal,
                 approver_role="developer",
                 approver_name=clicker_slack_id,

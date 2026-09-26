@@ -56,7 +56,7 @@ export class MarkdownPipe implements PipeTransform {
           i++;
         }
         i++; // consume the closing ``` (or run off the end if the fence was never closed)
-        out.push(`<pre><code>${codeLines.join('\n')}</code></pre>`);
+        out.push(`<pre><code>${this.escape(codeLines.join('\n'))}</code></pre>`);
         continue;
       }
 
@@ -152,8 +152,18 @@ export class MarkdownPipe implements PipeTransform {
     return out.join('');
   }
 
-  private inline(text: string): string {
+  // All text reaching innerHTML goes through here first — the pipe output is
+  // marked trusted (bypassSecurityTrustHtml), so raw HTML in LLM/RAG content
+  // would otherwise execute in the DOM.
+  private escape(text: string): string {
     return text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+
+  private inline(text: string): string {
+    return this.escape(text)
       .replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>')
       .replace(/\*\*(.+?)\*\*/g,     '<strong>$1</strong>')
       .replace(/__(.+?)__/g,          '<strong>$1</strong>')

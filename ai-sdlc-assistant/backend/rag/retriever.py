@@ -475,7 +475,7 @@ class HybridRetriever:
     def _confidence_tier(self, score: float) -> str:
         """Human-readable confidence tier for logging."""
         high = self.confidence_thresholds.get("high_threshold", 0.75)
-        medium = self.confidence_thresholds.get("medium_threshold", 0.45)
+        medium = self.confidence_thresholds.get("medium_threshold", 0.60)  # matches rag_sources.yaml
         no_evidence = self.confidence_thresholds.get("no_evidence_threshold", 0.20)
         if score >= high:
             return "HIGH"

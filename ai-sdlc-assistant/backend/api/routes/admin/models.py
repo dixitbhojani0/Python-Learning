@@ -21,8 +21,9 @@ class IngestRequest(BaseModel):
 
 class ConfluenceIngestRequest(BaseModel):
     """Body for POST /admin/ingest/confluence."""
-    project:    str = settings.DEFAULT_PROJECT
-    space_key:  str = settings.CONFLUENCE_SPACE_KEY
+    project:    str  = settings.DEFAULT_PROJECT
+    space_key:  str  = settings.CONFLUENCE_SPACE_KEY
+    use_llm:    bool = True          # contextual prefixes on by default — main RAG quality feature
 
 
 class JiraIngestRequest(BaseModel):

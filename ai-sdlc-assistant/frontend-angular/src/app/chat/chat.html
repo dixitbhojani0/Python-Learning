@@ -1,6 +1,7 @@
 <div class="chat-container">
-  <!-- Message list -->
-  <div class="messages" #messageList>
+  <!-- Message list. aria-live=polite so screen readers announce incoming
+       assistant messages without interrupting the user mid-typing. -->
+  <div class="messages" #messageList aria-live="polite">
 
     @if (messages().length === 0) {
       <div class="empty-state">
