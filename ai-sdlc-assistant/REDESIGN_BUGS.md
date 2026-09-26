@@ -320,16 +320,22 @@ agentic system. Deterministic code is allowed **only** for:
 - **Fix direction:** with real MCP + LLM tool-use (B7), the supervisor can iteratively pick/chain tools
   across connectors (parallel where independent). Consider supervisor-worker multi-agent if needed.
 
-### 🟠 E9 — Frontend explainability / decision trace labels  ☐
+### 🟠 E9 — Frontend explainability / decision trace labels  ☑ DONE (2026-09-27)
 - **User ask:** while processing and in the answer, show **what was called, the scores, why each thing
   was chosen** — incl. **which RAG chunks were used and why** (relevance score).
-- **State:** we now show agent / strategy / confidence / relevancy / faithfulness chips. Missing: the
-  **per-step trace** — tools called + their latency/result, retrieved chunks + rerank scores + which
-  made the cut, routing reason from the supervisor (`llm_classify` already returns a `reason`).
-- **Where:** surface `agent_payloads` (sources, rag_chunks+scores) and the classifier `reason` through
-  `ChatResponse` → an expandable "Why this answer?" panel in the Angular chat.
-- **Fix direction:** add a `trace`/`debug` block to the response (routing reason, tools called,
-  top chunks with scores) and a collapsible UI panel. Great for the demo (shows the agentic reasoning).
+- **Shipped:** `classifier.llm_classify()` now returns `(agents, reason)` instead of discarding the
+  LLM's routing reason; `classify_intent` puts it on `SDLCState.routing_reason`. `chat.py::_build_trace()`
+  assembles it with `agent_payloads[*].structured["mcp_calls"/"rag_chunks"]` (already computed by
+  `MCPAgent`, previously dropped before the response) into `ChatResponse.trace` — `None` when there's
+  nothing to explain (HITL proposal / blocked / no-evidence refusal), so no empty panel ships.
+  Angular: a native `<details>`/`<summary>` "Why this answer?" panel under the existing meta-chip row
+  (`chat.html`/`chat.css`/`chat.ts`) — no new dependency, reuses the established chip palette.
+- **Design doc + mockup:** `auto-sdlc/designs/E9.md` / `E9.html` (Stitch/Claude Design unavailable in
+  this environment; hand-built static mockup against the existing chat.css palette instead).
+- **Tests:** `tests/unit/test_classifier_routing_reason.py`, `tests/unit/test_chat_trace.py` (backend);
+  `frontend-angular/src/app/chat/chat.spec.ts` (Angular, first spec for this component).
+- **Where:** `backend/orchestrator/classifier.py`, `state.py`, `nodes.py`; `backend/api/routes/chat.py`;
+  `backend/api/models/schemas.py`; `frontend-angular/src/app/chat/*`.
 
 ---
 

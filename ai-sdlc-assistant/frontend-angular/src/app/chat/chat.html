@@ -74,6 +74,39 @@
           </div>
         }
 
+        <!-- E9: "why this answer?" decision trace — omitted entirely when there's
+             nothing to explain (blocked query, HITL proposal, no-evidence refusal) -->
+        @if (msg.role === 'assistant' && msg.trace) {
+          <details class="trace">
+            <summary>Why this answer?</summary>
+            <div class="trace-body">
+              @if (msg.trace.routing_reason) {
+                <div class="trace-reason"><strong>Routing:</strong> {{ msg.trace.routing_reason }}</div>
+              }
+              @if (msg.trace.tools_called.length > 0) {
+                <div>
+                  <div class="trace-section-label">Tools called</div>
+                  <ul class="trace-list">
+                    @for (call of msg.trace.tools_called; track call.tool) {
+                      <li [class.tool-ok]="call.ok" [class.tool-err]="!call.ok">{{ call.tool }}</li>
+                    }
+                  </ul>
+                </div>
+              }
+              @if (msg.trace.top_chunks.length > 0) {
+                <div>
+                  <div class="trace-section-label">Top chunks used</div>
+                  <ul class="trace-list">
+                    @for (chunk of msg.trace.top_chunks; track chunk.source) {
+                      <li>{{ chunk.source }} <span class="chunk-score">{{ chunk.score.toFixed(3) }}</span></li>
+                    }
+                  </ul>
+                </div>
+              }
+            </div>
+          </details>
+        }
+
         <!-- HITL approve/reject card -->
         @if (msg.hitlRequired && !msg.hitlResolved && msg.hitlActionId) {
           <app-hitl-card

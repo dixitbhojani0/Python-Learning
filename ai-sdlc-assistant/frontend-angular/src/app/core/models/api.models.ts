@@ -24,6 +24,24 @@ export interface ImageRef {
   caption?: string;
 }
 
+// E9 — "why this answer?" decision trace. Omitted (undefined) when there's
+// nothing to explain (blocked query, HITL proposal, no-evidence refusal).
+export interface ToolCallRef {
+  tool: string;
+  ok: boolean;
+}
+
+export interface ChunkRef {
+  source: string;
+  score: number;
+}
+
+export interface TraceInfo {
+  routing_reason: string;
+  tools_called: ToolCallRef[];
+  top_chunks: ChunkRef[];
+}
+
 export interface ChatResponse {
   response: string;
   confidence: number;
@@ -37,6 +55,7 @@ export interface ChatResponse {
   hitl_action_id: string | null;
   response_cached: boolean;
   images?: ImageRef[];
+  trace?: TraceInfo | null;
 }
 
 // ── HITL
@@ -128,4 +147,5 @@ export interface ChatMessage {
   hitlActionId?: string | null;
   hitlResolved?: boolean;
   images?: ImageRef[];   // document images attached to an assistant answer
+  trace?: TraceInfo | null; // E9 — "why this answer?" decision trace
 }

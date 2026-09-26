@@ -137,6 +137,74 @@
   font-weight: 600;
 }
 
+/* E9 — "why this answer?" decision trace (native <details>, no JS toggle state) */
+.trace {
+  margin-top: 6px;
+}
+.trace summary {
+  font-size: 0.75rem;
+  color: #888;
+  cursor: pointer;
+  list-style: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  user-select: none;
+}
+.trace summary::-webkit-details-marker { display: none; }
+.trace summary::before {
+  content: "▸";
+  font-size: 0.7rem;
+  transition: transform 0.15s ease-out;
+  color: #aaa;
+}
+.trace[open] summary::before { transform: rotate(90deg); }
+.trace summary:hover,
+.trace summary:hover::before { color: #1565c0; }
+
+.trace-body {
+  margin-top: 8px;
+  padding-left: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.trace-reason {
+  font-size: 0.8rem;
+  color: #555;
+  line-height: 1.4;
+}
+.trace-section-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: #999;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-bottom: 4px;
+}
+.trace-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.trace-list li {
+  font-size: 0.75rem;
+  color: #616161;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.trace-list li.tool-ok::before { content: "✓"; color: #2e7d32; font-weight: 700; }
+.trace-list li.tool-err::before { content: "✕"; color: #c62828; font-weight: 700; }
+.chunk-score {
+  margin-left: auto;
+  color: #999;
+  font-variant-numeric: tabular-nums;
+}
+
 .hitl-banner {
   background: #fff3e0;
   border: 1px solid #ffb74d;
