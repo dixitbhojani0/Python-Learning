@@ -19,7 +19,9 @@ $Py      = Join-Path $Repo 'ai-sdlc-assistant\.venv\Scripts\python.exe'
 $ClaudeTimeoutMin = 240
 
 New-Item -ItemType Directory -Force $LogDir | Out-Null
-function Log($m) { $l = "$(Get-Date -Format 'HH:mm:ss') $m"; Write-Host $l; Add-Content -Path $Log -Value $l -Encoding utf8 }
+# If another process holds the log (e.g. a tail -f), fall back to a second file instead of silently losing lines.
+function Log($m) { $l = "$(Get-Date -Format 'HH:mm:ss') $m"; Write-Host $l
+    try { Add-Content -Path $Log -Value $l -Encoding utf8 -ErrorAction Stop } catch { Add-Content -Path "$Log.fallback" -Value $l -Encoding utf8 } }
 function Git { & git.exe -C $Repo @args 2>&1 | ForEach-Object { "$_" }; if ($LASTEXITCODE -ne 0) { throw "git $args failed ($LASTEXITCODE)" } }
 function Run($name, $dir, $exe, [string[]]$argv) {
     Push-Location $dir
