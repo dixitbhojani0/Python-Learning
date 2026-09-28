@@ -1,6 +1,68 @@
 # Daily autonomous engineering run — changelog
 
-## 2026-09-27
+## 2026-09-28
+
+**Orientation:** read yesterday's entry + `REDESIGN_BUGS.md`. Well over 5 items open (B4, E3–E7,
+B8, B9, B10, E8, E10, E11) — no backlog refill needed.
+
+**Baseline gate (before any change):** all three green — 105 backend (matches yesterday's "after"
+count), 8 MCP-server, 18 Angular + `ng build`.
+
+### Items done
+
+1. **B10 (partial) — `ticket_agent.py` pronoun/ticket-ID resolution from session history.**
+   Tracing the actual `run()` flow surfaced a real bug, not just the documented gap: write-intent
+   queries with no explicit ticket ID ("reassign **that ticket** to alice", "log a note on **it**:
+   ...") matched `assign_match`/`comment_match` but had no `ticket_id_match`, so the code silently
+   fell through every branch into the ticket **CREATE** flow — proposing a bogus new ticket instead
+   of acting on the one just discussed. Added `_last_ticket_id_from_history()` (resolves against
+   `state.recent_messages`, newest turn first — the same rule `MCPAgent`'s prompt already documents
+   for its own pronoun resolution) and a shared `_ask_for_ticket_id()` clarification for when nothing
+   resolves. Also discovered `MCPAgent` (the live generalist) already injects `recent_messages` +
+   `conversation_summary` + `semantic_context` into its prompt — B10's table was stale, written before
+   `MCPAgent` existed; corrected it in `REDESIGN_BUGS.md`. Remaining real gap: the 4 other specialist
+   agents (risk/pr_review/release_readiness/notify) still don't consume history — lower priority,
+   left open (mostly single-shot queries, not multi-turn pronoun-heavy like ticket ops).
+2. **B8 (causes 1+2) — restored full-document recall on the live path.** Reproducing the documented
+   symptom (`Clean Code checklist` → wrong, larger doc) showed the real root cause was worse than
+   written: `_wants_full_document()`'s keyword-regex recall trigger only ever lived in
+   `cross_source_agent.py`, which `run_cross_source` stopped routing to once `MCPAgent` shipped (B2/B5)
+   — so full-document recall didn't exist **at all** on the live path, not even the old brittle-keyword
+   version. Fixed by extracting the title-overlap logic `identify_document()` already used into
+   `HybridRetriever._match_doc_title()` and wiring it into `retrieve_with_corrective_rag()` (what
+   `MCPAgent` actually calls): a >=2-word title match on the first-pass chunks triggers
+   `retrieve_full_document()` directly — the retrieval signal itself is the recall-intent check, no
+   separate keyword list (closes a P1 gap here too). One retrieval call, no perf regression.
+   `mcp_agent.py` needed zero changes — it already branches on `rag_strategy=="full_document"` for the
+   token budget. Cause 3 (Checklist doc's own chunk quality/fragmentation) is a chunking/ingest problem,
+   unrelated to routing — left open.
+3. **B4 — verified not reproducible, corrected the backlog.** Its symptom lives entirely in
+   `cross_source_agent._check_ticket_needed`, which is dead code on the live path (confirmed zero
+   duplicate-ticket logic in `mcp_agent.py`). `TicketAgent`'s own duplicate guard is the only live
+   duplicate-detection path today and is already trimmed, not verbose. Ties to B7 Step 4's open
+   "give MCPAgent write-intent → HITL proposal" — B4's fix direction applies there when that ships,
+   not to the dead code. No code change, backlog corrected so a future run doesn't re-investigate a
+   phantom bug (same pattern as yesterday's B1/B2/B5 correction).
+
+### Tests added
+- `ai-sdlc-assistant/tests/unit/test_ticket_agent_history_resolution.py` (4 tests)
+- `ai-sdlc-assistant/tests/unit/test_retriever.py` (+2 tests: recall-triggers-on-strong-title-match,
+  recall-skipped-on-weak-overlap)
+
+### Gate status (after all changes)
+- Backend: 111 passed (was 109 after item 1, 105 baseline)
+- MCP server: 8 passed (untouched — no MCP-server files changed today)
+- Angular: 18 passed (untouched — no frontend files changed today) + `ng build` succeeds
+
+### Left half-done / follow-ups (not blocked, just out of today's scope)
+- B10: risk/pr_review/release_readiness/notify agents still don't consume `recent_messages` or
+  `semantic_context`. `ContextBuilder` (7-slot tiktoken budget) remains a dead module — MCPAgent builds
+  its prompt inline instead; harmless but worth deleting or actually adopting later, not both.
+- B8 cause 3 (Checklist doc chunking/fragmentation) still open — needs a rechunk + re-ingest pass.
+- B9 (dynamic tool-selection loop for specialists), E8 (HITL approve-all scoping), E10/E11 (automated
+  eval runner) remain open, all larger than a one-day slice.
+
+**Needs Dixit:** nothing blocked this run — no credential, paid API, or product decision was needed.
 
 **Orientation:** no prior CHANGELOG entry existed (first real run — earlier commits on this
 branch were harness/infra work, not backlog items). Read `ai-sdlc-assistant/REDESIGN_BUGS.md`;

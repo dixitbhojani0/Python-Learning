@@ -55,12 +55,19 @@ Status: ☐ open · ◐ investigating · ☑ fixed
 - **Fix direction:** include the latest/most-relevant developer comment(s) + any effort/ETA in the
   ticket-detail answer, for all roles (phrased per persona).
 
-### 🟠 B4 — Over-eager ticket matching + verbose suggestion  ☐
-- **Symptom:** "monitoring detected 12% 500 errors" → matched **SDLC-6** by similarity; when told
-  "this is different", it asked for a new ticket but **dumped excessive details** (unclear what's needed).
-- **Where:** `cross_source_agent.py` `_check_ticket_needed`; `cross_source_ticket_suggestion` prompt.
-- **Fix direction:** stricter duplicate match (don't claim a ticket on weak similarity); trim the
-  proposal to title / short description / priority / labels only.
+### 🟠 B4 — Over-eager ticket matching + verbose suggestion  ☐ NOT REPRODUCIBLE ON LIVE PATH (checked 2026-09-28)
+- **Symptom (original):** "monitoring detected 12% 500 errors" → matched **SDLC-6** by similarity; when
+  told "this is different", it asked for a new ticket but **dumped excessive details**.
+- **Where the bug lives:** `cross_source_agent.py` `_check_ticket_needed` — but `run_cross_source` routes
+  to `MCPAgent` today, not `cross_source_agent` (B2/B5), and `MCPAgent` has **no** duplicate-ticket
+  suggestion logic at all yet (confirmed: zero hits for `duplicate|similar_ticket|_check_ticket_needed` in
+  `mcp_agent.py`). So this exact symptom can't reproduce live — `TicketAgent`'s own duplicate guard
+  (`similar_ticket_ref`, step 4 in `ticket_agent.py::run`) is the only live duplicate-detection path today,
+  and it already trims the reply to id/title/status/assignee/priority, not a dump.
+- **Ties to B7 Step 4's open TODO:** "give MCPAgent write-intent → HITL proposal" — if that ships, apply
+  this fix (stricter match threshold + trimmed card) there, not in the dead `cross_source_agent` code.
+- **Fix direction (when the above ships):** stricter duplicate match (don't claim a ticket on weak
+  similarity); trim the proposal to title / short description / priority / labels only.
 
 ### 🟠 B5 — Routing inconsistency for ticket creation  ☑ FIXED (verified 2026-09-27, ties to B2)
 - **Confirmed:** `run_cross_source` routes to `MCPAgent` (read-only generalist, no ticket-creation
