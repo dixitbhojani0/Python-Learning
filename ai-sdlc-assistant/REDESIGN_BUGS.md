@@ -55,12 +55,19 @@ Status: ☐ open · ◐ investigating · ☑ fixed
 - **Fix direction:** include the latest/most-relevant developer comment(s) + any effort/ETA in the
   ticket-detail answer, for all roles (phrased per persona).
 
-### 🟠 B4 — Over-eager ticket matching + verbose suggestion  ☐
-- **Symptom:** "monitoring detected 12% 500 errors" → matched **SDLC-6** by similarity; when told
-  "this is different", it asked for a new ticket but **dumped excessive details** (unclear what's needed).
-- **Where:** `cross_source_agent.py` `_check_ticket_needed`; `cross_source_ticket_suggestion` prompt.
-- **Fix direction:** stricter duplicate match (don't claim a ticket on weak similarity); trim the
-  proposal to title / short description / priority / labels only.
+### 🟠 B4 — Over-eager ticket matching + verbose suggestion  ☐ NOT REPRODUCIBLE ON LIVE PATH (checked 2026-09-28)
+- **Symptom (original):** "monitoring detected 12% 500 errors" → matched **SDLC-6** by similarity; when
+  told "this is different", it asked for a new ticket but **dumped excessive details**.
+- **Where the bug lives:** `cross_source_agent.py` `_check_ticket_needed` — but `run_cross_source` routes
+  to `MCPAgent` today, not `cross_source_agent` (B2/B5), and `MCPAgent` has **no** duplicate-ticket
+  suggestion logic at all yet (confirmed: zero hits for `duplicate|similar_ticket|_check_ticket_needed` in
+  `mcp_agent.py`). So this exact symptom can't reproduce live — `TicketAgent`'s own duplicate guard
+  (`similar_ticket_ref`, step 4 in `ticket_agent.py::run`) is the only live duplicate-detection path today,
+  and it already trims the reply to id/title/status/assignee/priority, not a dump.
+- **Ties to B7 Step 4's open TODO:** "give MCPAgent write-intent → HITL proposal" — if that ships, apply
+  this fix (stricter match threshold + trimmed card) there, not in the dead `cross_source_agent` code.
+- **Fix direction (when the above ships):** stricter duplicate match (don't claim a ticket on weak
+  similarity); trim the proposal to title / short description / priority / labels only.
 
 ### 🟠 B5 — Routing inconsistency for ticket creation  ☑ FIXED (verified 2026-09-27, ties to B2)
 - **Confirmed:** `run_cross_source` routes to `MCPAgent` (read-only generalist, no ticket-creation
@@ -267,7 +274,7 @@ agentic system. Deterministic code is allowed **only** for:
   MCP — risky since MCP is graded **Very High**) vs. add a real **MCP client + LLM tool-use** against
   official/self-hosted MCP servers. See explanation in chat.
 
-### 🔴 B8 — RAG retrieval is lagging / noisy on the knowledge base  ☐
+### 🔴 B8 — RAG retrieval is lagging / noisy on the knowledge base  ◐ CAUSE 1+2 FIXED (2026-09-28)
 - **Reproduced live** — query `Clean Code checklist` (manager): `agent=cross_source`,
   `strategy=degraded`, `confidence=0.357`. Answer was a **generic** checklist pulled from the wrong
   doc (**"Clean Code Best Practices"** deck), framed as delivery advice — **not** the actual
@@ -276,18 +283,31 @@ agentic system. Deterministic code is allowed **only** for:
   "Clean Code Checklist" doc chunk scored **0.034** (buried), and its content is fragmented/odd
   (e.g. "## Extra Code / 4 / I am not committing any confidential information").
 - **Root causes:**
-  1. **Recall not triggered (P1 hardcoding):** `_wants_full_document()` is a keyword regex that needs
-     "show/whole/full/entire" — plain "Clean Code checklist" misses it, so `identify_document()`
-     (which *correctly* resolves the doc) is **never called**; it falls to noisy top-k + corrective →
-     `degraded`.
-  2. **Big doc drowns small doc:** 114-chunk "Best Practices" deck dominates the 12-chunk "Checklist".
-  3. **Chunking/ingest quality:** the Checklist doc's chunks are low-quality / fragmented → low scores.
-- **Where:** `cross_source_agent.py` `_wants_full_document` / recall routing; `rag/chunker.py`,
-  `rag/pipeline.py` (chunking); `rag/retriever.py` (scoring / doc dominance); ingest config.
-- **Fix direction:** make recall-intent **probabilistic** (LLM/embedding, not keywords); improve
-  chunking so each doc is coherently retrievable; consider doc-aware retrieval/boosting so a small but
-  exactly-named doc isn't drowned; re-ingest and re-verify. Ties to the **major RAG restructure** the
-  user asked for, alongside the **MCP restructure (B7)**.
+  1. ☑ **FIXED — Recall not triggered:** `_wants_full_document()` lived only in the legacy
+     `cross_source_agent.py`, which `run_cross_source` stopped routing to once `MCPAgent` shipped (see
+     B2/B5) — so on the **live path today, full-document recall didn't exist at all**, not even the old
+     keyword-regex version (a "never lose an existing feature" gap from the B7 migration, not just a
+     brittle regex). Fixed properly rather than re-porting the regex (which wouldn't have matched plain
+     "Clean Code checklist" either — no "show/whole/full" verb): extracted the title-overlap logic
+     `identify_document()` already used into `HybridRetriever._match_doc_title()`, and wired it directly
+     into `retrieve_with_corrective_rag()` (what `MCPAgent` actually calls) as the recall-intent signal
+     itself — a **>=2-word title match** on the first-pass chunks' candidate doc_titles triggers
+     `retrieve_full_document()`, no separate keyword list (closes the P1 gap for this spot too). One
+     retrieval call, no perf regression; `identify_document()` now delegates to the same helper
+     (min_overlap=1, unchanged behavior for its own — legacy — callers).
+  2. ☑ **FIXED (same change) — Big doc drowns small doc:** the title-overlap match already ignores
+     chunk rerank rank/score — "Clean Code Checklist" (3-word overlap) beats "Clean Code Best Practices"
+     (2-word overlap) regardless of which chunk had the higher reranker score.
+  3. **Still open — Chunking/ingest quality:** the Checklist doc's own chunks are fragmented/odd
+     independent of retrieval routing — needs a chunking pass, not a retrieval fix.
+- **Where:** `backend/rag/retriever.py` `_match_doc_title` (new), `identify_document` (refactored to
+  share it), `retrieve_with_corrective_rag` (recall check added). `mcp_agent.py` needed **no change** —
+  it already calls `retrieve_with_corrective_rag` and already branches on `rag_strategy=="full_document"`
+  for the token budget.
+- **Tests:** `tests/unit/test_retriever.py` — `test_corrective_rag_recalls_full_document_on_strong_title_match`,
+  `test_corrective_rag_skips_recall_on_weak_title_overlap` (2 new).
+- **Fix direction (still open, cause 3):** recursive-512 rechunk of the Checklist doc + re-ingest;
+  consider doc-aware retrieval boosting for the general noisy-retrieval case beyond named-doc recall.
 
 ### 🟠 E8 — HITL approval UX: per-action scopes (Approve / Approve-all / Reject)  ☐
 - **User ask:** risky actions must always ask; low-risk repeats (Slack notify) could offer a
@@ -348,26 +368,38 @@ agentic system. Deterministic code is allowed **only** for:
   thresholds (fail on regression). Today we have a lightweight homegrown eval (`eval_set.json` +
   `metrics.py` + admin `04_evaluation`).
 
-### 🔴 B10 — Memory is half-dead: retrieved/stored but not injected into prompts  ☐
+### 🔴 B10 — Memory is half-dead: retrieved/stored but not injected into prompts  ◐ PARTIAL (updated 2026-09-28)
 Traced every layer end-to-end (write → retrieve → **inject into LLM prompt**):
 | Layer | Stored? | Retrieved? | **Actually fed to LLM?** | Verdict |
 |---|---|---|---|---|
-| Conversational / session (SQLite `recent_messages`) | ✅ | ✅ | ✅ but **only in cross_source** (`_format_conversation_history`) | partial — other 5 agents ignore history |
-| Conversation **summary** (LLM-compressed) | — | ✅ computed (`_summarize_turns`, an LLM call) | ❌ only consumer is `ContextBuilder`, which is **never called** | **wasted** (LLM cost, dropped) |
-| Semantic facts (Qdrant, 21 stored) | ✅ written every answer | ✅ `retrieve_facts` every query → `state.semantic_context` | ❌ only injector is `rag_helpers.rag_and_generate`, which is **never called** | **dead** — facts never reach the LLM |
-| Episodic (Qdrant, HITL actions) | ✅ on approve | ◐ only cross_source, only for historical/mixed intent | ◐ | partial |
-| Redis semantic cache | ✅ | ✅ | n/a (returns cached answer) | ⚠️ wrong for live data (B6) |
-| `ContextBuilder` (7-slot tiktoken budget) | — | — | ❌ **never called** by any agent/node | **dead module** |
-- **Net:** only **session history (cross_source only)** measurably improves answers today. **Semantic
-  long-term memory and the conversation summary are computed/stored but dropped** — so "4 memory layers"
-  is currently ~1.5 layers in practice.
-- **Where:** `orchestrator/nodes.py` `retrieve_memory_context`; `orchestrator/rag_helpers.py`
-  `rag_and_generate` (uncalled); `core/context_builder.py` (uncalled); `agents/*` build prompts inline.
-- **Fix direction (production standards — extract→consolidate→store→retrieve):** actually **inject**
-  `semantic_context` + `summary` into agent prompts (route agents through `ContextBuilder`, or add the
-  slots inline in each agent); make memory consumed by **all** agents, not just cross_source; consider
-  adopting **Mem0 / LangMem** (semantic + episodic + procedural) instead of the homegrown half-wired layer.
-- **Tests:** see `TEST_SUITE.md` §B2 (MEM-1…4) — MEM-4 currently **fails** (semantic fact not reused).
+| Conversational / session (SQLite `recent_messages`) | ✅ | ✅ | ✅ **MCPAgent** (`_format_history`, the live generalist path) — legacy `cross_source_agent` also has it but is unrouted | live-path fixed |
+| Conversation **summary** (LLM-compressed) | — | ✅ computed (`_summarize_turns`, an LLM call) | ✅ **MCPAgent** injects `state.conversation_summary` as its own prompt section | live-path fixed |
+| Semantic facts (Qdrant, 21 stored) | ✅ written every answer | ✅ `retrieve_facts` every query → `state.semantic_context` | ✅ **MCPAgent** injects it (`## Project Knowledge` section, sanitized + XML-wrapped) | live-path fixed |
+| Episodic (Qdrant, HITL actions) | ✅ on approve | ✅ MCPAgent, historical/mixed intent only | ✅ | fixed |
+| Redis semantic cache | — removed entirely (B6) | — | n/a | n/a |
+| `ContextBuilder` (7-slot tiktoken budget) | — | — | ❌ **never called** by any agent/node — MCPAgent builds its prompt inline instead | dead module (harmless — superseded, not the injection gap) |
+- **Correction (2026-09-28):** the table above was stale — it predates `MCPAgent` (the agent
+  `run_cross_source` actually routes to today; legacy `cross_source_agent.py` is dead code on the live
+  path, see B2/B5). Re-read `mcp_agent.py::run()`: it already injects `recent_messages`, `conversation_summary`,
+  AND `semantic_context` into its prompt (lines ~255-327). **The one real remaining gap was the 5
+  specialist agents** (ticket/risk/pr_review/release_readiness/notify) — fixed-tool-need agents that never
+  saw `state.recent_messages` at all.
+- **Fixed today — `ticket_agent.py`:** write-intent queries with no explicit ticket ID ("reassign **that
+  ticket** to alice", "log a note on **it**: ...") matched `assign_match`/`comment_match` but had no
+  `ticket_id_match`, so the code silently fell through every branch into the ticket **CREATE** flow —
+  proposing a bogus new ticket instead of acting on the one just discussed. Added
+  `_last_ticket_id_from_history()` (resolves against `state.recent_messages`, newest turn first — same
+  rule MCPAgent's prompt already documents) and a shared `_ask_for_ticket_id()` clarification response for
+  when nothing resolves (ask, don't guess — matches the existing edit-intent pattern). All three write
+  branches (assign/edit/comment) now use one `resolved_ticket_id`.
+- **Still open:** risk / pr_review / release_readiness / notify agents still don't consume
+  `recent_messages`/`semantic_context` — lower priority than ticket_agent (they're mostly single-shot
+  read/report queries, not multi-turn "that PR"/"that release" follow-ups) but the same gap.
+- **Where:** `orchestrator/nodes.py` `retrieve_memory_context` (produces the fields); `agents/mcp_agent.py`
+  (consumes all 3, already fixed); `agents/ticket_agent.py` (history-resolution added 2026-09-28);
+  `agents/{risk,pr_review,release_readiness,notify}_agent.py` (still don't consume history).
+- **Tests:** `tests/unit/test_ticket_agent_history_resolution.py` (new, 4 tests). See also
+  `TEST_SUITE.md` §B2 (MEM-1…4).
 
 ### 🟠 E11 — Automated suite runner + observability (eliminate manual testing)  ☐
 - **Goal:** one command fires all `TEST_SUITE.md` queries and **asserts machine signals** (`.agent`,

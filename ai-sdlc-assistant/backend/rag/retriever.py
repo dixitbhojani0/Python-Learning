@@ -377,9 +377,28 @@ class HybridRetriever:
           strategy_used: "first_pass" | "corrective" | "degraded"
         """
         low_threshold = self.confidence_thresholds.get("low_threshold", 0.45)
+        no_evidence   = self.confidence_thresholds.get("no_evidence_threshold", 0.20)
 
         # First retrieval attempt
         chunks, confidence = self.retrieve(query, project)
+
+        # RECALL check (B8 fix): a strong (>=2 word) title match means the query
+        # names a specific document ("clean code checklist") rather than asking a
+        # fact — pull it whole instead of top-k fragments, where a small target doc
+        # can be drowned by a large deck's many higher-scoring chunks. Reuses the
+        # same title-overlap signal identify_document() already computes, so this
+        # is retrieval-driven (P1), not a "show/whole/full" keyword list — and it's
+        # the recall-intent check itself, so no separate verb regex is needed.
+        if confidence >= no_evidence:
+            doc_title = self._match_doc_title(chunks, query, min_overlap=2)
+            if doc_title:
+                full_chunks = self.retrieve_full_document(doc_title, project)
+                if full_chunks:
+                    logger.info(
+                        "HybridRetriever: RECALL mode — doc='%s' → %d chunks (strategy='full_document')",
+                        doc_title, len(full_chunks),
+                    )
+                    return full_chunks, full_chunks[0].score, "full_document"
 
         if confidence >= low_threshold:
             return chunks, confidence, "first_pass"
@@ -437,6 +456,36 @@ class HybridRetriever:
         )
         return chunks
 
+    @staticmethod
+    def _match_doc_title(chunks: list["RetrievedChunk"], query: str, min_overlap: int) -> str:
+        """
+        Among the candidate docs a chunk list surfaces, find the one whose TITLE
+        best matches the query words — recovers a small, exactly-named doc that a
+        big deck would otherwise dominate on raw chunk score (see identify_document
+        / retrieve_with_corrective_rag's RECALL check). Returns "" below min_overlap.
+        """
+        if not chunks:
+            return ""
+        q_words = set(re.findall(r"[a-z0-9]+", query.lower())) - _RECALL_STOPWORDS
+        # Candidate titles in semantic-rank order (de-duplicated); metadata is
+        # untyped chunk payload data — guard against a non-dict value (e.g. tests
+        # stubbing a bare chunk mock) rather than assume the boundary is clean.
+        candidates: list[str] = []
+        for c in chunks:
+            meta = c.metadata if isinstance(c.metadata, dict) else {}
+            t = meta.get("doc_title", "")
+            if t and t not in candidates:
+                candidates.append(t)
+        if not candidates:
+            return ""
+
+        def title_overlap(title: str) -> int:
+            return len(q_words & set(re.findall(r"[a-z0-9]+", title.lower())))
+
+        # Highest title-overlap wins; ties broken by best semantic rank (earliest).
+        best = max(candidates, key=lambda t: (title_overlap(t), -candidates.index(t)))
+        return best if title_overlap(best) >= min_overlap else ""
+
     def identify_document(self, query: str, project: str) -> str:
         """
         Find the most likely target doc_title for a recall query.
@@ -455,21 +504,9 @@ class HybridRetriever:
         if confidence < no_evidence:
             return ""
 
-        q_words = set(re.findall(r"[a-z0-9]+", query.lower())) - _RECALL_STOPWORDS
-        # Candidate titles in semantic-rank order (de-duplicated)
-        candidates: list[str] = []
-        for c in chunks:
-            t = (c.metadata or {}).get("doc_title", "")
-            if t and t not in candidates:
-                candidates.append(t)
-
-        def title_overlap(title: str) -> int:
-            return len(q_words & set(re.findall(r"[a-z0-9]+", title.lower())))
-
-        # Highest title-overlap wins; ties broken by best semantic rank (earliest).
-        best = max(candidates, key=lambda t: (title_overlap(t), -candidates.index(t)))
-        if title_overlap(best) >= 1:
-            return best
+        matched = self._match_doc_title(chunks, query, min_overlap=1)
+        if matched:
+            return matched
         return chunks[0].metadata.get("doc_title", "") or ""
 
     def _confidence_tier(self, score: float) -> str:

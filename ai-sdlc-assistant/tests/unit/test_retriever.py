@@ -4,7 +4,7 @@ Unit tests for backend/rag/retriever.py — Qdrant and embed model are mocked.
 """
 import pytest
 from unittest.mock import patch, MagicMock
-from backend.rag.retriever import _sigmoid, _reciprocal_rank_fusion, HybridRetriever
+from backend.rag.retriever import _sigmoid, _reciprocal_rank_fusion, HybridRetriever, RetrievedChunk
 
 
 # ── Pure utility functions ─────────────────────────────────────────────────────
@@ -123,3 +123,59 @@ async def test_corrective_rag_retries_when_confidence_low(retriever):
         )
     assert strategy == "corrective"
     assert call_count["n"] == 2
+
+
+# ── RECALL mode (B8) ───────────────────────────────────────────────────────────
+# "Clean code checklist" (no "show/whole/full" verb) must still trigger full-
+# document recall on the live path — this used to only fire behind a keyword
+# regex that the legacy (unrouted) cross_source_agent owned; MCPAgent, the agent
+# actually routed to today, had no recall path at all.
+
+def _chunk(doc_title: str, score: float = 0.3) -> RetrievedChunk:
+    return RetrievedChunk(
+        text="chunk text", parent_text="chunk text", source="local", doc_type="doc",
+        score=score, metadata={"doc_title": doc_title},
+    )
+
+
+@pytest.mark.asyncio
+async def test_corrective_rag_recalls_full_document_on_strong_title_match(retriever):
+    """A big deck (higher rerank score) must not drown a small, exactly-named doc."""
+    async def _no_op_rewrite(q):
+        return q
+
+    mixed_chunks = [
+        _chunk("Clean Code Best Practices", score=0.357),
+        _chunk("Clean Code Checklist", score=0.034),
+    ]
+    full_doc_chunks = [_chunk("Clean Code Checklist", score=1.0) for _ in range(12)]
+
+    with (
+        patch.object(retriever, "retrieve", return_value=(mixed_chunks, 0.357)),
+        patch.object(retriever, "retrieve_full_document", return_value=full_doc_chunks) as mock_full,
+    ):
+        chunks, confidence, strategy = await retriever.retrieve_with_corrective_rag(
+            "Clean Code checklist", "SDLC", _no_op_rewrite
+        )
+
+    mock_full.assert_called_once_with("Clean Code Checklist", "SDLC")
+    assert strategy == "full_document"
+    assert len(chunks) == 12
+
+
+@pytest.mark.asyncio
+async def test_corrective_rag_skips_recall_on_weak_title_overlap(retriever):
+    """A single overlapping word (e.g. a generic "code") must not trigger recall —
+    only a >=2-word title match is a confident enough signal to bypass top-k."""
+    async def _no_op_rewrite(q):
+        return q
+
+    chunks_in = [_chunk("Deployment Runbook", score=0.6)]
+
+    with patch.object(retriever, "retrieve", return_value=(chunks_in, 0.6)):
+        chunks, confidence, strategy = await retriever.retrieve_with_corrective_rag(
+            "what is the code review policy", "SDLC", _no_op_rewrite
+        )
+
+    assert strategy == "first_pass"
+    assert chunks == chunks_in
