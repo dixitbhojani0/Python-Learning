@@ -267,7 +267,7 @@ agentic system. Deterministic code is allowed **only** for:
   MCP — risky since MCP is graded **Very High**) vs. add a real **MCP client + LLM tool-use** against
   official/self-hosted MCP servers. See explanation in chat.
 
-### 🔴 B8 — RAG retrieval is lagging / noisy on the knowledge base  ☐
+### 🔴 B8 — RAG retrieval is lagging / noisy on the knowledge base  ◐ CAUSE 1+2 FIXED (2026-09-28)
 - **Reproduced live** — query `Clean Code checklist` (manager): `agent=cross_source`,
   `strategy=degraded`, `confidence=0.357`. Answer was a **generic** checklist pulled from the wrong
   doc (**"Clean Code Best Practices"** deck), framed as delivery advice — **not** the actual
@@ -276,18 +276,31 @@ agentic system. Deterministic code is allowed **only** for:
   "Clean Code Checklist" doc chunk scored **0.034** (buried), and its content is fragmented/odd
   (e.g. "## Extra Code / 4 / I am not committing any confidential information").
 - **Root causes:**
-  1. **Recall not triggered (P1 hardcoding):** `_wants_full_document()` is a keyword regex that needs
-     "show/whole/full/entire" — plain "Clean Code checklist" misses it, so `identify_document()`
-     (which *correctly* resolves the doc) is **never called**; it falls to noisy top-k + corrective →
-     `degraded`.
-  2. **Big doc drowns small doc:** 114-chunk "Best Practices" deck dominates the 12-chunk "Checklist".
-  3. **Chunking/ingest quality:** the Checklist doc's chunks are low-quality / fragmented → low scores.
-- **Where:** `cross_source_agent.py` `_wants_full_document` / recall routing; `rag/chunker.py`,
-  `rag/pipeline.py` (chunking); `rag/retriever.py` (scoring / doc dominance); ingest config.
-- **Fix direction:** make recall-intent **probabilistic** (LLM/embedding, not keywords); improve
-  chunking so each doc is coherently retrievable; consider doc-aware retrieval/boosting so a small but
-  exactly-named doc isn't drowned; re-ingest and re-verify. Ties to the **major RAG restructure** the
-  user asked for, alongside the **MCP restructure (B7)**.
+  1. ☑ **FIXED — Recall not triggered:** `_wants_full_document()` lived only in the legacy
+     `cross_source_agent.py`, which `run_cross_source` stopped routing to once `MCPAgent` shipped (see
+     B2/B5) — so on the **live path today, full-document recall didn't exist at all**, not even the old
+     keyword-regex version (a "never lose an existing feature" gap from the B7 migration, not just a
+     brittle regex). Fixed properly rather than re-porting the regex (which wouldn't have matched plain
+     "Clean Code checklist" either — no "show/whole/full" verb): extracted the title-overlap logic
+     `identify_document()` already used into `HybridRetriever._match_doc_title()`, and wired it directly
+     into `retrieve_with_corrective_rag()` (what `MCPAgent` actually calls) as the recall-intent signal
+     itself — a **>=2-word title match** on the first-pass chunks' candidate doc_titles triggers
+     `retrieve_full_document()`, no separate keyword list (closes the P1 gap for this spot too). One
+     retrieval call, no perf regression; `identify_document()` now delegates to the same helper
+     (min_overlap=1, unchanged behavior for its own — legacy — callers).
+  2. ☑ **FIXED (same change) — Big doc drowns small doc:** the title-overlap match already ignores
+     chunk rerank rank/score — "Clean Code Checklist" (3-word overlap) beats "Clean Code Best Practices"
+     (2-word overlap) regardless of which chunk had the higher reranker score.
+  3. **Still open — Chunking/ingest quality:** the Checklist doc's own chunks are fragmented/odd
+     independent of retrieval routing — needs a chunking pass, not a retrieval fix.
+- **Where:** `backend/rag/retriever.py` `_match_doc_title` (new), `identify_document` (refactored to
+  share it), `retrieve_with_corrective_rag` (recall check added). `mcp_agent.py` needed **no change** —
+  it already calls `retrieve_with_corrective_rag` and already branches on `rag_strategy=="full_document"`
+  for the token budget.
+- **Tests:** `tests/unit/test_retriever.py` — `test_corrective_rag_recalls_full_document_on_strong_title_match`,
+  `test_corrective_rag_skips_recall_on_weak_title_overlap` (2 new).
+- **Fix direction (still open, cause 3):** recursive-512 rechunk of the Checklist doc + re-ingest;
+  consider doc-aware retrieval boosting for the general noisy-retrieval case beyond named-doc recall.
 
 ### 🟠 E8 — HITL approval UX: per-action scopes (Approve / Approve-all / Reject)  ☐
 - **User ask:** risky actions must always ask; low-risk repeats (Slack notify) could offer a
