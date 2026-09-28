@@ -123,6 +123,35 @@ def _format_ticket_proposal(ticket_data: dict, similar_tickets: list[dict], proj
     return "\n".join(lines)
 
 
+_TICKET_ID_RE = re.compile(r'\b([A-Za-z]{2,10})[- ]?(\d+)\b')
+
+
+def _last_ticket_id_from_history(recent_messages: list[dict]) -> str | None:
+    """
+    Resolve a pronoun reference ("that ticket", "it") to the most recently
+    mentioned ticket ID in this session — newest turn first, response text
+    checked before the query (the ID is more often confirmed there).
+    Same rule MCPAgent already applies for its RAG/MCP prompt (see
+    mcp_agent.py's "Pronoun resolution" directive) — B10 gap: the other
+    specialist agents never saw recent_messages at all.
+    """
+    for turn in reversed(recent_messages or []):
+        for text in (turn.get("response", ""), turn.get("query", "")):
+            match = _TICKET_ID_RE.search(text or "")
+            if match:
+                return f"{match.group(1).upper()}-{match.group(2)}"
+    return None
+
+
+def _ask_for_ticket_id(message: str) -> AgentPayload:
+    return AgentPayload(
+        agent_name="ticket_agent", confidence=1.0,
+        summary="target ticket ID needed",
+        structured={"final_response": message, "skip_persona": True},
+        sources=[], hitl_required=False, hitl_proposal={}, response=message,
+    )
+
+
 def _clean_ticket_query(query: str) -> str:
     """
     Preprocess/clean ticket creation query to extract the core subject of the issue.
@@ -485,45 +514,53 @@ class TicketAgent(BaseAgent):
 
         logger.info("TicketAgent.run: project='%s' query='%s...'", project, query[:60])
 
+        # Resolve a ticket ID from the query itself, falling back to the most
+        # recently mentioned one in this session ("reassign that ticket to alice"
+        # with no explicit ID). Without this, assign/edit/comment intent below
+        # detected a write verb but no ID and silently fell through every check
+        # into the ticket CREATION flow — proposing a bogus new ticket instead of
+        # acting on the one just discussed (B10 gap: these agents saw no history).
+        recent_messages = state.get("recent_messages", [])
+        ticket_id_match  = _TICKET_ID_RE.search(query)
+        resolved_ticket_id = (
+            f"{ticket_id_match.group(1).upper()}-{ticket_id_match.group(2)}" if ticket_id_match
+            else _last_ticket_id_from_history(recent_messages)
+        )
+
         # ── Assignment intent: "assign SDLC-4" / "reassign SDLC-2 to alice" ──
         # Also handles common variations: "sdlc 5" (space), "sdlc5" (no separator), lowercase
-        assign_match    = re.search(r'\b(assign|reassign)\b', query.lower())
-        ticket_id_match = re.search(r'\b([A-Za-z]{2,10})[- ]?(\d+)\b', query)
-        if assign_match and ticket_id_match:
-            ticket_id = f"{ticket_id_match.group(1).upper()}-{ticket_id_match.group(2)}"
-            return await self._run_assignment(state, ticket_id)
+        assign_match = re.search(r'\b(assign|reassign)\b', query.lower())
+        if assign_match:
+            if resolved_ticket_id:
+                return await self._run_assignment(state, resolved_ticket_id)
+            return _ask_for_ticket_id(
+                "Which ticket should I assign? Please include the ticket ID, e.g.:\n\n"
+                "`assign SDLC-<id> to <name>`"
+            )
 
         # ── Edit intent: "update SDLC-7 description from 2.1 to 2.2", "change the title of SDLC-3" ──
         # Requires an explicit field name so it doesn't fire on "update assignee ..." (handled above)
         # or on plain investigative queries about a ticket (those go to cross_source).
         edit_match  = re.search(r'\b(update|edit|change|modify)\b', query.lower())
         field_match = re.search(r'\b(description|desc|title|summary)\b', query.lower())
-        if edit_match and field_match and not assign_match:
-            if ticket_id_match:
-                ticket_id = f"{ticket_id_match.group(1).upper()}-{ticket_id_match.group(2)}"
-                return await self._run_edit_ticket(state, ticket_id, field_match.group(1).lower())
-            # Edit intent detected ("update ... description ...") but no ticket ID anywhere
-            # in the query — e.g. "update that ticket's description...". Without a session
-            # history lookup for "that ticket" there's nothing safe to resolve it to, and
-            # falling through to ticket CREATION here would silently propose a nonsense new
-            # ticket instead of editing the one the user meant. Ask, don't guess.
-            msg = (
+        if edit_match and field_match:
+            if resolved_ticket_id:
+                return await self._run_edit_ticket(state, resolved_ticket_id, field_match.group(1).lower())
+            return _ask_for_ticket_id(
                 "Which ticket should I update? Please include the ticket ID, e.g.:\n\n"
                 f"`update {project}-<id> {field_match.group(1).lower()} from <old text> to <new text>`"
-            )
-            return AgentPayload(
-                agent_name="ticket_agent", confidence=1.0,
-                summary="edit target ticket ID needed",
-                structured={"final_response": msg}, sources=[],
-                hitl_required=False, hitl_proposal={}, response=msg,
             )
 
         # ── Comment intent (E6): "add a comment to SDLC-5: ...", "log a note on SDLC-5 saying ..." ──
         # Requires an explicit write verb so it doesn't fire on "show comments on SDLC-5" (a read).
         comment_match = re.search(r'\b(add|log|leave|post|write)\s+(a\s+)?(comment|note)\b', query.lower())
-        if comment_match and ticket_id_match:
-            ticket_id = f"{ticket_id_match.group(1).upper()}-{ticket_id_match.group(2)}"
-            return await self._run_comment(state, ticket_id)
+        if comment_match:
+            if resolved_ticket_id:
+                return await self._run_comment(state, resolved_ticket_id)
+            return _ask_for_ticket_id(
+                "Which ticket should I add that comment to? Please include the ticket ID, e.g.:\n\n"
+                f"`add a comment to {project}-<id>: <comment text>`"
+            )
 
         # ── List/search intent: "show open tickets", "list tickets for X", "find bugs", "who is assigned" ──
         # These are read-only queries — search Jira and return results without HITL.

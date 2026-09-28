@@ -348,26 +348,38 @@ agentic system. Deterministic code is allowed **only** for:
   thresholds (fail on regression). Today we have a lightweight homegrown eval (`eval_set.json` +
   `metrics.py` + admin `04_evaluation`).
 
-### 🔴 B10 — Memory is half-dead: retrieved/stored but not injected into prompts  ☐
+### 🔴 B10 — Memory is half-dead: retrieved/stored but not injected into prompts  ◐ PARTIAL (updated 2026-09-28)
 Traced every layer end-to-end (write → retrieve → **inject into LLM prompt**):
 | Layer | Stored? | Retrieved? | **Actually fed to LLM?** | Verdict |
 |---|---|---|---|---|
-| Conversational / session (SQLite `recent_messages`) | ✅ | ✅ | ✅ but **only in cross_source** (`_format_conversation_history`) | partial — other 5 agents ignore history |
-| Conversation **summary** (LLM-compressed) | — | ✅ computed (`_summarize_turns`, an LLM call) | ❌ only consumer is `ContextBuilder`, which is **never called** | **wasted** (LLM cost, dropped) |
-| Semantic facts (Qdrant, 21 stored) | ✅ written every answer | ✅ `retrieve_facts` every query → `state.semantic_context` | ❌ only injector is `rag_helpers.rag_and_generate`, which is **never called** | **dead** — facts never reach the LLM |
-| Episodic (Qdrant, HITL actions) | ✅ on approve | ◐ only cross_source, only for historical/mixed intent | ◐ | partial |
-| Redis semantic cache | ✅ | ✅ | n/a (returns cached answer) | ⚠️ wrong for live data (B6) |
-| `ContextBuilder` (7-slot tiktoken budget) | — | — | ❌ **never called** by any agent/node | **dead module** |
-- **Net:** only **session history (cross_source only)** measurably improves answers today. **Semantic
-  long-term memory and the conversation summary are computed/stored but dropped** — so "4 memory layers"
-  is currently ~1.5 layers in practice.
-- **Where:** `orchestrator/nodes.py` `retrieve_memory_context`; `orchestrator/rag_helpers.py`
-  `rag_and_generate` (uncalled); `core/context_builder.py` (uncalled); `agents/*` build prompts inline.
-- **Fix direction (production standards — extract→consolidate→store→retrieve):** actually **inject**
-  `semantic_context` + `summary` into agent prompts (route agents through `ContextBuilder`, or add the
-  slots inline in each agent); make memory consumed by **all** agents, not just cross_source; consider
-  adopting **Mem0 / LangMem** (semantic + episodic + procedural) instead of the homegrown half-wired layer.
-- **Tests:** see `TEST_SUITE.md` §B2 (MEM-1…4) — MEM-4 currently **fails** (semantic fact not reused).
+| Conversational / session (SQLite `recent_messages`) | ✅ | ✅ | ✅ **MCPAgent** (`_format_history`, the live generalist path) — legacy `cross_source_agent` also has it but is unrouted | live-path fixed |
+| Conversation **summary** (LLM-compressed) | — | ✅ computed (`_summarize_turns`, an LLM call) | ✅ **MCPAgent** injects `state.conversation_summary` as its own prompt section | live-path fixed |
+| Semantic facts (Qdrant, 21 stored) | ✅ written every answer | ✅ `retrieve_facts` every query → `state.semantic_context` | ✅ **MCPAgent** injects it (`## Project Knowledge` section, sanitized + XML-wrapped) | live-path fixed |
+| Episodic (Qdrant, HITL actions) | ✅ on approve | ✅ MCPAgent, historical/mixed intent only | ✅ | fixed |
+| Redis semantic cache | — removed entirely (B6) | — | n/a | n/a |
+| `ContextBuilder` (7-slot tiktoken budget) | — | — | ❌ **never called** by any agent/node — MCPAgent builds its prompt inline instead | dead module (harmless — superseded, not the injection gap) |
+- **Correction (2026-09-28):** the table above was stale — it predates `MCPAgent` (the agent
+  `run_cross_source` actually routes to today; legacy `cross_source_agent.py` is dead code on the live
+  path, see B2/B5). Re-read `mcp_agent.py::run()`: it already injects `recent_messages`, `conversation_summary`,
+  AND `semantic_context` into its prompt (lines ~255-327). **The one real remaining gap was the 5
+  specialist agents** (ticket/risk/pr_review/release_readiness/notify) — fixed-tool-need agents that never
+  saw `state.recent_messages` at all.
+- **Fixed today — `ticket_agent.py`:** write-intent queries with no explicit ticket ID ("reassign **that
+  ticket** to alice", "log a note on **it**: ...") matched `assign_match`/`comment_match` but had no
+  `ticket_id_match`, so the code silently fell through every branch into the ticket **CREATE** flow —
+  proposing a bogus new ticket instead of acting on the one just discussed. Added
+  `_last_ticket_id_from_history()` (resolves against `state.recent_messages`, newest turn first — same
+  rule MCPAgent's prompt already documents) and a shared `_ask_for_ticket_id()` clarification response for
+  when nothing resolves (ask, don't guess — matches the existing edit-intent pattern). All three write
+  branches (assign/edit/comment) now use one `resolved_ticket_id`.
+- **Still open:** risk / pr_review / release_readiness / notify agents still don't consume
+  `recent_messages`/`semantic_context` — lower priority than ticket_agent (they're mostly single-shot
+  read/report queries, not multi-turn "that PR"/"that release" follow-ups) but the same gap.
+- **Where:** `orchestrator/nodes.py` `retrieve_memory_context` (produces the fields); `agents/mcp_agent.py`
+  (consumes all 3, already fixed); `agents/ticket_agent.py` (history-resolution added 2026-09-28);
+  `agents/{risk,pr_review,release_readiness,notify}_agent.py` (still don't consume history).
+- **Tests:** `tests/unit/test_ticket_agent_history_resolution.py` (new, 4 tests). See also
+  `TEST_SUITE.md` §B2 (MEM-1…4).
 
 ### 🟠 E11 — Automated suite runner + observability (eliminate manual testing)  ☐
 - **Goal:** one command fires all `TEST_SUITE.md` queries and **asserts machine signals** (`.agent`,
