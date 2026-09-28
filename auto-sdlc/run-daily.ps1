@@ -23,6 +23,8 @@ New-Item -ItemType Directory -Force $LogDir | Out-Null
 function Log($m) { $l = "$(Get-Date -Format 'HH:mm:ss') $m"; Write-Host $l
     try { Add-Content -Path $Log -Value $l -Encoding utf8 -ErrorAction Stop } catch { Add-Content -Path "$Log.fallback" -Value $l -Encoding utf8 } }
 function Git { & git.exe -C $Repo @args 2>&1 | ForEach-Object { "$_" }; if ($LASTEXITCODE -ne 0) { throw "git $args failed ($LASTEXITCODE)" } }
+# Network steps retry: catch-up runs fire right after wake/logon, often before the network is up.
+function GitNet { for ($i = 1; $i -le 5; $i++) { try { Git @args; return } catch { Log "retry $i/5: $_"; Start-Sleep 60 } }; throw "git $args failed after 5 tries" }
 function Run($name, $dir, $exe, [string[]]$argv) {
     Push-Location $dir
     try { $out = & $exe @argv 2>&1 | ForEach-Object { "$_" }; $code = $LASTEXITCODE } finally { Pop-Location }
@@ -45,7 +47,7 @@ try {
     if ($dirty) { Log "SKIP: uncommitted changes in scope - commit or stash them first:`n$($dirty -join "`n")"; exit 0 }
 
     Git checkout master | Out-Null
-    Git fetch $Remote | Out-Null
+    GitNet fetch $Remote | Out-Null
     Git merge --ff-only "$Remote/master" | Out-Null
     if ((& git.exe -C $Repo branch --list $Branch)) { Log "SKIP: $Branch already exists (already ran today)"; exit 0 }
     Git checkout -b $Branch | Out-Null
@@ -99,12 +101,12 @@ try {
     $prev = 0; if (Test-Path $CountF) { $prev = [int](Get-Content $CountF) }
     if ($passed -lt $prev) { Log "GATE: passed tests dropped $prev -> $passed"; $green = $false }
 
-    Git push $Remote $Branch | Out-Null
+    GitNet push $Remote $Branch | Out-Null
     Log "pushed $Branch"
     Git checkout master | Out-Null
     if ($green) {
         Git merge --no-ff $Branch -m "Merge $Branch (daily auto run, gate green)" | Out-Null
-        Git push $Remote master | Out-Null
+        GitNet push $Remote master | Out-Null
         Set-Content -Path $CountF -Value $passed
         Log "GREEN - merged $Branch into master and pushed ($passed backend tests)"
     } else {
