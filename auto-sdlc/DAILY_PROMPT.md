@@ -25,7 +25,8 @@ and merges it into `master` only if everything is green.
    - **Enterprise chat UI.** Use the `impeccable` and `ui-ux-pro-max` skills plus WebSearch for current product-grade patterns:
      streaming states, citations/sources panel, tool-call and decision trace, HITL approval cards, conversation history
      and search, keyboard shortcuts, empty/error/loading states, accessibility (WCAG AA), dark mode, responsive layout.
-3. **Pick 1–3 items** that fit one day. Priority: failing tests / broken full flow > 🔴 bugs > end-to-end flow gaps >
+3. **Pick 1–3 items** that fit one day. Items tagged **(requested)** come first (Dixit asked for them). Big ones can
+   span several days: ship a working, tested slice each day and leave the item ◐ with what remains. Then: failing tests / broken full flow > 🔴 bugs > end-to-end flow gaps >
    MCP tools > 🟠 enhancements > UI polish.
 4. **Design before code (features and UI; small bug fixes can skip this).**
    - Gather everything first: the code paths involved, related REDESIGN_BUGS items, the standards file for the area,
@@ -36,6 +37,9 @@ and merges it into `master` only if everything is green.
      (Artifact tool: `action: "quickstart"`, `intent: "design"`, then build it on the design system it offers).
      Put the links in the design doc. If neither is available, build a static HTML mockup with the `impeccable` skill in
      `auto-sdlc/designs/<item-id>.html`.
+   - Motion: follow E12 in REDESIGN_BUGS.md. Use native `animate.enter`/`animate.leave` + CSS for simple transitions,
+     and GSAP only through the shared `MotionService` for timelines, Flip, SplitText and ScrollTrigger. Always respect
+     `prefers-reduced-motion`. Use the `emil-design-eng` skill for motion judgement (what deserves animation, timing, easing).
    - Then implement to match the design in Angular (Material + the app's existing tokens). Don't paste generated
      markup in as-is: adapt it to the existing components and keep it a thin client.
 5. **Implement each item with tests.** Backend: pytest in `ai-sdlc-assistant/tests/unit`. MCP: `sdlc-mcp-server/tests`.

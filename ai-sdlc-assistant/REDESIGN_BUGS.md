@@ -413,6 +413,22 @@ Traced every layer end-to-end (write → retrieve → **inject into LLM prompt**
   corrective RAG = **1 retry** (`first_pass→corrective→degraded`, no loop); security = defense-in-depth
   (injection-403, role-403/409, HITL, env-creds, 10/min limit) — mapped to **OWASP LLM Top 10**.
 
+### 🟠 E12 — Product-grade motion system (GSAP + native Angular)  ☐  **(requested)**
+The UI has almost no motion; enterprise chat products use it to show state (streaming, thinking, tool calls, approvals).
+- **Two tiers, one system.** Simple enter/leave and hover/focus transitions use native Angular `animate.enter` /
+  `animate.leave` + CSS (migrate off the legacy `@angular/animations` package where it's used). **GSAP** (`gsap` npm)
+  is only for what CSS can't do well: timelines, Flip layout transitions (message list, trace panel expand),
+  SplitText reveals, and ScrollTrigger in admin dashboards. Check GSAP's current licence and Angular's animation
+  API in their docs before starting.
+- **Shared tokens:** `src/styles` motion tokens (durations 120/200/320ms, 2–3 easings) + one `MotionService` that
+  wraps GSAP. Components never import gsap directly; run GSAP outside the Angular zone and kill tweens in `ngOnDestroy`.
+- **Where motion goes:** streaming token caret + "thinking" state; tool-call/trace step reveal (E9 panel);
+  HITL approval card in/out; toast/snackbar; sidebar collapse; skeleton loaders; admin chart entry.
+- **Accessibility (non-negotiable):** honour `prefers-reduced-motion` (GSAP `matchMedia` → instant), no motion that
+  blocks input, nothing flashing more than 3×/s.
+- **Acceptance:** motion tokens used everywhere (no ad-hoc durations); reduced-motion spec test per animated component;
+  no layout jank on a 200-message thread; `ng build` bundle growth ≤ 60 kB gzip.
+
 ## F. Reference implementations to model on (external)
 - **arXiv — "Agentic AI in the SDLC: Architecture, Empirical Evidence"** — 6-layer A-SDLC reference architecture.
 - **CodinjaoftheWorld/agentic-sdlc-langgraph** (GitHub) — full SDLC pipeline on LangGraph + ChatGroq + HITL — closest stack to ours.
