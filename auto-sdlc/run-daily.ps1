@@ -25,6 +25,14 @@ function Log($m) { $l = "$(Get-Date -Format 'HH:mm:ss') $m"; Write-Host $l
 function Git { & git.exe -C $Repo @args 2>&1 | ForEach-Object { "$_" }; if ($LASTEXITCODE -ne 0) { throw "git $args failed ($LASTEXITCODE)" } }
 # Network steps retry: catch-up runs fire right after wake/logon, often before the network is up.
 function GitNet { for ($i = 1; $i -le 5; $i++) { try { Git @args; return } catch { Log "retry $i/5: $_"; Start-Sleep 60 } }; throw "git $args failed after 5 tries" }
+# Red / no-change days still leave an honest record on master (RUNS.md only, never code), so every run day shows up.
+function RecordRun($line) {
+    Add-Content -Path (Join-Path $PSScriptRoot 'RUNS.md') -Value "- $Date - $line" -Encoding utf8
+    Git add -- auto-sdlc/RUNS.md | Out-Null
+    Git commit -m "chore(auto-sdlc): record $Date run - $($line.Split(' ')[0])" | Out-Null
+    GitNet push $Remote master | Out-Null
+    Log "recorded run outcome on master"
+}
 function Run($name, $dir, $exe, [string[]]$argv) {
     Push-Location $dir
     try { $out = & $exe @argv 2>&1 | ForEach-Object { "$_" }; $code = $LASTEXITCODE } finally { Pop-Location }
@@ -82,7 +90,8 @@ try {
     }
     if ((& git.exe -C $Repo rev-parse HEAD) -eq $base) {
         Log "no commits today - dropping branch"
-        Git checkout master | Out-Null; Git branch -D $Branch | Out-Null; exit 0
+        Git checkout master | Out-Null; Git branch -D $Branch | Out-Null
+        RecordRun "no changes - backlog items needed input or were blocked (see CHANGELOG)"; exit 0
     }
 
     # --- secret scan: nothing leaves this machine if it trips ---
@@ -110,7 +119,10 @@ try {
         Set-Content -Path $CountF -Value $passed
         Log "GREEN - merged $Branch into master and pushed ($passed backend tests)"
     } else {
-        Log "RED - $Branch pushed for review, master untouched"
+        Log "RED - $Branch pushed for review, master code untouched"
+        $why = @(); foreach ($g in @(@('backend', $be), @('mcp', $mcp), @('angular test', $fe), @('angular build', $bld))) { if (-not $g[1].ok) { $why += $g[0] } }
+        if ($passed -lt $prev) { $why += "backend test count $prev -> $passed" }
+        RecordRun "RED - gate failed ($($why -join ', ')); work kept on $Branch for review"
     }
 }
 catch { Log "ERROR: $_"; try { & git.exe -C $Repo checkout master 2>&1 | Out-Null } catch {} ; exit 1 }
