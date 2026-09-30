@@ -1,4 +1,4 @@
-<mat-card class="hitl-card">
+<mat-card class="hitl-card" animate.enter="hitl-enter">
   <mat-card-content>
     <p><strong>⚠️ This action requires your approval before it executes.</strong></p>
     <div class="hitl-actions">
@@ -19,4 +19,12 @@
   .hitl-card { background: #fff8e1; margin-top: 8px; }
   .hitl-actions { display: flex; gap: 12px; align-items: center; margin-top: 8px; }
   .hitl-error { color: #b71c1c; margin-top: 10px; white-space: pre-wrap; }
+
+  /* E12 — occasional (once per risky action), so a more deliberate entrance than a chat
+     bubble is warranted: opacity + scale(0.95→1), never from scale(0) (emil-design-eng). */
+  .hitl-enter { animation: hitl-enter var(--motion-base) var(--motion-ease-out); }
+  @keyframes hitl-enter {
+    from { opacity: 0; transform: scale(0.95) translateY(4px); }
+    to   { opacity: 1; transform: scale(1) translateY(0); }
+  }
 </style>

@@ -100,3 +100,52 @@ describe('Chat — decision trace panel (E9)', () => {
     expect(details.querySelector('li.tool-err')?.textContent).toContain('github_list_open_prs');
   });
 });
+
+// E12 slice 1 — streaming caret shows only while the last assistant message is still
+// actively streaming; must disappear the instant the final response lands or another
+// message follows it.
+describe('Chat — streaming caret (E12)', () => {
+  beforeEach(async () => {
+    await TestBed.configureTestingModule({
+      imports: [Chat],
+      providers: [
+        { provide: ChatService, useValue: {} },
+        {
+          provide: AuthService,
+          useValue: { getSession: () => ({ name: 'Test', role: 'developer', token: 't', project: 'SDLC' }) },
+        },
+      ],
+    }).compileComponents();
+  });
+
+  function renderWith(messages: ChatMessage[], loading: boolean): HTMLElement {
+    const fixture = TestBed.createComponent(Chat);
+    fixture.componentInstance.messages.set(messages);
+    fixture.componentInstance.loading.set(loading);
+    fixture.detectChanges();
+    return fixture.nativeElement as HTMLElement;
+  }
+
+  it('shows the caret on the last assistant message while streaming', () => {
+    const el = renderWith([{ role: 'assistant', text: 'partial answer' }], true);
+    expect(el.querySelector('.stream-caret')).not.toBeNull();
+  });
+
+  it('hides the caret once loading finishes (final response landed)', () => {
+    const el = renderWith([{ role: 'assistant', text: 'final answer' }], false);
+    expect(el.querySelector('.stream-caret')).toBeNull();
+  });
+
+  it('hides the caret on an earlier assistant message once a new one follows', () => {
+    const el = renderWith(
+      [
+        { role: 'assistant', text: 'first answer' },
+        { role: 'user', text: 'follow-up' },
+        { role: 'assistant', text: 'second, still streaming' },
+      ],
+      true,
+    );
+    const carets = el.querySelectorAll('.stream-caret');
+    expect(carets.length).toBe(1);
+  });
+});

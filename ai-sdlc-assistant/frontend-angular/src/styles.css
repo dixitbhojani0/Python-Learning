@@ -1,5 +1,24 @@
 @import '@angular/material/prebuilt-themes/azure-blue.css';
 
+:root {
+  /* E12 motion tokens — durations/easing shared by every animate.enter/leave class.
+     Add --motion-slow only when a modal/drawer-class animation actually needs it. */
+  --motion-fast: 120ms;
+  --motion-base: 200ms;
+  --motion-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+/* E12 accessibility: one global kill-switch instead of a per-component reduced-motion
+   check — covers every current and future animation/transition in the app. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 html, body {
   height: 100%;
   margin: 0;

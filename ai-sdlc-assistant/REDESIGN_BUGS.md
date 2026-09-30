@@ -413,13 +413,28 @@ Traced every layer end-to-end (write → retrieve → **inject into LLM prompt**
   corrective RAG = **1 retry** (`first_pass→corrective→degraded`, no loop); security = defense-in-depth
   (injection-403, role-403/409, HITL, env-creds, 10/min limit) — mapped to **OWASP LLM Top 10**.
 
-### 🟠 E12 — Product-grade motion system (GSAP + native Angular)  ☐  **(requested)**
+### 🟠 E12 — Product-grade motion system (GSAP + native Angular)  ◐ SLICE 1 DONE (2026-09-29)  **(requested)**
 The UI has almost no motion; enterprise chat products use it to show state (streaming, thinking, tool calls, approvals).
 - **Two tiers, one system.** Simple enter/leave and hover/focus transitions use native Angular `animate.enter` /
   `animate.leave` + CSS (migrate off the legacy `@angular/animations` package where it's used). **GSAP** (`gsap` npm)
   is only for what CSS can't do well: timelines, Flip layout transitions (message list, trace panel expand),
   SplitText reveals, and ScrollTrigger in admin dashboards. Check GSAP's current licence and Angular's animation
   API in their docs before starting.
+- **Slice 1 shipped:** confirmed live (`angular.dev/guide/animations`, fetched 2026-09-29) `animate.enter`/
+  `animate.leave` are stable since Angular v20.2 (we're on 21.2) and are the team-recommended replacement for
+  `@angular/animations` — audited the whole `frontend-angular/src` tree and found **zero** legacy
+  `trigger()`/`@angular/animations` usage to migrate (only `provideAnimationsAsync()` for Material internals,
+  unrelated). Confirmed GSAP is **100% free including all plugins** since Webflow's April 2025 sponsorship — no
+  licence blocker for a later slice. Shipped: `styles.css` motion tokens (`--motion-fast`/`--motion-base`/
+  `--motion-ease-out`) + a global `prefers-reduced-motion` kill-switch (one rule covers every current/future
+  animation, not a per-component check); `.bubble` entrance (chat.html/css, short+subtle — high-frequency
+  per `emil-design-eng` judgement); a streaming caret shown only while the last assistant message is actively
+  streaming; HITL card entrance (more deliberate — occasional, not high-frequency). Design doc:
+  `auto-sdlc/designs/E12.md`. Tests: 3 new cases in `chat.spec.ts` for the caret's show/hide logic.
+- **Still open (deliberately deferred, not dropped):** GSAP + `MotionService` (nothing yet needs
+  timelines/Flip/SplitText/ScrollTrigger — adding the dependency now would sit unused); toast/snackbar; sidebar
+  collapse; skeleton loaders; admin chart entry; `--motion-slow` token (add with the first modal/drawer-class
+  animation); bundle-growth check (moot until GSAP lands).
 - **Shared tokens:** `src/styles` motion tokens (durations 120/200/320ms, 2–3 easings) + one `MotionService` that
   wraps GSAP. Components never import gsap directly; run GSAP outside the Angular zone and kill tweens in `ngOnDestroy`.
 - **Where motion goes:** streaming token caret + "thinking" state; tool-call/trace step reveal (E9 panel);

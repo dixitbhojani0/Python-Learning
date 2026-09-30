@@ -11,7 +11,7 @@
     }
 
     @for (msg of messages(); track $index; let last = $last) {
-      <div class="bubble" [class.user]="msg.role === 'user'" [class.assistant]="msg.role === 'assistant'">
+      <div class="bubble" animate.enter="bubble-enter" [class.user]="msg.role === 'user'" [class.assistant]="msg.role === 'assistant'">
 
         <!-- User bubbles: plain text. Assistant bubbles: render markdown as HTML.
              While the streaming placeholder is still empty, show a spinner in
@@ -22,6 +22,9 @@
           <mat-spinner diameter="24" />
         } @else {
           <div class="bubble-text markdown" [innerHTML]="msg.text | markdown"></div>
+          @if (last && loading()) {
+            <span class="stream-caret" aria-hidden="true"></span>
+          }
         }
 
         <!-- Document images attached to the answer (assistant only) -->
