@@ -236,12 +236,25 @@ agentic system. Deterministic code is allowed **only** for:
     - **Design distinction (standard):** generalist (MCPAgent) = LLM picks tools (`gather_via_tools`);
       specialists = fixed tool needs → call specific tools via `call_mcp_tool`. Both go through real MCP.
   - **Still TODO:** give MCPAgent write-intent → HITL proposal (restores the duplicate-ticket *suggestion*).
-- **Two production concerns surfaced (fix in a later step, not silently now):**
-  - **B7a — silent live→mock fallback:** connectors return mock data when a live API errors (e.g.
-    `jira_connector` on HTTP 400/404). Hides outages, likely source of B2's phantom SDLC-1043. Standard:
-    explicit `live|mock` mode per connector; in `live`, errors propagate (don't fabricate). ☐
-  - **B7b — MCP server has no auth:** fine on 127.0.0.1, but exposing to other machines/apps needs a
-    bearer token / OAuth (MCP spec supports it). Add before binding to 0.0.0.0. ☐
+- **Two production concerns — checked against live code (2026-09-29), both already resolved:**
+  - **B7a — silent live→mock fallback:** ☑ **NOT REPRODUCIBLE ON LIVE PATH.** Read every `except`
+    branch in `sdlc-mcp-server/connectors/{jira,github,slack,confluence}_connector.py` (15 total) —
+    zero fabricated/mock data on error. Reads return honest empty (`[]`/`None`) on failure; writes
+    return `{"success": False, "error": ...}`. `registry.py::_build_connector` doesn't have a mock
+    branch at all — if a connector is enabled but `is_available()` is false (no live creds), it
+    **raises `RuntimeError` at startup**, real-or-crash, not real-or-mock-at-call-time. This
+    described the pre-B7-migration `ai-sdlc-assistant/backend/connectors/` registry (same "stale
+    narrative" pattern as B1/B2/B4/B5) — the live `sdlc-mcp-server` path never had this bug.
+    **Real remaining gap (not the same bug):** silent **empty**-on-error (not mock-on-error) can
+    still look like "genuinely zero results" to a caller — e.g. an auth-expired 401 on
+    `get_blocked_tickets` returns `[]`, same shape as "no blockers exist." That's B7c's concern
+    (fail-loud for live-required ops), not B7a's — tracked there, not duplicated here.
+  - **B7b — MCP server has no auth:** ☑ **ALREADY BUILT.** `sdlc-mcp-server/server.py` wires
+    `AuthSettings` (full OAuth 2.1: client registration, consent flow, `allowed_hosts` restricted to
+    `127.0.0.1`/`localhost`/`host.docker.internal`) via `mcp.server.auth`; `auth/service_token.py`
+    is the machine-to-machine path the backend actually uses (`secrets.compare_digest` — constant-time,
+    avoids a timing side-channel on the secret). This was built in a prior session but never marked
+    done here.
   - **B7c — fail-loud for live-required ops (user-spotted):** when MCP is down/empty, the agent degrades
     to RAG-only. Right for *knowledge* questions, WRONG for *live-data* ones (ticket status/create, PR
     actions) — RAG-only fabricates from stale docs or dodges. Standard = detect "needs live tools" and
