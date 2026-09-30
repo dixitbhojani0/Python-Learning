@@ -31,6 +31,34 @@
   word-break: break-word;
 }
 
+/* E12 — bubble entrance. Kept short/subtle (fast token, no bounce): a chat bubble appears
+   on every message (high frequency), so per motion-judgement guidance this should read as
+   "prevents a jarring pop-in", not a showcase animation. transform+opacity only — no
+   layout-triggering properties, so no jank on a long scrolling thread. */
+.bubble-enter {
+  animation: bubble-enter var(--motion-fast) var(--motion-ease-out);
+}
+@keyframes bubble-enter {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* E12 — streaming caret: shown after the assistant's text only while its final answer is
+   still being streamed in (see chat.html). A plain step-end blink, deliberately undecorated
+   so it doesn't compete with the text changing beside it. */
+.stream-caret {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  background: currentColor;
+  vertical-align: text-bottom;
+  animation: caret-blink 1s step-end infinite;
+}
+@keyframes caret-blink {
+  50% { opacity: 0; }
+}
+
 /* Markdown content styling lives in src/styles.css (global), NOT here — this component
    uses [innerHTML] to inject the markdown pipe's output, and Angular's default
    ViewEncapsulation.Emulated only stamps its scoping attribute onto elements the

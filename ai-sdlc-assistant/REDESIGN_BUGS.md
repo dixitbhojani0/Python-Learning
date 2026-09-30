@@ -236,12 +236,25 @@ agentic system. Deterministic code is allowed **only** for:
     - **Design distinction (standard):** generalist (MCPAgent) = LLM picks tools (`gather_via_tools`);
       specialists = fixed tool needs → call specific tools via `call_mcp_tool`. Both go through real MCP.
   - **Still TODO:** give MCPAgent write-intent → HITL proposal (restores the duplicate-ticket *suggestion*).
-- **Two production concerns surfaced (fix in a later step, not silently now):**
-  - **B7a — silent live→mock fallback:** connectors return mock data when a live API errors (e.g.
-    `jira_connector` on HTTP 400/404). Hides outages, likely source of B2's phantom SDLC-1043. Standard:
-    explicit `live|mock` mode per connector; in `live`, errors propagate (don't fabricate). ☐
-  - **B7b — MCP server has no auth:** fine on 127.0.0.1, but exposing to other machines/apps needs a
-    bearer token / OAuth (MCP spec supports it). Add before binding to 0.0.0.0. ☐
+- **Two production concerns — checked against live code (2026-09-29), both already resolved:**
+  - **B7a — silent live→mock fallback:** ☑ **NOT REPRODUCIBLE ON LIVE PATH.** Read every `except`
+    branch in `sdlc-mcp-server/connectors/{jira,github,slack,confluence}_connector.py` (15 total) —
+    zero fabricated/mock data on error. Reads return honest empty (`[]`/`None`) on failure; writes
+    return `{"success": False, "error": ...}`. `registry.py::_build_connector` doesn't have a mock
+    branch at all — if a connector is enabled but `is_available()` is false (no live creds), it
+    **raises `RuntimeError` at startup**, real-or-crash, not real-or-mock-at-call-time. This
+    described the pre-B7-migration `ai-sdlc-assistant/backend/connectors/` registry (same "stale
+    narrative" pattern as B1/B2/B4/B5) — the live `sdlc-mcp-server` path never had this bug.
+    **Real remaining gap (not the same bug):** silent **empty**-on-error (not mock-on-error) can
+    still look like "genuinely zero results" to a caller — e.g. an auth-expired 401 on
+    `get_blocked_tickets` returns `[]`, same shape as "no blockers exist." That's B7c's concern
+    (fail-loud for live-required ops), not B7a's — tracked there, not duplicated here.
+  - **B7b — MCP server has no auth:** ☑ **ALREADY BUILT.** `sdlc-mcp-server/server.py` wires
+    `AuthSettings` (full OAuth 2.1: client registration, consent flow, `allowed_hosts` restricted to
+    `127.0.0.1`/`localhost`/`host.docker.internal`) via `mcp.server.auth`; `auth/service_token.py`
+    is the machine-to-machine path the backend actually uses (`secrets.compare_digest` — constant-time,
+    avoids a timing side-channel on the secret). This was built in a prior session but never marked
+    done here.
   - **B7c — fail-loud for live-required ops (user-spotted):** when MCP is down/empty, the agent degrades
     to RAG-only. Right for *knowledge* questions, WRONG for *live-data* ones (ticket status/create, PR
     actions) — RAG-only fabricates from stale docs or dodges. Standard = detect "needs live tools" and
@@ -413,13 +426,28 @@ Traced every layer end-to-end (write → retrieve → **inject into LLM prompt**
   corrective RAG = **1 retry** (`first_pass→corrective→degraded`, no loop); security = defense-in-depth
   (injection-403, role-403/409, HITL, env-creds, 10/min limit) — mapped to **OWASP LLM Top 10**.
 
-### 🟠 E12 — Product-grade motion system (GSAP + native Angular)  ☐  **(requested)**
+### 🟠 E12 — Product-grade motion system (GSAP + native Angular)  ◐ SLICE 1 DONE (2026-09-29)  **(requested)**
 The UI has almost no motion; enterprise chat products use it to show state (streaming, thinking, tool calls, approvals).
 - **Two tiers, one system.** Simple enter/leave and hover/focus transitions use native Angular `animate.enter` /
   `animate.leave` + CSS (migrate off the legacy `@angular/animations` package where it's used). **GSAP** (`gsap` npm)
   is only for what CSS can't do well: timelines, Flip layout transitions (message list, trace panel expand),
   SplitText reveals, and ScrollTrigger in admin dashboards. Check GSAP's current licence and Angular's animation
   API in their docs before starting.
+- **Slice 1 shipped:** confirmed live (`angular.dev/guide/animations`, fetched 2026-09-29) `animate.enter`/
+  `animate.leave` are stable since Angular v20.2 (we're on 21.2) and are the team-recommended replacement for
+  `@angular/animations` — audited the whole `frontend-angular/src` tree and found **zero** legacy
+  `trigger()`/`@angular/animations` usage to migrate (only `provideAnimationsAsync()` for Material internals,
+  unrelated). Confirmed GSAP is **100% free including all plugins** since Webflow's April 2025 sponsorship — no
+  licence blocker for a later slice. Shipped: `styles.css` motion tokens (`--motion-fast`/`--motion-base`/
+  `--motion-ease-out`) + a global `prefers-reduced-motion` kill-switch (one rule covers every current/future
+  animation, not a per-component check); `.bubble` entrance (chat.html/css, short+subtle — high-frequency
+  per `emil-design-eng` judgement); a streaming caret shown only while the last assistant message is actively
+  streaming; HITL card entrance (more deliberate — occasional, not high-frequency). Design doc:
+  `auto-sdlc/designs/E12.md`. Tests: 3 new cases in `chat.spec.ts` for the caret's show/hide logic.
+- **Still open (deliberately deferred, not dropped):** GSAP + `MotionService` (nothing yet needs
+  timelines/Flip/SplitText/ScrollTrigger — adding the dependency now would sit unused); toast/snackbar; sidebar
+  collapse; skeleton loaders; admin chart entry; `--motion-slow` token (add with the first modal/drawer-class
+  animation); bundle-growth check (moot until GSAP lands).
 - **Shared tokens:** `src/styles` motion tokens (durations 120/200/320ms, 2–3 easings) + one `MotionService` that
   wraps GSAP. Components never import gsap directly; run GSAP outside the Angular zone and kill tweens in `ngOnDestroy`.
 - **Where motion goes:** streaming token caret + "thinking" state; tool-call/trace step reveal (E9 panel);

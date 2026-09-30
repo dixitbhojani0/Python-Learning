@@ -1,5 +1,66 @@
 # Daily autonomous engineering run — changelog
 
+## 2026-09-29
+
+**Orientation:** read 2026-09-28's entry + `REDESIGN_BUGS.md`. Well over 5 items open (E3–E8, B9,
+E10, E11, E12, B7 Step 4, B7a, B7b, B7c, B8 cause 3) — no backlog refill needed. E12 (motion
+system) is tagged **(requested)**, so it took priority per the daily-run ordering.
+
+**Baseline gate (before any change):** all three green — 111 backend, 8 MCP-server, 18 Angular +
+`ng build`.
+
+### Items done
+
+1. **E12 (requested) — motion system, slice 1.** E12 is large ("Big ones can span several days");
+   shipped a working, tested first slice rather than the whole item:
+   - **Research before building** (per E12's own note + the research-discipline standard): fetched
+     `angular.dev/guide/animations` live — `animate.enter`/`animate.leave` are stable since Angular
+     **v20.2** (we're on 21.2) and are the team-recommended replacement for the now-deprecated
+     `@angular/animations`; confirmed `prefers-reduced-motion` is *not* handled by the framework,
+     must be manual CSS. Grepped the whole frontend for legacy `trigger()`/`@angular/animations`
+     usage — zero hits, nothing to migrate. Checked GSAP's licence live — 100% free including all
+     plugins since Webflow's April 2025 sponsorship, so no blocker for a later slice.
+   - **Design doc + motion judgement:** `auto-sdlc/designs/E12.md`, informed by the
+     `emil-design-eng` skill (frequency test → bubbles get a short/subtle entrance since they
+     appear on every message; HITL card gets a more deliberate one since it's occasional; ease-out,
+     never scale-from-zero, transform+opacity only for no layout jank).
+   - **Shipped:** `styles.css` motion tokens (`--motion-fast`/`--motion-base`/`--motion-ease-out`)
+     + a **global** `prefers-reduced-motion` kill-switch (one rule covers every current/future
+     animation, deliberately simpler than a per-component `MotionService` check); `.bubble`
+     entrance; a streaming caret shown only while the last assistant message is actively streaming
+     (disappears the instant the final response lands); HITL card entrance.
+   - **Deliberately deferred, not dropped:** GSAP + `MotionService` (nothing in this slice needs
+     Flip/SplitText/ScrollTrigger/timelines — adding the dependency now would sit unused);
+     toast/snackbar, sidebar collapse, skeleton loaders, admin chart entry; `--motion-slow` token.
+     `REDESIGN_BUGS.md` E12 entry marked ◐ with the exact remaining scope.
+2. **B7a/B7b — backlog audit, both already fixed, not previously marked.** Read all 15 `except`
+   branches across the 4 live connectors (`sdlc-mcp-server/connectors/*.py`) — zero mock-data
+   fallback on error (B7a's exact described bug lived only in the pre-B7-migration legacy backend
+   registry, same stale-narrative pattern as B1/B2/B4/B5). Read `server.py` — full OAuth 2.1
+   (`AuthSettings`, consent flow, host allowlist) plus `auth/service_token.py`'s constant-time
+   `secrets.compare_digest` M2M path already ship (B7b). No code change — corrected the backlog so
+   a future run doesn't re-investigate either as open.
+
+### Tests added
+- `ai-sdlc-assistant/frontend-angular/src/app/chat/chat.spec.ts` (+3 tests: streaming caret shows
+  while loading, hides once loading finishes, hides on an earlier message once a new one streams)
+
+### Gate status (after all changes)
+- Backend: 111 passed (untouched — no backend files changed today)
+- MCP server: 8 passed (untouched — no MCP-server files changed today)
+- Angular: 21 passed (was 18) + `ng build` succeeds
+
+### Left half-done / follow-ups (not blocked, just out of today's scope)
+- E12 remaining scope: GSAP + `MotionService`, toast/snackbar, sidebar collapse, skeleton loaders,
+  admin chart entry, `--motion-slow` token, bundle-growth acceptance check (moot until GSAP lands).
+- B7c (fail-loud for live-required ops) is the real, still-open version of what B7a used to
+  describe — silent **empty**-on-error (not mock-on-error) can still look like "no results" to a
+  caller. Not touched today.
+- E3–E8, B9, E10, E11, B7 Step 4, B8 cause 3 remain open, all larger than fit alongside E12 today.
+
+**Needs Dixit:** nothing blocked this run — no credential, paid API, or product decision was
+needed.
+
 ## 2026-09-28
 
 **Orientation:** read yesterday's entry + `REDESIGN_BUGS.md`. Well over 5 items open (B4, E3–E7,
