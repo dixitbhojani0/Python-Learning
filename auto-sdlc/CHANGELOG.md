@@ -1,5 +1,87 @@
 # Daily autonomous engineering run — changelog
 
+## 2026-10-02
+
+**Orientation:** read 2026-09-29's entry + `REDESIGN_BUGS.md`. Well over 5 items open (B7c, E3–E8,
+B9, E10, E11, E12 remainder, B8 cause 3) — no backlog refill needed. B7c is the only open 🔴 bug
+and was user-spotted, so it took priority per the daily-run ordering (failing tests/broken flow >
+🔴 bugs > ... > 🟠 enhancements > UI polish).
+
+**Environment note (read before trusting "baseline gate" below):** Docker Desktop was not running
+in this session (`docker ps` / `docker compose ps` both failed to reach the daemon — not just the
+containers being down, the whole engine). `docker compose up -d qdrant redis` (what `run-daily.ps1`
+runs before launching this session) would fail the same way if Docker Desktop isn't set to start
+automatically at login/boot on this machine. **Operational risk worth flagging:** pytest exits
+non-zero when any test **errors** (fixture/setup failure), not just on an assertion failure — so if
+Docker is down when the scheduled task fires, the 7 Qdrant-dependent `test_retriever.py` tests would
+ERROR (connection refused), `$be.ok` would be `false`, and the whole gate would go RED and NOT merge
+to master, even though every actual test passes. This isn't something to fix by weakening those
+tests (they correctly need live Qdrant) — it's a "is Docker Desktop set to auto-start" check worth
+Dixit confirming on the machine that runs the scheduled task.
+
+**Baseline gate (before any change):** backend 104 passed + 7 errors (Qdrant connection refused —
+environmental, see above; 104 matches 111 total minus the same 7 that need Qdrant), 8 MCP-server,
+21 Angular + `ng build` — all non-Qdrant tests green, consistent with no regression since 2026-09-29.
+
+### Items done
+
+1. **B7c — fail loud when a live-data query can't reach MCP.** Previously, ANY MCP outage (server
+   down, empty tool list, or every attempted tool call erroring) degraded silently to RAG-only —
+   fine for a knowledge question, wrong for "what's the status of SDLC-5?" (could answer from a
+   stale doc chunk instead of admitting it can't confirm current state). Added a data-driven signal
+   (P1: no keyword list) to `gather_via_tools()`:
+   - **MCP server itself unreachable** (`get_mcp_tools()` raises/empty): a one-off LLM
+     classification (`needs_live_data_classify` prompt, temperature 0.0) decides if *this query*
+     needed live data — the gather loop never got a chance to let the model request a tool itself
+     here, so this is the one spot that still asks an LLM directly instead of reading the model's
+     own tool-call intent.
+   - **Tools available but every attempted call errored:** no extra LLM call — the model already
+     decided it needed that tool (it emitted `tool_calls`), so "all attempts failed" IS the
+     live-data-needed-but-unavailable signal. Partial success (≥1 call ok) does NOT trip this.
+   - New `ToolGatherResult.mcp_unavailable` flag; `MCPAgent.run()` checks it right after the gather
+     step (before the domain/low-confidence guards — a stale RAG chunk could otherwise still answer
+     a live-data question) and returns an honest "Live tools ... are currently unavailable" message.
+   - Pairs with B7a (no silent mock): together, never fabricate, never guess from stale docs when
+     the real answer needs a live system.
+2. **E3/E4 — ticket status answers always carry priority + latest comment.** The data was already
+   fetched (`_normalize_issue` returns priority + comments, per B3), but two gaps meant it didn't
+   reliably reach the user: `MCPAgent._enrich_ticket_refs` (the "Live Ticket Statuses" override for
+   tickets mentioned in RAG chunks) hand-formatted status/title/assignee/latest-comment but **never
+   included priority** — fixed. And `gather_via_tools`'s direct-query path (e.g. "what's the status
+   of SDLC-5?") already receives the full ticket JSON via `as_context()`, but `system_prompt` never
+   told the model to surface all of it, so an answer could legally stop at "status: IN_PROGRESS" and
+   skip the comment that actually carries effort/ETA (the exact "stakeholder sees small fix, dev
+   comment says 3-day refactor" gap B3 targets) — added an explicit instruction to always pair
+   status+assignee+priority and include the latest comment when one exists. Effort/ETA intentionally
+   isn't a dedicated field (E4's design) — the latest comment is the real source of truth.
+
+### Tests added
+- `ai-sdlc-assistant/tests/unit/test_tool_use_gather.py` (6 tests — MCP-down+live-data-query,
+  MCP-down+knowledge-query, classifier-failure-defaults-safe, no-tool-call-attempted,
+  all-attempts-failed, partial-failure-not-flagged)
+- `ai-sdlc-assistant/tests/unit/test_mcp_agent_live_data_unavailable.py` (2 tests — short-circuits
+  with the honest message, normal path unaffected)
+- `ai-sdlc-assistant/tests/unit/test_mcp_agent_ticket_enrichment.py` (3 tests — priority included,
+  defaults to MEDIUM when Jira doesn't set one, empty when no ticket ID in chunks)
+
+### Gate status (after all changes)
+- Backend: 115 passed (was 104 + 7 Qdrant-environmental errors, both before and after — no
+  regression; the 7 errors are Docker-down, not code, see environment note above)
+- MCP server: 8 passed (untouched — no MCP-server files changed today)
+- Angular: 21 passed (untouched — no frontend files changed today) + `ng build` succeeds
+
+### Left half-done / follow-ups (not blocked, just out of today's scope)
+- B8 cause 3 (Checklist doc chunking/re-ingest) needs a live Qdrant to verify against — skipped
+  today given the Docker-down environment, not re-attempted blind.
+- E5/E7 (PR lifecycle CRUD, ticket edit/delete/deassign), E8 (HITL approval scopes), B9 (agentic
+  tool-selection loop), E10/E11 (automated eval runner), E12 remainder (GSAP + MotionService, toast,
+  sidebar, skeleton loaders) all remain open, each larger than fits alongside today's two items.
+
+**Needs Dixit:** confirm Docker Desktop is set to start automatically on the machine that runs the
+`AI-SDLC Daily Loop` scheduled task — see the environment note above. If it isn't, any day Docker
+hasn't come up yet when the task fires, the gate goes RED (not merged) purely from the 7
+Qdrant-dependent tests erroring, even with zero real regressions. Nothing else blocked this run.
+
 ## 2026-09-29
 
 **Orientation:** read 2026-09-28's entry + `REDESIGN_BUGS.md`. Well over 5 items open (E3–E8, B9,
