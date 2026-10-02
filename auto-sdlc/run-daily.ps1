@@ -22,9 +22,11 @@ New-Item -ItemType Directory -Force $LogDir | Out-Null
 # If another process holds the log (e.g. a tail -f), fall back to a second file instead of silently losing lines.
 function Log($m) { $l = "$(Get-Date -Format 'HH:mm:ss') $m"; Write-Host $l
     try { Add-Content -Path $Log -Value $l -Encoding utf8 -ErrorAction Stop } catch { Add-Content -Path "$Log.fallback" -Value $l -Encoding utf8 } }
-function Git { & git.exe -C $Repo @args 2>&1 | ForEach-Object { "$_" }; if ($LASTEXITCODE -ne 0) { throw "git $args failed ($LASTEXITCODE)" } }
-# Network steps retry: catch-up runs fire right after wake/logon, often before the network is up.
-function GitNet { for ($i = 1; $i -le 5; $i++) { try { Git @args; return } catch { Log "retry $i/5: $_"; Start-Sleep 60 } }; throw "git $args failed after 5 tries" }
+function Git { $o = & git.exe -C $Repo @args 2>&1 | ForEach-Object { "$_" }
+    if ($LASTEXITCODE -ne 0) { throw "git $args failed ($LASTEXITCODE): $(($o | Select-Object -Last 3) -join ' | ')" }; $o }
+# Network steps retry: runs fire around wake/logon, often before the network is up, and the PC may sleep mid-wait.
+# Counting attempts (not wall-clock) means a sleep doesn't burn the budget: ~60 awake minutes before giving up.
+function GitNet { for ($i = 1; $i -le 60; $i++) { try { Git @args; return } catch { if ($i -eq 1 -or $i % 10 -eq 0) { Log "retry $i/60: $_" }; Start-Sleep 60 } }; throw "git $args failed after 60 tries" }
 # Red / no-change days still leave an honest record on master (RUNS.md only, never code), so every run day shows up.
 function RecordRun($line) {
     Add-Content -Path (Join-Path $PSScriptRoot 'RUNS.md') -Value "- $Date - $line" -Encoding utf8
