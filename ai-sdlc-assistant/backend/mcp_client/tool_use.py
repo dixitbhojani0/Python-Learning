@@ -76,6 +76,12 @@ class ToolGatherResult:
     """Output of the gather loop — live data for synthesis, plus a trace."""
     tools_called: list[str] = field(default_factory=list)
     calls: list[ToolCall] = field(default_factory=list)
+    # B7c: True when the query needed live MCP data but none could be fetched —
+    # either the MCP server itself was unreachable (and an LLM check judged the
+    # query live-data-dependent) or every tool call the model attempted errored
+    # out. The caller (MCPAgent) must not silently degrade to a possibly-stale
+    # RAG answer in this case — it should say so honestly instead.
+    mcp_unavailable: bool = False
 
     @property
     def is_empty(self) -> bool:
@@ -91,6 +97,34 @@ class ToolGatherResult:
             blocks.append(head)
             blocks.append(f"ERROR: {c.error}" if c.error else _to_text(c.result))
         return "\n".join(blocks)
+
+
+async def _needs_live_data(query: str) -> bool:
+    """
+    LLM-driven check (P1: no keyword lists) for whether `query` needs live MCP
+    data. Only called when the MCP server itself is unreachable, so the gather
+    loop never got a chance to let the model request a tool on its own.
+
+    Defaults to False (today's RAG-only behavior) on any classification
+    failure — a missed live-data flag is not a new failure mode, just the
+    pre-B7c behavior.
+    """
+    prompt = config.get_prompt("needs_live_data_classify", query=query)
+    if not prompt:
+        return False
+    try:
+        resp = await LLMFactory.get_provider().generate_structured(
+            prompt=prompt,
+            system="You are a classification agent. Output only valid JSON. No explanation.",
+            temperature=0.0,
+            max_tokens=100,
+        )
+        if resp.is_empty or resp.parse_error or not resp.structured:
+            return False
+        return bool(resp.structured.get("needs_live_data", False))
+    except Exception:
+        logger.exception("_needs_live_data: classification failed — defaulting to RAG-only")
+        return False
 
 
 async def gather_via_tools(
@@ -114,10 +148,11 @@ async def gather_via_tools(
     try:
         tools = await get_mcp_tools()
     except BaseException:
-        logger.exception("gather_via_tools: MCP tools unavailable — returning empty (RAG-only fallback)")
-        return ToolGatherResult()
+        tools = []
+        logger.exception("gather_via_tools: MCP tools unavailable — checking if this query needed live data")
     if not tools:
-        return ToolGatherResult()
+        unavailable = await _needs_live_data(query)
+        return ToolGatherResult(mcp_unavailable=unavailable)
 
     model = LLMFactory.get_provider().get_chat_model().bind_tools(tools)
     tools_by_name = {t.name: t for t in tools}
@@ -173,5 +208,10 @@ async def gather_via_tools(
             messages.append(msg)
 
     out.tools_called = [c.tool for c in out.calls]
+    # The model itself decided it needed a tool (data-driven signal, no keyword
+    # guessing) — if every attempt it made errored out, that's a live-data
+    # query MCP couldn't serve, not "no live data needed".
+    if out.calls and all(c.error for c in out.calls):
+        out.mcp_unavailable = True
     logger.info("gather_via_tools: gathered %d call(s): %s", len(out.calls), out.tools_called)
     return out

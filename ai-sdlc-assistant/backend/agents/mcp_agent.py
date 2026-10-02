@@ -188,6 +188,28 @@ class MCPAgent(BaseAgent):
         gathered = await gather_via_tools(query, history=history_section)
         logger.info("MCPAgent: MCP tools called: %s", gathered.tools_called or "none")
 
+        # ── B7c: live data was needed but MCP couldn't deliver it ──────────────
+        # RAG-only is right for knowledge questions but wrong here — a stale doc
+        # chunk could otherwise answer a live-data question (e.g. ticket status)
+        # with outdated info. Say so honestly instead of guessing from RAG.
+        if gathered.mcp_unavailable:
+            logger.warning("MCPAgent: live tools needed but unavailable for '%s...'", query[:60])
+            return AgentPayload(
+                agent_name="mcp_agent",
+                confidence=confidence,
+                summary="Live tools unavailable for a live-data query",
+                structured={
+                    "final_response": (
+                        "Live tools (Jira, GitHub, Slack, Confluence) are currently unavailable, "
+                        "so I can't confirm the current status for that right now. Please try "
+                        "again in a few minutes, or ask about something covered in the project "
+                        "documentation."
+                    ),
+                    "skip_persona": True,   # system-state message, not content to restyle
+                },
+                sources=[],
+            )
+
         # ── 2b. Enrich ticket IDs mentioned in RAG chunks with live Jira state ─
         # Prevents stale sprint-doc claims ("SDLC-1 is blocked") from overriding
         # the ticket's actual current status (e.g. DONE).

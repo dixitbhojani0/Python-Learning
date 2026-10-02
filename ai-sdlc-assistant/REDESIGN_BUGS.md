@@ -255,10 +255,33 @@ agentic system. Deterministic code is allowed **only** for:
     is the machine-to-machine path the backend actually uses (`secrets.compare_digest` — constant-time,
     avoids a timing side-channel on the secret). This was built in a prior session but never marked
     done here.
-  - **B7c — fail-loud for live-required ops (user-spotted):** when MCP is down/empty, the agent degrades
-    to RAG-only. Right for *knowledge* questions, WRONG for *live-data* ones (ticket status/create, PR
-    actions) — RAG-only fabricates from stale docs or dodges. Standard = detect "needs live tools" and
-    return an honest "live tools unavailable" instead of RAG/mock. Pairs with B7a (no silent mock). ☐
+  - **B7c — fail-loud for live-required ops (user-spotted)  ☑ FIXED (2026-10-02):** when MCP is
+    down/empty, the agent used to degrade to RAG-only unconditionally. Right for *knowledge*
+    questions, wrong for *live-data* ones (ticket status/create, PR actions) — RAG-only could
+    answer from a stale doc chunk instead of admitting it can't confirm current state. Fixed with
+    a data-driven signal (P1: no keyword list) in `gather_via_tools()`:
+    - **MCP server itself unreachable** (`get_mcp_tools()` raises or returns no tools): a cheap
+      LLM classification call (`needs_live_data_classify` prompt, temperature 0.0) decides whether
+      *this specific query* needed live data — the gather loop never got a chance to let the model
+      request a tool itself here, so this is the one spot still asking an LLM directly rather than
+      reading the model's own tool-call intent.
+    - **Tools available but every attempted call errored** (timeout/auth/connection): no extra LLM
+      call needed — the model already decided it needed that tool (it emitted the `tool_calls`),
+      so "all attempts failed" is itself the live-data-needed-but-unavailable signal. Partial
+      success (some calls ok) does NOT trip this — real data came back, nothing to disclaim.
+    - New `ToolGatherResult.mcp_unavailable` flag; `MCPAgent.run()` checks it right after the
+      gather step (before the domain/low-confidence guards, since a stale RAG chunk could otherwise
+      answer a live-data question) and returns an honest "Live tools ... are currently unavailable"
+      message instead of proceeding to RAG-only synthesis.
+    - Pairs with B7a (no silent mock) — together: never fabricate, never guess from stale docs when
+      the real answer needs a live system.
+    - **Where:** `backend/mcp_client/tool_use.py` (`ToolGatherResult.mcp_unavailable`, `_needs_live_data`,
+      `gather_via_tools`), `backend/agents/mcp_agent.py` (`run`, the new guard), `config/prompts.yaml`
+      (`needs_live_data_classify`).
+    - **Tests:** `tests/unit/test_tool_use_gather.py` (6 cases: MCP-down+live-data-query,
+      MCP-down+knowledge-query, classifier-failure-defaults-safe, no-tool-call-attempted,
+      all-attempts-failed, partial-failure-not-flagged); `tests/unit/test_mcp_agent_live_data_unavailable.py`
+      (2 cases: short-circuits with the honest message, normal path unaffected).
   - **Docker:** `mcp-server` added as its own compose service (decoupled, one `docker compose up`); backend
     points at it via `MCP_SERVER_URL`. Rebuild needed after requirements change (`docker compose build
     backend mcp-server`).

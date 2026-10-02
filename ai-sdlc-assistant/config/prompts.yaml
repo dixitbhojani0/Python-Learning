@@ -424,6 +424,25 @@ query_rewrite: |
   - Add specific technical keywords if the query is too vague.
   - If the original is already specific, try a synonym or related term.
 
+# ── B7c: needs-live-data classification — used ONLY when the MCP server itself
+# is unreachable (tools/list failed), so the gather loop never got a chance to
+# let the model request a tool for itself. Decides whether to tell the user
+# "live tools unavailable" (live-data query) or silently fall back to RAG-only
+# (pure knowledge-base query) — see MCPAgent / gather_via_tools. Temperature:
+# 0.0. Max tokens: 100.
+needs_live_data_classify: |
+  Live tools (Jira, GitHub, Slack, Confluence, Teams) are currently unreachable.
+  Decide whether answering the user's query below REQUIRES current/live data
+  from one of those systems (e.g. a ticket's current status or assignee, open
+  PRs, sending a notification, creating/editing/assigning a ticket or PR)
+  rather than static project documentation (ADRs, sprint docs, checklists,
+  guides, design docs).
+
+  User query: {query}
+
+  Output ONLY this JSON — no other text before or after:
+  {{"needs_live_data": true, "reason": "one sentence"}}
+
 # ── Notify intent extraction — parses a notification request into structured fields.
 # Used by NotifyAgent to decide the target channel, the message body, and whether
 # to auto-compose a sprint status. Replaces brittle keyword/regex parsing so the
