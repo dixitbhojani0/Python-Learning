@@ -118,9 +118,11 @@ class MCPAgent(BaseAgent):
 
     async def _enrich_ticket_refs(self, chunks: list) -> str:
         """
-        For every ticket ID found in RAG chunks, fetch its live Jira status + latest comment.
-        Returns a formatted section that sits above the RAG content so the LLM sees
-        authoritative live state before any (potentially stale) document claim.
+        For every ticket ID found in RAG chunks, fetch its live Jira status, priority,
+        assignee, and latest comment (E3/E4 — full detail, not just status; the latest
+        comment is the real source of truth for effort/ETA, per B3). Returns a formatted
+        section that sits above the RAG content so the LLM sees authoritative live state
+        before any (potentially stale) document claim.
         """
         import re
         import asyncio
@@ -141,6 +143,7 @@ class MCPAgent(BaseAgent):
             if isinstance(result, Exception) or not result:
                 continue
             status   = result.get("status", "UNKNOWN")
+            priority = result.get("priority", "MEDIUM")
             assignee = result.get("assignee", "unassigned")
             title    = result.get("title", "")
             comments = result.get("comments", [])
@@ -149,7 +152,7 @@ class MCPAgent(BaseAgent):
                 c      = comments[-1]
                 body   = (c.get("body") or "")[:180]
                 latest = f"\n  Latest comment ({c.get('author', '?')}, {c.get('created', '?')}): {body}"
-            lines.append(f"- **{tid}** [{status}] {title} — Assignee: {assignee}{latest}")
+            lines.append(f"- **{tid}** [{status}] [{priority}] {title} — Assignee: {assignee}{latest}")
 
         return "\n".join(lines) if len(lines) > 1 else ""
 

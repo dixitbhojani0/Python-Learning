@@ -120,10 +120,24 @@ The assistant should behave per role. Target capability matrix:
 - **E2 — Stakeholder creates ticket → Slack notification to developer** ☑ **DONE** — `_execute_create_ticket`
   fires `slack_send_message` (over MCP) to `#backend` when `approver_role == "stakeholder"`, so a dev
   triages it and adds real effort/comments. Reuses the existing write tool; non-fatal if Slack fails.
-- **E3 — Status queries return full detail:** status, assignee, priority, **latest comment**,
-  effort/ETA — small or big. ☐
+- **E3 — Status queries return full detail: status, assignee, priority, latest comment, effort/ETA**
+  ☑ **DONE (2026-10-02):** the data was always fetched (`_normalize_issue` returns priority +
+  comments already, per B3), but one formatter dropped it and nothing told the LLM to always
+  surface it. Two fixes: (1) `MCPAgent._enrich_ticket_refs` — the "Live Ticket Statuses" section
+  for tickets mentioned in RAG chunks — hand-formatted a line with status/title/assignee/latest
+  comment but **never included priority**; added it. (2) `gather_via_tools`'s direct-query path
+  (e.g. "what's the status of SDLC-5?") already receives the full normalized ticket JSON
+  (priority + comments included) via `as_context()`, but `system_prompt` never told the model to
+  surface all of it — added an explicit rule: "always surface status, assignee, AND priority
+  together, plus the latest comment if one exists ... do not answer with status alone." Effort/ETA
+  intentionally isn't a dedicated field (E4) — the latest comment carries it, same as B3.
+  **Where:** `backend/agents/mcp_agent.py` (`_enrich_ticket_refs`), `config/prompts.yaml`
+  (`system_prompt`). **Tests:** `tests/unit/test_mcp_agent_ticket_enrichment.py` (3 cases).
 - **E4 — Ticket comments = source of truth** for "how big / how long", so stakeholders get real
-  expectations instead of assumptions (directly supports B3). ☐
+  expectations instead of assumptions (directly supports B3) ☑ **DONE** — covered by E3's fix
+  above (the latest comment is now guaranteed to surface alongside status/assignee/priority,
+  both in the RAG-referenced-ticket path and the direct-query path); no separate effort/ETA field
+  needed, by design (comments are the real source, not a Jira custom field no one fills in).
 - **E5 — Full PR lifecycle:** create / approve / reject / comment CRUD. We have assign-reviewer +
   approve (mock-safe); reject = HITL cancel. Missing: create PR, edit/delete comments. ☐
 - **E6 — Comment on Jira:** ◐ **add-comment DONE** — full chain: connector `add_comment` (+ mock) →
