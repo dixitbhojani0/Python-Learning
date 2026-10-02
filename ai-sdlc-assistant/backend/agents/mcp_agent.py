@@ -118,9 +118,11 @@ class MCPAgent(BaseAgent):
 
     async def _enrich_ticket_refs(self, chunks: list) -> str:
         """
-        For every ticket ID found in RAG chunks, fetch its live Jira status + latest comment.
-        Returns a formatted section that sits above the RAG content so the LLM sees
-        authoritative live state before any (potentially stale) document claim.
+        For every ticket ID found in RAG chunks, fetch its live Jira status, priority,
+        assignee, and latest comment (E3/E4 — full detail, not just status; the latest
+        comment is the real source of truth for effort/ETA, per B3). Returns a formatted
+        section that sits above the RAG content so the LLM sees authoritative live state
+        before any (potentially stale) document claim.
         """
         import re
         import asyncio
@@ -141,6 +143,7 @@ class MCPAgent(BaseAgent):
             if isinstance(result, Exception) or not result:
                 continue
             status   = result.get("status", "UNKNOWN")
+            priority = result.get("priority", "MEDIUM")
             assignee = result.get("assignee", "unassigned")
             title    = result.get("title", "")
             comments = result.get("comments", [])
@@ -149,7 +152,7 @@ class MCPAgent(BaseAgent):
                 c      = comments[-1]
                 body   = (c.get("body") or "")[:180]
                 latest = f"\n  Latest comment ({c.get('author', '?')}, {c.get('created', '?')}): {body}"
-            lines.append(f"- **{tid}** [{status}] {title} — Assignee: {assignee}{latest}")
+            lines.append(f"- **{tid}** [{status}] [{priority}] {title} — Assignee: {assignee}{latest}")
 
         return "\n".join(lines) if len(lines) > 1 else ""
 
@@ -187,6 +190,28 @@ class MCPAgent(BaseAgent):
         # ── 2. Live data via REAL MCP — the LLM picks/chains tools ────────────
         gathered = await gather_via_tools(query, history=history_section)
         logger.info("MCPAgent: MCP tools called: %s", gathered.tools_called or "none")
+
+        # ── B7c: live data was needed but MCP couldn't deliver it ──────────────
+        # RAG-only is right for knowledge questions but wrong here — a stale doc
+        # chunk could otherwise answer a live-data question (e.g. ticket status)
+        # with outdated info. Say so honestly instead of guessing from RAG.
+        if gathered.mcp_unavailable:
+            logger.warning("MCPAgent: live tools needed but unavailable for '%s...'", query[:60])
+            return AgentPayload(
+                agent_name="mcp_agent",
+                confidence=confidence,
+                summary="Live tools unavailable for a live-data query",
+                structured={
+                    "final_response": (
+                        "Live tools (Jira, GitHub, Slack, Confluence) are currently unavailable, "
+                        "so I can't confirm the current status for that right now. Please try "
+                        "again in a few minutes, or ask about something covered in the project "
+                        "documentation."
+                    ),
+                    "skip_persona": True,   # system-state message, not content to restyle
+                },
+                sources=[],
+            )
 
         # ── 2b. Enrich ticket IDs mentioned in RAG chunks with live Jira state ─
         # Prevents stale sprint-doc claims ("SDLC-1 is blocked") from overriding

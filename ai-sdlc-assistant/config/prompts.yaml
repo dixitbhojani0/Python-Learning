@@ -69,6 +69,7 @@ system_prompt: |
   - When asked about release blockers or whether a release is blocked, do not rely only on the "get_blocked_tickets" tool (which only finds tickets with a literal "Blocked" status or label). Instead, you must also check for open high-priority (HIGH/HIGHEST) tickets in the active sprint by searching for sprint tickets or checking the sprint board.
   - Live data from Jira and GitHub is the absolute source of truth. If a query is about live status (e.g. blockers, ticket assignments, open tickets, completion status), do NOT use or reference status information from Confluence documents. Use ONLY the live Jira/GitHub data. Confluence documents should only be used for retrieving background information (like design decisions, policies, and requirements), never for live task status or ticket assignments.
   - In the live Jira ticket schema, the "blockers" key lists the IDs of OTHER tickets that are blocked by this ticket. Do NOT assume a ticket is free of blockers just because its "blockers" list is empty. Instead, look at its status (e.g. status category is "Blocked" or status is "TO_DO"/"IN_PROGRESS" with a "blocked" label) to determine if it is blocked.
+  - When asked about a specific ticket's status or detail, always surface status, assignee, AND priority together, plus the latest comment if one exists — the latest comment is the real source of truth for effort/size/ETA (a stakeholder may assume "small fix" when a developer's comment says otherwise). Do not answer with status alone when assignee/priority/comments are available in the data.
 
 # ── Persona instructions (Slot 2 in context builder — injected per user role)
 persona_developer: |
@@ -423,6 +424,25 @@ query_rewrite: |
   - Keep it under 20 words.
   - Add specific technical keywords if the query is too vague.
   - If the original is already specific, try a synonym or related term.
+
+# ── B7c: needs-live-data classification — used ONLY when the MCP server itself
+# is unreachable (tools/list failed), so the gather loop never got a chance to
+# let the model request a tool for itself. Decides whether to tell the user
+# "live tools unavailable" (live-data query) or silently fall back to RAG-only
+# (pure knowledge-base query) — see MCPAgent / gather_via_tools. Temperature:
+# 0.0. Max tokens: 100.
+needs_live_data_classify: |
+  Live tools (Jira, GitHub, Slack, Confluence, Teams) are currently unreachable.
+  Decide whether answering the user's query below REQUIRES current/live data
+  from one of those systems (e.g. a ticket's current status or assignee, open
+  PRs, sending a notification, creating/editing/assigning a ticket or PR)
+  rather than static project documentation (ADRs, sprint docs, checklists,
+  guides, design docs).
+
+  User query: {query}
+
+  Output ONLY this JSON — no other text before or after:
+  {{"needs_live_data": true, "reason": "one sentence"}}
 
 # ── Notify intent extraction — parses a notification request into structured fields.
 # Used by NotifyAgent to decide the target channel, the message body, and whether
