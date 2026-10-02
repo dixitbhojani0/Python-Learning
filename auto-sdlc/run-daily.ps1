@@ -63,7 +63,15 @@ try {
     Git checkout -b $Branch | Out-Null
     $base = (& git.exe -C $Repo rev-parse HEAD)
 
-    # Infra for retriever tests (best effort - if Docker is down, the gate fails and nothing merges).
+    # Infra for retriever tests. Start Docker Desktop if its engine isn't up (wait up to ~4 min); if it still
+    # isn't, the gate fails and nothing merges.
+    & docker info *> $null
+    if ($LASTEXITCODE -ne 0) {
+        Log "docker engine down - starting Docker Desktop"
+        Start-Process "$env:ProgramFiles\Docker\Docker\Docker Desktop.exe"
+        for ($i = 0; $i -lt 24; $i++) { Start-Sleep 10; & docker info *> $null; if ($LASTEXITCODE -eq 0) { break } }
+        Log "docker engine up: $($LASTEXITCODE -eq 0)"
+    }
     & docker compose -f (Join-Path $Repo 'ai-sdlc-assistant\docker-compose.yml') up -d qdrant redis 2>&1 | ForEach-Object { Add-Content $Log "$_" }
 
     # --- the engineering session ---
