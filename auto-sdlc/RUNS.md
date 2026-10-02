@@ -5,3 +5,4 @@ Green days are recorded by their merge commit and `CHANGELOG.md`.
 
 - 2026-09-27 - GREEN - B1/B2/B5 audit, E9 trace panel (merged)
 - 2026-09-28 - GREEN - B10, B8 fixes (merged)
+- 2026-10-02 - RED - gate failed (backend); work kept on auto/2026-10-02 for review
