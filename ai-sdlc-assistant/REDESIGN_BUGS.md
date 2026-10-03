@@ -358,6 +358,28 @@ agentic system. Deterministic code is allowed **only** for:
   `test_corrective_rag_skips_recall_on_weak_title_overlap` (2 new).
 - **Fix direction (still open, cause 3):** recursive-512 rechunk of the Checklist doc + re-ingest;
   consider doc-aware retrieval boosting for the general noisy-retrieval case beyond named-doc recall.
+- **Root cause narrowed (2026-10-04), not fixed — needs a live re-ingest to confirm:** queried the live
+  Qdrant `sdlc_knowledge` collection directly (Docker/Qdrant was up this session). "Clean Code Checklist"
+  has only 5 points for 1 real parent doc, from the **two separate phases** `ingestion_service.py
+  ingest_confluence()` already runs per page: Phase 1 (page **body** text → `chunk_document`) produced
+  a clean, correctly-formatted markdown table chunk (`| Sq No | Name | Category | ... |`, header intact).
+  Phase 2 (the page's **PDF attachment**, same checklist content → `ingest_file` → `unstructured.io` →
+  `chunk_from_elements`, which already isolates `Table` elements whole, never mid-split) produced a
+  *different*, garbled chunk for the same table — plain run-on text with no pipe/header
+  (`"...Code readability \n7 I have followed..."`) — meaning `unstructured.io` didn't detect this
+  specific PDF's checklist as a `Table` element at all (fell through to `NarrativeText`/`Title` instead,
+  which *does* get mid-split — exactly B8's reported symptom). Current chunker code is correct for every
+  table it successfully detects; this is a **detection miss on one specific PDF**, not a chunking-logic bug.
+  **Not fixed today:** no live Confluence credentials/running backend in this session to pull the actual
+  PDF and confirm; fixing blind (e.g. guessing an `unstructured` strategy param) would violate "reproduce
+  the failure first" with no way to verify here. **Next step (needs live Confluence access):** re-run
+  admin `Clear All` + `Ingest from Confluence` for project SDLC. If the PDF-attachment phase still
+  produces a header-less table chunk afterward, that's the reproducible case to fix (try `unstructured`'s
+  `hi_res`/table-extraction strategy for this file, or a markdown-table reconstruction fallback when a
+  `Table`-shaped block lands in `NarrativeText`). Also worth asking: Phase 1 (page body) and Phase 2 (PDF
+  attachment) ingest the **same checklist content twice** under one `doc_title` — low urgency today, but
+  if the page body's table render is reliably clean, Phase 2 may be redundant for pages whose PDF is just
+  an export of the same body.
 
 ### 🟠 E8 — HITL approval UX: per-action scopes (Approve / Approve-all / Reject)  ☐
 - **User ask:** risky actions must always ask; low-risk repeats (Slack notify) could offer a
