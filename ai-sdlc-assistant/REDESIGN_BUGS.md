@@ -475,7 +475,7 @@ Traced every layer end-to-end (write → retrieve → **inject into LLM prompt**
   corrective RAG = **1 retry** (`first_pass→corrective→degraded`, no loop); security = defense-in-depth
   (injection-403, role-403/409, HITL, env-creds, 10/min limit) — mapped to **OWASP LLM Top 10**.
 
-### 🟠 E12 — Product-grade motion system (GSAP + native Angular)  ◐ SLICE 1 DONE (2026-09-29)  **(requested)**
+### 🟠 E12 — Product-grade motion system (GSAP + native Angular)  ◐ SLICE 2 DONE (2026-10-04)  **(requested)**
 The UI has almost no motion; enterprise chat products use it to show state (streaming, thinking, tool calls, approvals).
 - **Two tiers, one system.** Simple enter/leave and hover/focus transitions use native Angular `animate.enter` /
   `animate.leave` + CSS (migrate off the legacy `@angular/animations` package where it's used). **GSAP** (`gsap` npm)
@@ -493,10 +493,29 @@ The UI has almost no motion; enterprise chat products use it to show state (stre
   per `emil-design-eng` judgement); a streaming caret shown only while the last assistant message is actively
   streaming; HITL card entrance (more deliberate — occasional, not high-frequency). Design doc:
   `auto-sdlc/designs/E12.md`. Tests: 3 new cases in `chat.spec.ts` for the caret's show/hide logic.
+- **Audit correction (2026-10-04) — toast/snackbar was already DONE, just not credited:** every admin
+  write action (`rag-manager`, `memory`, `mcp-servers`, `sessions`, `config-viewer`) already shows
+  `MatSnackBar` feedback on success/error (ingest results, clear-all, server add/toggle/delete, config
+  reload, etc.) — same stale-backlog pattern as B1/B2/B4/B5/B7a/B7b. No code change needed; corrected
+  here so a future run doesn't rebuild it.
+- **Slice 2 shipped (2026-10-04) — sidebar collapse:** `admin.html`/`admin.ts` — a toggle button in
+  `mat-sidenav-content` (always reachable regardless of sidenav state) flips `[opened]` on the existing
+  `mat-sidenav`. Zero new code for the transition itself — `mode="side"` + `[opened]` is MatSidenav's
+  own built-in open/close animation (same CDK overlay/animation internals Material already uses
+  everywhere else in this app), and the global `prefers-reduced-motion` kill-switch from Slice 1 already
+  covers it (one `*` rule, no per-component override needed). No GSAP/MotionService needed here either.
+  **Tests:** `admin.spec.ts` (new — 2 cases: starts expanded, toggle flips state).
+  **Verification gap (environment, not code):** this session's shell resolved Node v20.12.2
+  (`nvm4w`), below Angular CLI 21's v20.19 minimum, so `ng test`/`ng build` could not be run here —
+  self-reviewed instead via `tsc --noEmit` (clean) + manual read-through of the binding names against
+  `admin.ts`. Backend (126) + MCP-server (8) gates ran directly and are green. Prior runs (through
+  2026-10-02) recorded `ng test`/`ng build` passing, so the actual `run-daily.ps1` PowerShell process
+  likely resolves a different/working Node on PATH than this interactive shell did — **Needs Dixit**
+  to confirm, same category as the 2026-10-02 Docker-engine note.
 - **Still open (deliberately deferred, not dropped):** GSAP + `MotionService` (nothing yet needs
-  timelines/Flip/SplitText/ScrollTrigger — adding the dependency now would sit unused); toast/snackbar; sidebar
-  collapse; skeleton loaders; admin chart entry; `--motion-slow` token (add with the first modal/drawer-class
-  animation); bundle-growth check (moot until GSAP lands).
+  timelines/Flip/SplitText/ScrollTrigger — adding the dependency now would sit unused); skeleton
+  loaders; admin chart entry; `--motion-slow` token (add with the first modal/drawer-class animation);
+  bundle-growth check (moot until GSAP lands).
 - **Shared tokens:** `src/styles` motion tokens (durations 120/200/320ms, 2–3 easings) + one `MotionService` that
   wraps GSAP. Components never import gsap directly; run GSAP outside the Angular zone and kill tweens in `ngOnDestroy`.
 - **Where motion goes:** streaming token caret + "thinking" state; tool-call/trace step reveal (E9 panel);
