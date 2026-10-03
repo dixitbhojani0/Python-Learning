@@ -418,7 +418,7 @@ agentic system. Deterministic code is allowed **only** for:
   thresholds (fail on regression). Today we have a lightweight homegrown eval (`eval_set.json` +
   `metrics.py` + admin `04_evaluation`).
 
-### 🔴 B10 — Memory is half-dead: retrieved/stored but not injected into prompts  ◐ PARTIAL (updated 2026-09-28)
+### 🔴 B10 — Memory is half-dead: retrieved/stored but not injected into prompts  ◐ PARTIAL (updated 2026-10-04)
 Traced every layer end-to-end (write → retrieve → **inject into LLM prompt**):
 | Layer | Stored? | Retrieved? | **Actually fed to LLM?** | Verdict |
 |---|---|---|---|---|
@@ -442,13 +442,25 @@ Traced every layer end-to-end (write → retrieve → **inject into LLM prompt**
   rule MCPAgent's prompt already documents) and a shared `_ask_for_ticket_id()` clarification response for
   when nothing resolves (ask, don't guess — matches the existing edit-intent pattern). All three write
   branches (assign/edit/comment) now use one `resolved_ticket_id`.
-- **Still open:** risk / pr_review / release_readiness / notify agents still don't consume
-  `recent_messages`/`semantic_context` — lower priority than ticket_agent (they're mostly single-shot
-  read/report queries, not multi-turn "that PR"/"that release" follow-ups) but the same gap.
+- **Fixed today (2026-10-04) — `pr_review_agent.py`:** same pronoun gap, confirmed real (not
+  speculative): "approve it" / "assign alice as reviewer" right after "review PR-5", with multiple
+  PRs open, hit the ambiguity guard and asked "which PR did you mean?" even though the answer was
+  the PR just discussed. Added `_last_pr_id_from_history()` (identical newest-turn-first,
+  response-before-query rule as ticket_agent's) as a fallback for `_query_target_pr_id()` — an
+  explicit PR id in the current query still always wins. This also fixes the related "deep review
+  vs list" branch for free: "what's the status of that PR" now reviews the one PR instead of
+  falling through to `broad_query` and listing all of them.
+- **Still open — risk / release_readiness / notify agents:** checked for the same shape of bug
+  (a pronoun referring to one specific tracked entity) and found none to fix — both risk and
+  release_readiness are whole-sprint report generators with no single target to resolve, and
+  notify's only entity-like field (channel) is either explicit (`#channel`) or LLM-extracted from
+  the current query, with no pronoun pattern observed. Not fixing speculatively (no reproducible
+  symptom) — re-open this line if a concrete case shows up.
 - **Where:** `orchestrator/nodes.py` `retrieve_memory_context` (produces the fields); `agents/mcp_agent.py`
   (consumes all 3, already fixed); `agents/ticket_agent.py` (history-resolution added 2026-09-28);
-  `agents/{risk,pr_review,release_readiness,notify}_agent.py` (still don't consume history).
-- **Tests:** `tests/unit/test_ticket_agent_history_resolution.py` (new, 4 tests). See also
+  `agents/pr_review_agent.py` (history-resolution added 2026-10-04).
+- **Tests:** `tests/unit/test_ticket_agent_history_resolution.py` (4 tests),
+  `tests/unit/test_pr_review_agent_history_resolution.py` (new, 4 tests). See also
   `TEST_SUITE.md` §B2 (MEM-1…4).
 
 ### 🟠 E11 — Automated suite runner + observability (eliminate manual testing)  ☐
