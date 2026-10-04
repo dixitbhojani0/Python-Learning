@@ -356,8 +356,9 @@ async def run_cross_source(state: SDLCState) -> dict:
     server running; degrades to RAG-only if it's unreachable.
 
     Legacy CrossSourceAgent is kept (imported below) for one-line revert and
-    until its remaining features (image surfacing, duplicate-ticket suggestion)
-    are ported — ticket creation returns via the Step-4 write tools + HITL.
+    until its one remaining unported feature (image surfacing from RAG chunks)
+    lands on MCPAgent too. Duplicate-ticket suggestion was ported 2026-10-05
+    (B7 Step 4) — ticket creation returns via the Step-4 write tools + HITL.
     """
     logger.info("run_cross_source: invoking MCPAgent (gather-then-synthesize over MCP)")
     return await _run_agent(MCPAgent, state)

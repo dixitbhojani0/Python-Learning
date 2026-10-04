@@ -1,5 +1,74 @@
 # Daily autonomous engineering run — changelog
 
+## 2026-10-05
+
+**Orientation:** read 2026-10-04's entry + `REDESIGN_BUGS.md`. Well over 5 items open (B7 Step 4,
+E5/E6/E7, E8, B9, E10/E11, E12 remainder, B8 cause 3) — no backlog refill needed. 2026-10-04's
+Node-version blocker was already resolved (pinned Node 22.22.3, re-gated green, merged
+5f3bfa7/5ff6973) — this session's shell resolved v22.22.3 directly, no Angular gate issue.
+
+**Baseline gate (before any change):** backend 126 passed, MCP-server 8 passed, Angular 23 passed
++ `ng build` succeeds — matches 2026-10-04's recorded counts, no regression.
+
+### Items done
+
+1. **B7 Step 4 — restore the duplicate-ticket HITL suggestion on the live (MCPAgent) path.** The
+   last open line under B7: `MCPAgent` (the live generalist, routed to for `cross_source` intent)
+   only ever reads — it never offered to file a ticket for a problem described conversationally
+   ("the checkout page is throwing 500s for guest users") with no explicit "create a ticket" verb.
+   That behavior only ever existed in the dead pre-MCP `cross_source_agent._check_ticket_needed`,
+   dropped (not ported) when B7 migrated the live path to MCPAgent. Ported it:
+   - New `_check_ticket_needed`/`_format_existing_tickets`/`_format_ticket_suggestion_card` in
+     `mcp_agent.py`, wired in after the normal answer is synthesized (never on an early-return
+     refusal/outage). Dedup reuses `jira_search_tickets` (the same MCP tool + query-cleaning
+     `ticket_agent` already uses for its own similar-ticket check) and the existing
+     `cross_source_ticket_suggestion` prompt, unchanged.
+   - **No keyword pre-filter** (ties to P1 — "no hardcoded rules"): the old regex gate
+     (`_PROBLEM_SIGNALS`/`_RESOLVED_SIGNALS`) is dropped entirely — the prompt's own
+     `should_create` rule (real unresolved problem AND not already covered) is already the
+     correctness gate, so re-adding a keyword pre-filter would be strictly less correct for no
+     benefit. The only skip is reusing `temporal_intent` — already computed in `MCPAgent.run()`
+     for the episodic-memory lookup — to skip clearly historical queries for free (zero new code).
+   - `hitl_required`/`hitl_proposal` flow through the existing generic HITL plumbing
+     (`_payload_to_state` → `check_hitl` node → `execute_create_ticket`) completely unchanged —
+     same proposal shape `ticket_agent`/legacy `cross_source_agent` already produce, so the
+     approve-execution side needed zero changes.
+   - Updated the stale `run_cross_source` docstring (nodes.py) that explicitly named this as a
+     pending port, so the next run doesn't re-investigate it; corrected `REDESIGN_BUGS.md`.
+   - Design doc: `auto-sdlc/designs/B7-step4.md`.
+
+### Tests added
+- `ai-sdlc-assistant/tests/unit/test_mcp_agent_ticket_suggestion.py` (4 cases: proposes for a
+  genuine untracked problem, no proposal when an existing ticket already covers it, skips the
+  LLM/MCP calls entirely for a historical-intent query, degrades gracefully when the similar-ticket
+  search fails)
+
+### Gate status (after all changes)
+- Backend: 130 passed (was 126)
+- MCP server: 8 passed (unchanged — no MCP-server files touched today)
+- Angular: 23 passed (unchanged — no frontend files touched today) + `ng build` succeeds
+
+### Left half-done / follow-ups (not blocked, just out of today's scope)
+- B7 Step 3's other deferred-from-legacy item still stands: image surfacing from RAG chunks
+  (`_images_from_chunks` in the dead `cross_source_agent`) hasn't been ported to MCPAgent either —
+  tracked in the `run_cross_source` docstring, not duplicated here.
+- E12 remaining (GSAP + `MotionService`, skeleton loaders, admin chart entry, `--motion-slow`
+  token) checked again today — still genuinely nothing needs GSAP's timeline/Flip/SplitText
+  features yet, and every admin screen already has a spinner-based loading state, so adding
+  skeleton loaders now would be unrequested polish, not a gap. Left deliberately deferred, not
+  picked up.
+- E6 (edit/delete Jira comment), E5 (PR create + edit/delete comments), E7 (edit/delete/deassign
+  ticket), E8 (HITL approval scopes), B9 (agentic tool-selection loop), E10/E11 (automated eval
+  runner) remain open. E6/E5/E7 each need a real design decision first (how does a user reference
+  *which* comment to edit/delete in natural language — Jira comments have no ID surfaced in the
+  UI today) — bigger than today's remaining scope, left for a dedicated day with its own design
+  doc rather than started and left half-wired.
+- B8 cause 3 still needs live Confluence access to confirm the PDF table-detection fix (unchanged
+  from 2026-10-04 — no credential available this session either).
+
+**Needs Dixit:** nothing new blocked this run — no credential, paid API, or product decision was
+needed for today's item. B8 cause 3 (live Confluence re-ingest) remains blocked from 2026-10-04.
+
 ## 2026-10-04
 
 **Orientation:** read 2026-10-02's entry + `REDESIGN_BUGS.md`. Well over 5 items open (B7 Step 4,

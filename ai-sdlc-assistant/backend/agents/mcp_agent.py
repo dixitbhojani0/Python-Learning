@@ -103,6 +103,94 @@ def _format_history(recent_messages: list[dict]) -> str:
     return "\n".join(lines) if len(lines) > 1 else ""
 
 
+# ── Ticket-suggestion (B7 Step 4) ────────────────────────────────────────────
+# Restores the old cross_source_agent behaviour of offering to file a ticket
+# for an untracked problem described conversationally — ported onto the real
+# MCP path (jira_search_tickets for dedup) instead of the dead in-process
+# registry. No keyword pre-filter (P1): the LLM prompt itself is the
+# correctness gate (only proposes when a real, uncovered problem exists).
+
+def _format_existing_tickets(jira_tickets: list[dict]) -> str:
+    if not jira_tickets:
+        return "None found."
+    return "\n".join(
+        f"- [{t.get('id', '?')}] [{t.get('status', '?')}] {t.get('title', '')}"
+        for t in jira_tickets
+    )
+
+
+def _format_ticket_suggestion_card(proposal: dict, investigation: str) -> str:
+    """Append a create-ticket HITL card below the investigation's own answer."""
+    title       = proposal.get("title", "")
+    description = proposal.get("description", "")
+    priority    = proposal.get("priority", "MEDIUM")
+    labels      = proposal.get("labels", [])
+    label_str   = f"\n🏷️ **Labels:** {', '.join(labels)}" if labels else ""
+
+    return "\n\n".join([
+        investigation,
+        "---",
+        "## 🎫 Untracked Issue Detected",
+        (
+            "The issue above does not appear to have a Jira ticket yet. "
+            "Would you like me to create one?\n\n"
+            f"📋 **Title:** {title}\n"
+            f"📝 **Description:** {description}\n"
+            f"📊 **Priority:** {priority}"
+            f"{label_str}\n\n"
+            "_Click **Approve** to create this ticket in Jira, or **Reject** to skip._"
+        ),
+    ])
+
+
+async def _check_ticket_needed(llm, config, query: str, response: str, project: str) -> dict | None:
+    """
+    Ask the LLM whether the investigation above surfaced a genuine, untracked
+    problem worth filing. Dedup uses the same `jira_search_tickets` call (+
+    query cleaning) ticket_agent already uses for its own similar-ticket check.
+    """
+    from backend.agents.ticket_agent import _clean_ticket_query
+    from backend.mcp_client.client import as_list, call_mcp_tool
+
+    try:
+        existing = as_list(await call_mcp_tool(
+            "jira_search_tickets", {"query": _clean_ticket_query(query), "project": project},
+        ))
+    except Exception:
+        logger.exception("MCPAgent: similar-ticket search failed — proceeding without dedup list")
+        existing = []
+
+    prompt = config.get_prompt(
+        "cross_source_ticket_suggestion",
+        query=query,
+        response_summary=response[:600],
+        existing_tickets=_format_existing_tickets(existing),
+    )
+    if not prompt:
+        return None
+
+    try:
+        resp = await llm.generate_structured(
+            prompt, config.get_prompt("system_prompt"), temperature=0.0, max_tokens=700,
+        )
+        if resp.parse_error or not resp.structured or not resp.structured.get("should_create"):
+            return None
+        data = resp.structured
+        logger.warning("MCPAgent: ticket suggestion — recommends creating: %s", data.get("title", ""))
+        return {
+            "action":      "create_ticket",
+            "title":       data.get("title", ""),
+            "description": data.get("description", ""),
+            "priority":    data.get("priority", "MEDIUM"),
+            "assignee":    "unassigned",
+            "labels":      data.get("labels", []),
+            "project":     project,
+        }
+    except Exception:
+        logger.exception("MCPAgent: ticket-suggestion check failed — skipping suggestion")
+        return None
+
+
 class MCPAgent(BaseAgent):
     """RAG + LLM-driven MCP tool-use, synthesized through the app's own generation."""
 
@@ -397,6 +485,18 @@ class MCPAgent(BaseAgent):
 
         logger.info("MCPAgent: response %d chars", len(response))
 
+        # ── B7 Step 4: offer to file a ticket for an untracked problem ────────
+        # Skip historical queries ("how was X fixed") — temporal_intent is
+        # already computed above for the episodic lookup, reused here for free.
+        hitl_required = False
+        hitl_proposal: dict = {}
+        if temporal_intent != "historical" and response.strip():
+            ticket_suggestion = await _check_ticket_needed(self.llm, self.config, query, response, project)
+            if ticket_suggestion:
+                hitl_required = True
+                hitl_proposal = ticket_suggestion
+                response = _format_ticket_suggestion_card(ticket_suggestion, response)
+
         # ── 5. Package result (same shape the other agents return) ────────────
         sources = list({c.source for c in chunks})
         # de-duped tool names as sources, e.g. "mcp:jira_get_blocked_tickets"
@@ -424,4 +524,6 @@ class MCPAgent(BaseAgent):
                 ],
             },
             sources=sources,
+            hitl_required=hitl_required,
+            hitl_proposal=hitl_proposal,
         )
