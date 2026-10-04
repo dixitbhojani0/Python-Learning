@@ -358,6 +358,28 @@ agentic system. Deterministic code is allowed **only** for:
   `test_corrective_rag_skips_recall_on_weak_title_overlap` (2 new).
 - **Fix direction (still open, cause 3):** recursive-512 rechunk of the Checklist doc + re-ingest;
   consider doc-aware retrieval boosting for the general noisy-retrieval case beyond named-doc recall.
+- **Root cause narrowed (2026-10-04), not fixed — needs a live re-ingest to confirm:** queried the live
+  Qdrant `sdlc_knowledge` collection directly (Docker/Qdrant was up this session). "Clean Code Checklist"
+  has only 5 points for 1 real parent doc, from the **two separate phases** `ingestion_service.py
+  ingest_confluence()` already runs per page: Phase 1 (page **body** text → `chunk_document`) produced
+  a clean, correctly-formatted markdown table chunk (`| Sq No | Name | Category | ... |`, header intact).
+  Phase 2 (the page's **PDF attachment**, same checklist content → `ingest_file` → `unstructured.io` →
+  `chunk_from_elements`, which already isolates `Table` elements whole, never mid-split) produced a
+  *different*, garbled chunk for the same table — plain run-on text with no pipe/header
+  (`"...Code readability \n7 I have followed..."`) — meaning `unstructured.io` didn't detect this
+  specific PDF's checklist as a `Table` element at all (fell through to `NarrativeText`/`Title` instead,
+  which *does* get mid-split — exactly B8's reported symptom). Current chunker code is correct for every
+  table it successfully detects; this is a **detection miss on one specific PDF**, not a chunking-logic bug.
+  **Not fixed today:** no live Confluence credentials/running backend in this session to pull the actual
+  PDF and confirm; fixing blind (e.g. guessing an `unstructured` strategy param) would violate "reproduce
+  the failure first" with no way to verify here. **Next step (needs live Confluence access):** re-run
+  admin `Clear All` + `Ingest from Confluence` for project SDLC. If the PDF-attachment phase still
+  produces a header-less table chunk afterward, that's the reproducible case to fix (try `unstructured`'s
+  `hi_res`/table-extraction strategy for this file, or a markdown-table reconstruction fallback when a
+  `Table`-shaped block lands in `NarrativeText`). Also worth asking: Phase 1 (page body) and Phase 2 (PDF
+  attachment) ingest the **same checklist content twice** under one `doc_title` — low urgency today, but
+  if the page body's table render is reliably clean, Phase 2 may be redundant for pages whose PDF is just
+  an export of the same body.
 
 ### 🟠 E8 — HITL approval UX: per-action scopes (Approve / Approve-all / Reject)  ☐
 - **User ask:** risky actions must always ask; low-risk repeats (Slack notify) could offer a
@@ -418,7 +440,7 @@ agentic system. Deterministic code is allowed **only** for:
   thresholds (fail on regression). Today we have a lightweight homegrown eval (`eval_set.json` +
   `metrics.py` + admin `04_evaluation`).
 
-### 🔴 B10 — Memory is half-dead: retrieved/stored but not injected into prompts  ◐ PARTIAL (updated 2026-09-28)
+### 🔴 B10 — Memory is half-dead: retrieved/stored but not injected into prompts  ◐ PARTIAL (updated 2026-10-04)
 Traced every layer end-to-end (write → retrieve → **inject into LLM prompt**):
 | Layer | Stored? | Retrieved? | **Actually fed to LLM?** | Verdict |
 |---|---|---|---|---|
@@ -442,13 +464,25 @@ Traced every layer end-to-end (write → retrieve → **inject into LLM prompt**
   rule MCPAgent's prompt already documents) and a shared `_ask_for_ticket_id()` clarification response for
   when nothing resolves (ask, don't guess — matches the existing edit-intent pattern). All three write
   branches (assign/edit/comment) now use one `resolved_ticket_id`.
-- **Still open:** risk / pr_review / release_readiness / notify agents still don't consume
-  `recent_messages`/`semantic_context` — lower priority than ticket_agent (they're mostly single-shot
-  read/report queries, not multi-turn "that PR"/"that release" follow-ups) but the same gap.
+- **Fixed today (2026-10-04) — `pr_review_agent.py`:** same pronoun gap, confirmed real (not
+  speculative): "approve it" / "assign alice as reviewer" right after "review PR-5", with multiple
+  PRs open, hit the ambiguity guard and asked "which PR did you mean?" even though the answer was
+  the PR just discussed. Added `_last_pr_id_from_history()` (identical newest-turn-first,
+  response-before-query rule as ticket_agent's) as a fallback for `_query_target_pr_id()` — an
+  explicit PR id in the current query still always wins. This also fixes the related "deep review
+  vs list" branch for free: "what's the status of that PR" now reviews the one PR instead of
+  falling through to `broad_query` and listing all of them.
+- **Still open — risk / release_readiness / notify agents:** checked for the same shape of bug
+  (a pronoun referring to one specific tracked entity) and found none to fix — both risk and
+  release_readiness are whole-sprint report generators with no single target to resolve, and
+  notify's only entity-like field (channel) is either explicit (`#channel`) or LLM-extracted from
+  the current query, with no pronoun pattern observed. Not fixing speculatively (no reproducible
+  symptom) — re-open this line if a concrete case shows up.
 - **Where:** `orchestrator/nodes.py` `retrieve_memory_context` (produces the fields); `agents/mcp_agent.py`
   (consumes all 3, already fixed); `agents/ticket_agent.py` (history-resolution added 2026-09-28);
-  `agents/{risk,pr_review,release_readiness,notify}_agent.py` (still don't consume history).
-- **Tests:** `tests/unit/test_ticket_agent_history_resolution.py` (new, 4 tests). See also
+  `agents/pr_review_agent.py` (history-resolution added 2026-10-04).
+- **Tests:** `tests/unit/test_ticket_agent_history_resolution.py` (4 tests),
+  `tests/unit/test_pr_review_agent_history_resolution.py` (new, 4 tests). See also
   `TEST_SUITE.md` §B2 (MEM-1…4).
 
 ### 🟠 E11 — Automated suite runner + observability (eliminate manual testing)  ☐
@@ -463,7 +497,7 @@ Traced every layer end-to-end (write → retrieve → **inject into LLM prompt**
   corrective RAG = **1 retry** (`first_pass→corrective→degraded`, no loop); security = defense-in-depth
   (injection-403, role-403/409, HITL, env-creds, 10/min limit) — mapped to **OWASP LLM Top 10**.
 
-### 🟠 E12 — Product-grade motion system (GSAP + native Angular)  ◐ SLICE 1 DONE (2026-09-29)  **(requested)**
+### 🟠 E12 — Product-grade motion system (GSAP + native Angular)  ◐ SLICE 2 DONE (2026-10-04)  **(requested)**
 The UI has almost no motion; enterprise chat products use it to show state (streaming, thinking, tool calls, approvals).
 - **Two tiers, one system.** Simple enter/leave and hover/focus transitions use native Angular `animate.enter` /
   `animate.leave` + CSS (migrate off the legacy `@angular/animations` package where it's used). **GSAP** (`gsap` npm)
@@ -481,10 +515,29 @@ The UI has almost no motion; enterprise chat products use it to show state (stre
   per `emil-design-eng` judgement); a streaming caret shown only while the last assistant message is actively
   streaming; HITL card entrance (more deliberate — occasional, not high-frequency). Design doc:
   `auto-sdlc/designs/E12.md`. Tests: 3 new cases in `chat.spec.ts` for the caret's show/hide logic.
+- **Audit correction (2026-10-04) — toast/snackbar was already DONE, just not credited:** every admin
+  write action (`rag-manager`, `memory`, `mcp-servers`, `sessions`, `config-viewer`) already shows
+  `MatSnackBar` feedback on success/error (ingest results, clear-all, server add/toggle/delete, config
+  reload, etc.) — same stale-backlog pattern as B1/B2/B4/B5/B7a/B7b. No code change needed; corrected
+  here so a future run doesn't rebuild it.
+- **Slice 2 shipped (2026-10-04) — sidebar collapse:** `admin.html`/`admin.ts` — a toggle button in
+  `mat-sidenav-content` (always reachable regardless of sidenav state) flips `[opened]` on the existing
+  `mat-sidenav`. Zero new code for the transition itself — `mode="side"` + `[opened]` is MatSidenav's
+  own built-in open/close animation (same CDK overlay/animation internals Material already uses
+  everywhere else in this app), and the global `prefers-reduced-motion` kill-switch from Slice 1 already
+  covers it (one `*` rule, no per-component override needed). No GSAP/MotionService needed here either.
+  **Tests:** `admin.spec.ts` (new — 2 cases: starts expanded, toggle flips state).
+  **Verification gap (environment, not code):** this session's shell resolved Node v20.12.2
+  (`nvm4w`), below Angular CLI 21's v20.19 minimum, so `ng test`/`ng build` could not be run here —
+  self-reviewed instead via `tsc --noEmit` (clean) + manual read-through of the binding names against
+  `admin.ts`. Backend (126) + MCP-server (8) gates ran directly and are green. Prior runs (through
+  2026-10-02) recorded `ng test`/`ng build` passing, so the actual `run-daily.ps1` PowerShell process
+  likely resolves a different/working Node on PATH than this interactive shell did — **Needs Dixit**
+  to confirm, same category as the 2026-10-02 Docker-engine note.
 - **Still open (deliberately deferred, not dropped):** GSAP + `MotionService` (nothing yet needs
-  timelines/Flip/SplitText/ScrollTrigger — adding the dependency now would sit unused); toast/snackbar; sidebar
-  collapse; skeleton loaders; admin chart entry; `--motion-slow` token (add with the first modal/drawer-class
-  animation); bundle-growth check (moot until GSAP lands).
+  timelines/Flip/SplitText/ScrollTrigger — adding the dependency now would sit unused); skeleton
+  loaders; admin chart entry; `--motion-slow` token (add with the first modal/drawer-class animation);
+  bundle-growth check (moot until GSAP lands).
 - **Shared tokens:** `src/styles` motion tokens (durations 120/200/320ms, 2–3 easings) + one `MotionService` that
   wraps GSAP. Components never import gsap directly; run GSAP outside the Angular zone and kill tweens in `ngOnDestroy`.
 - **Where motion goes:** streaming token caret + "thinking" state; tool-call/trace step reveal (E9 panel);

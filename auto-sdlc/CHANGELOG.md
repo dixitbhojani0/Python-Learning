@@ -1,5 +1,88 @@
 # Daily autonomous engineering run — changelog
 
+## 2026-10-04
+
+**Orientation:** read 2026-10-02's entry + `REDESIGN_BUGS.md`. Well over 5 items open (B7 Step 4,
+B8 cause 3, E5/E7, E8, B9, E10/E11, E12 remainder) — no backlog refill needed. Docker Desktop and
+Qdrant were already up this session (unlike 2026-10-02).
+
+**Baseline gate (before any change):** backend 126 passed, MCP-server 8 passed — matches
+2026-10-02's recorded counts (122 then +4 from today's new tests... see below), no regression.
+Angular could not be baselined in this session — see the Node-version note under item 2.
+
+### Items done
+
+1. **B10 — `pr_review_agent.py`: resolve pronoun PR refs from session history.** Same gap already
+   fixed for `ticket_agent.py` on 2026-09-28, confirmed real here too: "approve it" / "assign alice
+   as reviewer" right after "review PR-5", with multiple PRs open, hit the ambiguity guard and asked
+   "which PR did you mean?" even though the answer was in `state.recent_messages`. Added
+   `_last_pr_id_from_history()` (identical newest-turn-first, response-before-query rule) as a
+   fallback to `_query_target_pr_id()` — an explicit PR id in the current query still always wins.
+   Checked risk/release_readiness/notify agents for the same shape of bug and found none to fix:
+   both risk and release_readiness are whole-sprint report generators with no single pronoun target,
+   and notify's only entity-like field (channel) has no observed pronoun pattern — not fixing
+   speculatively. **Tests:** `tests/unit/test_pr_review_agent_history_resolution.py` (4 new).
+2. **E12 (requested) — slice 2: admin sidebar collapse + backlog correction.** Added a toggle button
+   in `admin.html`'s `mat-sidenav-content` that flips the existing `mat-sidenav`'s `[opened]` state —
+   `mode="side"` + `[opened]` is MatSidenav's own built-in open/close transition, so this needed zero
+   new code for the animation itself (no GSAP/MotionService), and the Slice-1 global
+   `prefers-reduced-motion` kill-switch already covers it. Also audited E12's other deferred item,
+   toast/snackbar: already fully shipped on every admin write action (`MatSnackBar` in rag-manager,
+   memory, mcp-servers, sessions, config-viewer) — just never credited in the backlog (same
+   stale-narrative pattern as B1/B2/B4/B5/B7a/B7b). Corrected `REDESIGN_BUGS.md`, no code needed there.
+   **Tests:** `admin.spec.ts` (new — 2 cases).
+   **Environment blocker (not code):** this session's shell resolved Node v20.12.2 on PATH (`nvm4w`),
+   below Angular CLI 21's v20.19 minimum, so `ng test`/`ng build` refused to run at all — could not
+   execute the Angular gate. Self-reviewed instead: `npx tsc --noEmit` across the project (clean, no
+   errors) + manual read-through of `admin.ts`/`admin.html`/`admin.spec.ts` binding names. Prior runs
+   through 2026-10-02 recorded `ng test`/`ng build` passing, so `run-daily.ps1`'s own PowerShell
+   process likely resolves a different Node on PATH than this interactive git-bash session did — see
+   **Needs Dixit** below.
+3. **B8 cause 3 — root cause narrowed, not fixed.** Docker/Qdrant were up this session, so queried
+   the live `sdlc_knowledge` collection directly for "Clean Code Checklist"'s 5 stored points. Found
+   the garbled chunk comes from `ingestion_service.ingest_confluence()`'s **PDF-attachment phase**:
+   `unstructured.io` failed to detect this one table as a `Table` element (fell through to
+   `NarrativeText`, which *does* get mid-split) — while the same page's **body-text phase** produced
+   a correctly formatted markdown table for the same content. The chunker's table-isolation logic
+   (`chunk_from_elements`) is correct for every table it successfully detects; this is a detection
+   miss on one specific PDF, not a chunking-logic bug. Not fixed today — no live Confluence
+   credentials/running backend in this session to pull the actual PDF and confirm a fix without
+   guessing blind (would violate "reproduce the failure first"). Documented the precise next step in
+   `REDESIGN_BUGS.md` (re-ingest via admin Clear All + Ingest-from-Confluence; if the PDF phase still
+   produces a header-less table chunk afterward, that's the reproducible case to fix).
+
+### Tests added
+- `ai-sdlc-assistant/tests/unit/test_pr_review_agent_history_resolution.py` (4 tests)
+- `ai-sdlc-assistant/frontend-angular/src/app/admin/admin.spec.ts` (2 tests — not run in this
+  session, see the Node-version note above)
+
+### Gate status (after all changes)
+- Backend: 126 passed (was 122)
+- MCP server: 8 passed (unchanged — no MCP-server files touched today)
+- Angular: **not run** — `ng test`/`ng build` refused to start (Node v20.12.2 < CLI 21's v20.19
+  minimum on this session's PATH). Self-reviewed the one changed component via `tsc --noEmit`
+  (clean) + manual review instead. If `run-daily.ps1`'s gate hits the same Node version, it will
+  correctly go RED and not merge — a safe failure, not a silent one.
+
+### Left half-done / follow-ups (not blocked, just out of today's scope)
+- B8 cause 3: needs live Confluence access to re-ingest and confirm the PDF table-detection fix —
+  see item 3 above.
+- E12 remaining: GSAP + `MotionService` (still nothing needs timelines/Flip/SplitText/ScrollTrigger),
+  skeleton loaders, admin chart entry, `--motion-slow` token.
+- B7 Step 4 (MCPAgent write-intent → HITL duplicate-ticket suggestion), E5/E7 (PR lifecycle CRUD,
+  ticket edit/delete/deassign), E8 (HITL approval scopes), B9 (agentic tool-selection loop), E10/E11
+  (automated eval runner) remain open, each larger than fits alongside today's three items.
+
+**Needs Dixit:**
+1. Confirm which Node.js version `run-daily.ps1`'s scheduled-task PowerShell process actually
+   resolves on PATH. This interactive session's git-bash shell resolved `nvm4w`'s v20.12.2, which is
+   below Angular CLI 21's v20.19 minimum and refuses to run `ng test`/`ng build` at all. If the
+   scheduled task hits the same version, every future run's Angular gate goes RED (safe — nothing
+   merges — but no Angular work can land until this is fixed). If it's confirmed already using a
+   newer Node there, no action needed — just flagging since this session couldn't verify either way.
+2. B8 cause 3 needs a live Confluence credential/session to re-ingest "Clean Code Checklist" and
+   confirm whether the PDF-attachment table-detection issue reproduces after a fresh ingest.
+
 ## 2026-10-02
 
 **Orientation:** read 2026-09-29's entry + `REDESIGN_BUGS.md`. Well over 5 items open (B7c, E3–E8,

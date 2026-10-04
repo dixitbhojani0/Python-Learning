@@ -56,6 +56,22 @@ def _query_target_pr_id(query: str) -> str:
     return f"PR-{m.group(1)}" if m else ""
 
 
+def _last_pr_id_from_history(recent_messages: list[dict]) -> str:
+    """
+    Resolve a pronoun reference ("that PR", "it") to the most recently mentioned
+    PR id in this session — newest turn first, response text checked before the
+    query (same rule ticket_agent already applies for Jira ticket IDs, see B10:
+    PRReviewAgent never saw recent_messages at all, so "approve it" right after
+    "review PR-5" asked "which PR?" instead of using the one just discussed).
+    """
+    for turn in reversed(recent_messages or []):
+        for text in (turn.get("response", ""), turn.get("query", "")):
+            m = _PR_ID_PAT.search(text or "")
+            if m:
+                return f"PR-{m.group(1)}"
+    return ""
+
+
 def _query_explicit_reviewer(query: str) -> str:
     """Return reviewer name explicitly stated in query, or '' if none."""
     m = _EXPLICIT_REVIEWER_PAT.search(query)
@@ -360,7 +376,7 @@ class PRReviewAgent(BaseAgent):
         # Broad query ("show me open PRs", no PR-N named, no approve/merge verb) →
         # list mode: one row per PR, no LLM deep review, no HITL. Matches GitHub's
         # "review requests" UX — the user picks a PR, then asks for a deep review.
-        target_id             = _query_target_pr_id(query)
+        target_id             = _query_target_pr_id(query) or _last_pr_id_from_history(state.get("recent_messages", []))
         wants_approve         = bool(_PR_APPROVE_PAT.search(query))
         wants_request_changes = bool(_PR_REQUEST_CHANGES_PAT.search(query))
         explicit_reviewer     = _query_explicit_reviewer(query)   # e.g. "dixitbhojani-blip"
