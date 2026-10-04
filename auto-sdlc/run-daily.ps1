@@ -19,6 +19,10 @@ $Py      = Join-Path $Repo 'ai-sdlc-assistant\.venv\Scripts\python.exe'
 $ClaudeTimeoutMin = 240
 
 New-Item -ItemType Directory -Force $LogDir | Out-Null
+# Pin Node for this process only (Angular 21 needs >= 20.19 / 22.12); the global nvm selection may be switched
+# for other projects. Falls back to whatever is on PATH if this version is ever uninstalled.
+$NodeDir = Join-Path $env:LOCALAPPDATA 'nvm\v22.22.3'
+if (Test-Path (Join-Path $NodeDir 'node.exe')) { $env:Path = "$NodeDir;$env:Path" }
 # If another process holds the log (e.g. a tail -f), fall back to a second file instead of silently losing lines.
 function Log($m) { $l = "$(Get-Date -Format 'HH:mm:ss') $m"; Write-Host $l
     try { Add-Content -Path $Log -Value $l -Encoding utf8 -ErrorAction Stop } catch { Add-Content -Path "$Log.fallback" -Value $l -Encoding utf8 } }

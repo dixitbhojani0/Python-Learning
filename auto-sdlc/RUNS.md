@@ -8,3 +8,4 @@ Green days are recorded by their merge commit and `CHANGELOG.md`.
 - 2026-10-02 - RED - gate failed (backend); work kept on auto/2026-10-02 for review
 - 2026-10-02 - GREEN on re-gate - RED was Docker Desktop not running (Qdrant down); 122 backend tests pass; merged
 - 2026-10-04 - RED - gate failed (angular test, angular build); work kept on auto/2026-10-04 for review
+- 2026-10-04 - GREEN on re-gate - RED was global nvm on Node 20.12.2 (Angular 21 needs >=20.19); Angular 23 tests pass + build OK with Node 22; merged
