@@ -249,7 +249,15 @@ agentic system. Deterministic code is allowed **only** for:
     not routed to (MCPAgent is the live generalist).
     - **Design distinction (standard):** generalist (MCPAgent) = LLM picks tools (`gather_via_tools`);
       specialists = fixed tool needs → call specific tools via `call_mcp_tool`. Both go through real MCP.
-  - **Still TODO:** give MCPAgent write-intent → HITL proposal (restores the duplicate-ticket *suggestion*).
+  - **Duplicate-ticket suggestion ☑ DONE (2026-10-05):** `MCPAgent` now offers to file a ticket when
+    an answer surfaces a genuine, untracked problem — ported from the dead `cross_source_agent`
+    (`_check_ticket_needed`/`cross_source_ticket_suggestion` prompt, reused as-is) onto real MCP
+    (`jira_search_tickets` for dedup, same tool `ticket_agent` already uses). No keyword pre-filter
+    (P1): the LLM's own `should_create` rule is the gate; only reuses the already-computed
+    `temporal_intent` to skip historical queries for free. `hitl_required`/`hitl_proposal` flow
+    through the existing generic HITL plumbing unchanged — `execute_create_ticket` needed zero
+    changes. Design: `auto-sdlc/designs/B7-step4.md`. Tests:
+    `tests/unit/test_mcp_agent_ticket_suggestion.py` (4 cases).
 - **Two production concerns — checked against live code (2026-09-29), both already resolved:**
   - **B7a — silent live→mock fallback:** ☑ **NOT REPRODUCIBLE ON LIVE PATH.** Read every `except`
     branch in `sdlc-mcp-server/connectors/{jira,github,slack,confluence}_connector.py` (15 total) —
