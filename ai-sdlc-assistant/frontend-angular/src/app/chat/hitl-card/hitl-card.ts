@@ -1,4 +1,4 @@
-import { Component, Input, Output, EventEmitter, signal } from '@angular/core';
+import { Component, Input, Output, EventEmitter, OnInit, signal } from '@angular/core';
 import { HttpErrorResponse } from '@angular/common/http';
 import { MatButtonModule } from '@angular/material/button';
 import { MatCardModule } from '@angular/material/card';
@@ -12,8 +12,9 @@ import { HitlService } from '../../core/services/hitl.service';
   imports: [CommonModule, MatButtonModule, MatCardModule, MatProgressSpinnerModule],
   templateUrl: './hitl-card.html',
 })
-export class HitlCard {
+export class HitlCard implements OnInit {
   @Input() hitlId!: string;
+  @Input() actionType: string | null = null;
   @Output() resolved = new EventEmitter<string>();
 
   busy  = signal(false);
@@ -21,11 +22,39 @@ export class HitlCard {
 
   constructor(private hitl: HitlService) {}
 
+  ngOnInit(): void {
+    // E8 — this action type was already "approve all"-ed earlier in this
+    // conversation: resolve immediately, no card shown at all.
+    if (this.actionType && this.hitl.isAutoApproved(this.actionType)) {
+      this.busy.set(true);
+      this.hitl.approve(this.hitlId).subscribe({
+        next:  (res) => this.resolved.emit(`_(Auto-approved for this conversation)_\n\n${res.response}`),
+        error: (err) => this.onActionError(err),
+      });
+    }
+  }
+
+  get canApproveAll(): boolean {
+    return !!this.actionType && this.hitl.isApproveAllEligible(this.actionType);
+  }
+
   approve(): void {
     this.busy.set(true);
     this.error.set('');
     this.hitl.approve(this.hitlId).subscribe({
       next:  (res) => this.resolved.emit(res.response),
+      error: (err) => this.onActionError(err),
+    });
+  }
+
+  approveAll(): void {
+    this.busy.set(true);
+    this.error.set('');
+    this.hitl.approve(this.hitlId, true).subscribe({
+      next:  (res) => {
+        if (this.actionType) this.hitl.markAutoApproved(this.actionType);
+        this.resolved.emit(res.response);
+      },
       error: (err) => this.onActionError(err),
     });
   }

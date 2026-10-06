@@ -33,6 +33,18 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _approval_event_text(user_name: str, action_type: str, result_text: str, remember: bool) -> str:
+    """
+    Episodic-memory record text for an approved action.
+
+    E8: notes whether this was a fresh per-action click or fired automatically
+    under a session-wide "approve all" opt-in — an audit-trail distinction
+    only; `remember` never affects authorization or what gets executed.
+    """
+    note = " (remembered for this session)" if remember else ""
+    return f"{user_name} approved {action_type}{note}: {result_text[:200]}"
+
+
 @limiter.limit("5/minute")
 @router.post("/hitl/approve")
 async def approve_hitl(
@@ -56,8 +68,8 @@ async def approve_hitl(
     action_type = proposal.get("action", "unknown")
 
     logger.info(
-        "hitl/approve: user='%s' action='%s' hitl_id='%s'",
-        user.name, action_type, body.hitl_id,
+        "hitl/approve: user='%s' action='%s' hitl_id='%s' remember=%s",
+        user.name, action_type, body.hitl_id, body.remember,
     )
 
     # E1: role→action authorization at the execution layer (the standard place).
@@ -237,7 +249,7 @@ async def approve_hitl(
     # a failure here must never affect the user's confirmation response.
     try:
         await episodic_memory.record_event(
-            text=f"{user.name} approved {action_type}: {result_text[:200]}",
+            text=_approval_event_text(user.name, action_type, result_text, body.remember),
             event_type=action_type,
             project_id=proposal.get("project", _settings.DEFAULT_PROJECT),
             actor=user.name,

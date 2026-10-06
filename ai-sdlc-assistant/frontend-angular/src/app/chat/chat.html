@@ -114,6 +114,7 @@
         @if (msg.hitlRequired && !msg.hitlResolved && msg.hitlActionId) {
           <app-hitl-card
             [hitlId]="msg.hitlActionId"
+            [actionType]="msg.hitlActionType ?? null"
             (resolved)="onHitlResolved(msg, $event)"
           />
         }
