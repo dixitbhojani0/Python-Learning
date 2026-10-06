@@ -1,5 +1,80 @@
 # Daily autonomous engineering run — changelog
 
+## 2026-10-06
+
+**Orientation:** read 2026-10-05's entry + `REDESIGN_BUGS.md`. Well over 5 items open (E5/E6/E7, E8,
+B9, E10/E11, E12 remainder, B8 cause 3) — no backlog refill needed. E5/E6/E7 each still need a real
+design decision first (how a user references *which* PR comment/ticket to edit/delete in natural
+language — flagged again, bigger than today's scope). Picked B9 (quick audit, matches the established
+stale-narrative pattern) and E8 (well-specified decision matrix already drafted, requested scope fits
+one day).
+
+**Baseline gate (before any change):** backend 130 passed, MCP-server 8 passed, Angular 23 passed +
+`ng build` succeeds — matches 2026-10-05's recorded counts, no regression.
+
+### Items done
+
+1. **B9 lack 1 — verified already fixed, not previously credited.** B9 claimed the agent "never lets
+   the LLM see a tool result and decide the next tool" — true when B9 was written, stale once B7 Step
+   2's `gather_via_tools()` shipped: it already runs a real `bind_tools` ReAct loop (up to 5 rounds,
+   each round's tool results appended to the running message list before the model is asked again).
+   `MCPAgent` (the live generalist) and `NotifyAgent`'s dynamic-fallback path both route through it.
+   Same "stale narrative" pattern already seen for B1/B2/B4/B5/B7a/B7b/E3/E4 — corrected
+   `REDESIGN_BUGS.md` rather than re-building what already exists. The 4 fixed-tool specialist agents
+   (ticket/risk/pr_review/release_readiness) still call tools directly with no chaining — confirmed
+   this is **by design** (already documented under B7 Step 4's "Design distinction" note), not a bug,
+   and not converting speculatively with no reproducible symptom. Lack 2 (agent-to-agent/A2A) remains
+   open, also with no reproducible need.
+   - **Test added:** `tests/unit/test_tool_use_gather_chaining.py` — proves genuine 2-round chaining
+     (round 2's tool choice is informed by round 1's actual result content, not just a second
+     pre-scripted call), closing the one real gap in the existing gather tests (single-round only).
+2. **E8 (requested scope fits today) — HITL Approve / Approve-all (this conversation) / Reject.**
+   Low-risk, reversible-ish proposals (`send_slack` — Slack/Teams notify) can now be approved once for
+   the rest of a conversation instead of re-prompting on every identical notify. Researched current
+   (2026) HITL approval-gate UX guidance first: the standard pattern is exactly the backlog's own
+   drafted decision matrix — destructive actions always ask, risky actions get a one-time
+   per-session opt-in, safe actions run freely (avoids "approval fatigue").
+   - **Scope lives client-side** (`HitlService`, a tab-lived singleton), not a backend Redis session
+     flag: a backend flag would force the `check_hitl` orchestrator node to duplicate `hitl.py`'s
+     entire action-dispatch chain (role checks, MCP calls, episodic memory, session-store updates) to
+     auto-execute without a frontend round-trip — correctness risk for zero gain over just letting the
+     frontend fire the existing `/api/hitl/approve` call itself when it decides to auto-approve.
+   - `hitl-card` gets a 3rd button only for action types on a small eligible set (`send_slack` today);
+     clicking it approves once and remembers the opt-in; every later proposal of that type in the same
+     tab's conversation auto-resolves on mount with an "(Auto-approved for this conversation)" note.
+     Reload / new session → opt-in gone (session-scoped, not "always allow forever").
+   - `HITLRequest.remember` + `ChatResponse.hitl_action_type` (both new) are audit-trail plumbing only
+     — `remember` never affects authorization (`require()` still runs every time) or what executes;
+     it only adds a "(remembered for this session)" note to the episodic-memory record.
+   - Design doc: `auto-sdlc/designs/E8.md`.
+
+### Tests added
+- `ai-sdlc-assistant/tests/unit/test_tool_use_gather_chaining.py` (1 test)
+- `ai-sdlc-assistant/tests/unit/test_chat_hitl_action_type.py` (3 tests)
+- `ai-sdlc-assistant/tests/unit/test_hitl_approval_event_text.py` (3 tests)
+- `ai-sdlc-assistant/frontend-angular/src/app/chat/hitl-card/hitl-card.spec.ts` (5 tests — first spec
+  for this component)
+
+### Gate status (after all changes)
+- Backend: 137 passed (was 130)
+- MCP server: 8 passed (unchanged — no MCP-server files touched today)
+- Angular: 28 passed (was 23) + `ng build` succeeds
+
+### Left half-done / follow-ups (not blocked, just out of today's scope)
+- E8's eligible-action-type set has exactly one entry (`send_slack`) because that's the only action
+  type that exists today matching the "low-risk, reversible" tier — "Add/edit comment" (medium, from
+  the original decision matrix) isn't implemented as a HITL action type at all yet (ties to E6's own
+  open "edit/delete comment" gap), so there's nothing to add it to yet. Revisit `agents.yaml`
+  per-action risk config (deferred as unneeded ceremony for a 1-entry set) if the eligible set grows.
+- B9 lack 2 (agent-to-agent/A2A communication) remains open, no reproducible need.
+- E5/E6/E7 (PR lifecycle CRUD, ticket edit/delete/deassign, comment edit/delete), E10/E11 (automated
+  eval runner), E12 remainder (GSAP + MotionService, skeleton loaders, admin chart entry,
+  `--motion-slow` token) remain open, each larger than fits alongside today's two items. B8 cause 3
+  remains blocked (needs live Confluence access, unchanged from 2026-10-04/05).
+
+**Needs Dixit:** nothing new blocked this run — no credential, paid API, or product decision was
+needed for today's two items. B8 cause 3 (live Confluence re-ingest) remains blocked from 2026-10-04.
+
 ## 2026-10-05
 
 **Orientation:** read 2026-10-04's entry + `REDESIGN_BUGS.md`. Well over 5 items open (B7 Step 4,
