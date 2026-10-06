@@ -406,19 +406,30 @@ agentic system. Deterministic code is allowed **only** for:
 - **Where:** `hitl-card` (Angular) for the 3rd button; `hitl.py` + HITLManager for a session-scoped
   "auto-approve this action type" flag; `agents.yaml` per-action risk level.
 
-### 🟠 B9 — Parallel calls exist, but tool selection/chaining is static (no agentic loop)  ☐
+### 🟠 B9 — Parallel calls exist, but tool selection/chaining is static (no agentic loop)  ◐ LACK 1 FIXED (verified 2026-10-06)
 - **What we HAVE (good):** parallel multi-connector calls — every agent uses `asyncio.gather`, and
   `MCPRegistry.call_parallel()` runs N calls under an `asyncio.Semaphore(3)` with per-call failure
   isolation (`return_exceptions=True`). Concurrency is production-shaped.
-- **What we LACK:**
-  1. **Dynamic tool selection/chaining** — no `bind_tools` / ReAct loop. The agent runs a **fixed**
-     set of calls then reasons once; it never lets the LLM see a tool result and **decide the next
-     tool**. (Ties to B7 + P1 — selection is hardcoded.)
-  2. **Agent-to-agent communication** — agents are graph nodes; only one runs per query. Cross-agent
-     collaboration would use a supervisor-worker topology or **Google A2A** (the agent-to-agent
-     protocol; MCP is agent↔tool, A2A is agent↔agent).
-- **Fix direction:** with real MCP + LLM tool-use (B7), the supervisor can iteratively pick/chain tools
-  across connectors (parallel where independent). Consider supervisor-worker multi-agent if needed.
+- **Lack 1 — ☑ NOT REPRODUCIBLE on the generalist path (verified 2026-10-06), real for 4 specialists
+  by design:** this entry predates B7 Step 2 (`gather_via_tools()`), which already IS a `bind_tools`
+  ReAct loop — `for _ in range(max_iters)`: call the model, append its tool calls' results as
+  `ToolMessage`s to the running `messages` list, call the model **again** with that updated history,
+  repeat up to 5 rounds, stop when the model emits no more tool calls. That is exactly "let the LLM
+  see a tool result and decide the next tool" — this entry was accurate when written, stale once B7
+  Step 2 shipped (same pattern as B1/B2/B4/B5/B7a/B7b/E3/E4). `MCPAgent` (the live generalist) and
+  `NotifyAgent`'s dynamic-fallback path both route through `gather_via_tools`. **Still true, by
+  design, not a bug:** the other 4 specialists (ticket/risk/pr_review/release_readiness) call
+  `call_mcp_tool(...)` directly with a fixed set of calls — documented already under B7 Step 4's
+  "Design distinction" note (generalist = LLM picks tools; specialists = fixed, known tool needs).
+  No reproducible symptom for the specialists needing dynamic chaining — not converting speculatively.
+  **Test:** `tests/unit/test_tool_use_gather_chaining.py` — proves genuine 2-round chaining (round 2's
+  model call receives round 1's actual tool *result* as a message, and picks a different tool
+  informed by that result's content), closing the one real gap in the existing gather tests (which
+  only ever exercised a single round).
+- **Lack 2 — still open, no reproducible need:** agent-to-agent communication — agents are graph
+  nodes; only one runs per query. Cross-agent collaboration would use a supervisor-worker topology or
+  **Google A2A** (agent↔agent, vs. MCP's agent↔tool). Not building speculatively — no query pattern
+  observed today needs one agent to consult another mid-turn.
 
 ### 🟠 E9 — Frontend explainability / decision trace labels  ☑ DONE (2026-09-27)
 - **User ask:** while processing and in the answer, show **what was called, the scores, why each thing
