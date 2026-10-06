@@ -87,6 +87,7 @@ class ChatResponse(BaseModel):
     faithfulness:    float      = 0.0  # claims grounded in retrieved evidence (LLM judge) — hallucination signal
     hitl_required:   bool       = False
     hitl_action_id:  str | None = None
+    hitl_action_type: str | None = None  # E8 — proposal's action type, so the UI can offer "approve all"
     response_cached: bool       = False
     images:          list[ImageRef] = []   # document images relevant to the answer
     trace:           TraceInfo | None = None  # E9 — "why this answer?" (None = nothing to explain)
@@ -95,6 +96,10 @@ class ChatResponse(BaseModel):
 class HITLRequest(BaseModel):
     """Body for POST /api/hitl/approve and /api/hitl/reject (Phase 7a)."""
     hitl_id: str
+    # E8 — "approve all (this conversation)": set when the frontend auto-approved
+    # this call under a session-wide opt-in rather than a fresh per-action click.
+    # Audit-trail marker only — never affects authorization or execution.
+    remember: bool = False
 
 
 class ErrorResponse(BaseModel):

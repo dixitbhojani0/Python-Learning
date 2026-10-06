@@ -6,6 +6,9 @@
         <mat-spinner diameter="28" />
       } @else {
         <button mat-raised-button color="primary" (click)="approve()">✅ Approve</button>
+        @if (canApproveAll) {
+          <button mat-stroked-button color="primary" (click)="approveAll()">✅ Approve all (this chat)</button>
+        }
         <button mat-stroked-button color="warn" (click)="reject()">❌ Reject</button>
       }
     </div>

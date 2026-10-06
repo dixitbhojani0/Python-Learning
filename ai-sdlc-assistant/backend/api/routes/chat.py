@@ -33,6 +33,14 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _hitl_action_type(result: dict, hitl_required: bool) -> str | None:
+    """E8 — the pending proposal's action type (e.g. "send_slack"), so the UI can
+    decide whether to offer "approve all". None whenever there's no pending action."""
+    if not hitl_required:
+        return None
+    return (result.get("hitl_proposal") or {}).get("action") or None
+
+
 def _build_trace(result: dict) -> TraceInfo | None:
     """
     Assemble the E9 "why this answer?" trace from graph state.
@@ -309,6 +317,7 @@ async def chat(
         faithfulness=round(faithfulness, 3),
         hitl_required=hitl_required,
         hitl_action_id=hitl_action_id,
+        hitl_action_type=_hitl_action_type(result, hitl_required),
         response_cached=bool(result.get("response_cached")),
         images=images,
         trace=_build_trace(result),

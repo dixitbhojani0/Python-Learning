@@ -389,36 +389,74 @@ agentic system. Deterministic code is allowed **only** for:
   if the page body's table render is reliably clean, Phase 2 may be redundant for pages whose PDF is just
   an export of the same body.
 
-### 🟠 E8 — HITL approval UX: per-action scopes (Approve / Approve-all / Reject)  ☐
+### 🟠 E8 — HITL approval UX: per-action scopes (Approve / Approve-all / Reject)  ☑ DONE (2026-10-06)
 - **User ask:** risky actions must always ask; low-risk repeats (Slack notify) could offer a
   "yes to all (this conversation)" so the user isn't re-prompted every time.
 - **Research-backed pattern (production HITL):** hard **propose → commit** separation (we have this);
   human review reserved for **risky / irreversible / external** actions; full **audit trail**;
-  approvals scoped at different levels (per-action vs session).
-- **Proposed decision matrix:**
-  | Action | Risk | Options to offer |
+  approvals scoped at different levels (per-action vs session). Re-confirmed live (2026-10-06): 2026
+  HITL approval-gate guidance names this exact pattern — safe actions run freely, risky actions get a
+  **one-time "always allow for this session"** opt-in, destructive actions always ask — to avoid
+  "approval fatigue" (reviewers rubber-stamping once every action needs the same click).
+- **Decision matrix (shipped as-is):**
+  | Action | Risk | Options offered |
   |---|---|---|
   | Create / edit / delete ticket | high / irreversible | **Approve · Reject** (no approve-all) |
-  | Assign reviewer · Approve/Reject/Merge PR | high | **Approve · Reject** |
+  | Assign reviewer · Approve/Reject PR | high | **Approve · Reject** |
   | Release GO | high | **Approve · Reject** (+ role gate) |
-  | Slack / Teams **notify** | low / reversible-ish | **Approve · Approve-all (this conversation) · Reject** |
-  | Add/edit comment | medium | **Approve · Reject** (approve-all optional) |
-- **Where:** `hitl-card` (Angular) for the 3rd button; `hitl.py` + HITLManager for a session-scoped
-  "auto-approve this action type" flag; `agents.yaml` per-action risk level.
+  | Slack / Teams **notify** (`send_slack`) | low / reversible-ish | **Approve · Approve-all (this conversation) · Reject** |
+- **Shipped:**
+  - `hitl-card` (Angular): a 3rd button, shown only when the proposal's action type is on
+    `HitlService`'s `APPROVE_ALL_ELIGIBLE` set (today: `send_slack` only). Clicking it executes once
+    (identical result to Approve) and remembers the opt-in; every later proposal of that action type
+    in the same tab's conversation auto-resolves on mount — no click, no card shown — with a small
+    "(Auto-approved for this conversation)" note on the result.
+  - **Scope lives client-side, not in Redis/HITLManager:** considered a backend session flag
+    (mirroring `HITLManager`'s own Redis+fallback pattern) but rejected — it would require
+    `check_hitl` (the orchestrator node) to duplicate `hitl.py`'s entire action-dispatch `if/elif`
+    chain (role checks, MCP calls, episodic memory, session-store updates) to auto-execute without a
+    frontend round-trip, a correctness risk for zero behavioral gain over just letting the frontend
+    fire the existing `/api/hitl/approve` call itself. Reload / new session → opt-in is gone, matching
+    the research pattern's **session**-scoped tier (not "always allow forever").
+  - `HITLRequest.remember` (bool, default False) + `ChatResponse.hitl_action_type` (new) — audit-trail
+    marker only; `remember` never affects authorization (`require()` still runs every time) or what
+    executes. `hitl.py`'s episodic-memory record now notes "(remembered for this session)" when set.
+  - Eligibility list is a static UX/policy constant (which action types are low-risk), not a
+    probabilistic agent decision — P1 governs agent decisions (routing/retrieval/duplicate-detection),
+    not this kind of fixed product policy; a 1-entry YAML config would be ceremony over substance here.
+  - Design doc: `auto-sdlc/designs/E8.md`.
+- **Tests:** `tests/unit/test_chat_hitl_action_type.py` (3), `tests/unit/test_hitl_approval_event_text.py`
+  (3), `frontend-angular/src/app/chat/hitl-card/hitl-card.spec.ts` (5 — first spec for this component).
+- **Deferred, not dropped:** "Add/edit comment" never shipped as a HITL action type at all yet (ties
+  to E6's own open "edit/delete comment" gap) — nothing to add to the eligible set until that exists.
+  `agents.yaml` per-action risk config wasn't needed — the eligible set is small enough (1 entry) that
+  a Set literal in `hitl.service.ts` is the whole implementation; revisit if the set grows past a
+  handful of entries or a second consumer needs the same policy.
 
-### 🟠 B9 — Parallel calls exist, but tool selection/chaining is static (no agentic loop)  ☐
+### 🟠 B9 — Parallel calls exist, but tool selection/chaining is static (no agentic loop)  ◐ LACK 1 FIXED (verified 2026-10-06)
 - **What we HAVE (good):** parallel multi-connector calls — every agent uses `asyncio.gather`, and
   `MCPRegistry.call_parallel()` runs N calls under an `asyncio.Semaphore(3)` with per-call failure
   isolation (`return_exceptions=True`). Concurrency is production-shaped.
-- **What we LACK:**
-  1. **Dynamic tool selection/chaining** — no `bind_tools` / ReAct loop. The agent runs a **fixed**
-     set of calls then reasons once; it never lets the LLM see a tool result and **decide the next
-     tool**. (Ties to B7 + P1 — selection is hardcoded.)
-  2. **Agent-to-agent communication** — agents are graph nodes; only one runs per query. Cross-agent
-     collaboration would use a supervisor-worker topology or **Google A2A** (the agent-to-agent
-     protocol; MCP is agent↔tool, A2A is agent↔agent).
-- **Fix direction:** with real MCP + LLM tool-use (B7), the supervisor can iteratively pick/chain tools
-  across connectors (parallel where independent). Consider supervisor-worker multi-agent if needed.
+- **Lack 1 — ☑ NOT REPRODUCIBLE on the generalist path (verified 2026-10-06), real for 4 specialists
+  by design:** this entry predates B7 Step 2 (`gather_via_tools()`), which already IS a `bind_tools`
+  ReAct loop — `for _ in range(max_iters)`: call the model, append its tool calls' results as
+  `ToolMessage`s to the running `messages` list, call the model **again** with that updated history,
+  repeat up to 5 rounds, stop when the model emits no more tool calls. That is exactly "let the LLM
+  see a tool result and decide the next tool" — this entry was accurate when written, stale once B7
+  Step 2 shipped (same pattern as B1/B2/B4/B5/B7a/B7b/E3/E4). `MCPAgent` (the live generalist) and
+  `NotifyAgent`'s dynamic-fallback path both route through `gather_via_tools`. **Still true, by
+  design, not a bug:** the other 4 specialists (ticket/risk/pr_review/release_readiness) call
+  `call_mcp_tool(...)` directly with a fixed set of calls — documented already under B7 Step 4's
+  "Design distinction" note (generalist = LLM picks tools; specialists = fixed, known tool needs).
+  No reproducible symptom for the specialists needing dynamic chaining — not converting speculatively.
+  **Test:** `tests/unit/test_tool_use_gather_chaining.py` — proves genuine 2-round chaining (round 2's
+  model call receives round 1's actual tool *result* as a message, and picks a different tool
+  informed by that result's content), closing the one real gap in the existing gather tests (which
+  only ever exercised a single round).
+- **Lack 2 — still open, no reproducible need:** agent-to-agent communication — agents are graph
+  nodes; only one runs per query. Cross-agent collaboration would use a supervisor-worker topology or
+  **Google A2A** (agent↔agent, vs. MCP's agent↔tool). Not building speculatively — no query pattern
+  observed today needs one agent to consult another mid-turn.
 
 ### 🟠 E9 — Frontend explainability / decision trace labels  ☑ DONE (2026-09-27)
 - **User ask:** while processing and in the answer, show **what was called, the scores, why each thing

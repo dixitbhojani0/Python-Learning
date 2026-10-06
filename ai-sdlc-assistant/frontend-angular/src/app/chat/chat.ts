@@ -136,6 +136,7 @@ export class Chat implements AfterViewChecked {
               faithfulness: res.faithfulness,
               hitlRequired: res.hitl_required,
               hitlActionId: res.hitl_action_id,
+              hitlActionType: res.hitl_action_type,
               images: res.images ?? [],
               trace: res.trace,
             };

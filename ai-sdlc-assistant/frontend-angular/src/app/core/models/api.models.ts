@@ -53,6 +53,7 @@ export interface ChatResponse {
   faithfulness?: number; // claims grounded in evidence (0–1)
   hitl_required: boolean;
   hitl_action_id: string | null;
+  hitl_action_type?: string | null; // E8 — proposal's action type (e.g. "send_slack")
   response_cached: boolean;
   images?: ImageRef[];
   trace?: TraceInfo | null;
@@ -61,6 +62,7 @@ export interface ChatResponse {
 // ── HITL
 export interface HITLRequest {
   hitl_id: string;
+  remember?: boolean; // E8 — "approve all (this conversation)"; audit-trail marker only
 }
 
 export interface HITLResponse {
@@ -145,6 +147,7 @@ export interface ChatMessage {
   faithfulness?: number; // claims grounded in evidence (0–1)
   hitlRequired?: boolean;
   hitlActionId?: string | null;
+  hitlActionType?: string | null; // E8 — proposal's action type (e.g. "send_slack")
   hitlResolved?: boolean;
   images?: ImageRef[];   // document images attached to an assistant answer
   trace?: TraceInfo | null; // E9 — "why this answer?" decision trace
