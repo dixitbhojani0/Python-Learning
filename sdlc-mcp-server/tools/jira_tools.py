@@ -226,4 +226,16 @@ def register_writes(mcp: Any, registry: Any) -> None:
             return err
         return await registry.get("jira").add_comment(ticket_id, comment)
 
-    logger.info("jira_tools: registered 4 write tools")
+    @mcp.tool()
+    async def jira_deassign_ticket(ticket_id: str) -> dict:
+        """Clear a Jira ticket's assignee. WRITE — requires HITL approval.
+
+        Args:
+            ticket_id: issue key, e.g. "SDLC-5".
+        """
+        logger.info("tool jira_deassign_ticket(ticket_id=%r)", ticket_id)
+        if err := _invalid_ticket_id(ticket_id):
+            return err
+        return await registry.get("jira").deassign_ticket(ticket_id)
+
+    logger.info("jira_tools: registered 5 write tools")

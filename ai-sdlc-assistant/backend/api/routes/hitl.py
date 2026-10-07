@@ -102,6 +102,9 @@ async def approve_hitl(
     elif action_type == "edit_ticket":
         result_text = await _execute_edit_ticket(proposal, user.name)
 
+    elif action_type == "deassign_ticket":
+        result_text = await _execute_deassign_ticket(proposal, user.name)
+
     elif action_type == "assign_reviewer":
         result_text = await _execute_assign_reviewer(proposal)
 
@@ -334,6 +337,26 @@ async def _execute_edit_ticket(proposal: dict, approver_name: str) -> str:
     return f"⚠️ **Could not update {ticket_id}** — please try again or update it manually in Jira."
 
 
+async def _execute_deassign_ticket(proposal: dict, approver_name: str) -> str:
+    """Clear a Jira ticket's assignee over MCP (`jira_deassign_ticket`)."""
+    ticket_id = proposal.get("ticket_id", "UNKNOWN")
+    assignee  = proposal.get("assignee", "unassigned")
+
+    try:
+        result = await _mcp_write("jira_deassign_ticket", {"ticket_id": ticket_id})
+        if result.get("success"):
+            logger.info("hitl/approve: %s deassigned via MCP (was %s)", ticket_id, assignee)
+            return (
+                f"✅ **{ticket_id} is now unassigned** (was: {assignee}).\n\n"
+                f"Approved by: {approver_name}."
+            )
+        logger.warning("hitl/approve deassign_ticket via MCP: %s", result.get("error"))
+    except Exception:
+        logger.exception("hitl/approve: _execute_deassign_ticket via MCP raised")
+
+    return f"⚠️ **Could not deassign {ticket_id}** — please try again or update it manually in Jira."
+
+
 async def _execute_assign_reviewer(proposal: dict) -> str:
     """
     Assign a reviewer to a PR over MCP (`github_assign_reviewer`).
@@ -450,6 +473,10 @@ async def reject_hitl(
         ticket_id = proposal.get("ticket_id", "?")
         field     = proposal.get("field", "field")
         reject_text = f"❌ Edit cancelled. {ticket_id}'s {field} was NOT changed."
+    elif action_type == "deassign_ticket":
+        ticket_id = proposal.get("ticket_id", "?")
+        assignee  = proposal.get("assignee", "?")
+        reject_text = f"❌ Deassign cancelled. {ticket_id} is still assigned to {assignee}."
     else:
         reject_text = "❌ Action rejected. No changes were made."
 

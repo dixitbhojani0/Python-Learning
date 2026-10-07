@@ -18,6 +18,7 @@ Capability matrix (write actions):
   | create_ticket     |    ✅     |   ✅    |       ✅         |  ✅ (→notify)|  ✅   |
   | edit_ticket       |    ✅     |   ✅    |       ✅         |     ✕       |  ✅   |
   | assign_ticket     |    ✅     |   ✅    |       ✅         |     ✕       |  ✅   |
+  | deassign_ticket   |    ✅     |   ✅    |       ✅         |     ✕       |  ✅   |
   | comment_ticket    |    ✅     |   ✅    |       ✅         |     ✕       |  ✅   |
   | assign_reviewer   |    ✅     |   ✅    |       ✅         |     ✕       |  ✅   |
   | approve_pr        |    ✅     |   ✅    |       ✅         |     ✕       |  ✅   |
@@ -34,7 +35,7 @@ from fastapi import HTTPException, status
 
 # Every write action the HITL layer can execute.
 ALL_ACTIONS: frozenset[str] = frozenset({
-    "create_ticket", "edit_ticket", "assign_ticket", "comment_ticket",
+    "create_ticket", "edit_ticket", "assign_ticket", "deassign_ticket", "comment_ticket",
     "assign_reviewer", "approve_pr", "reject_pr",
     "release_approval", "send_slack",
 })

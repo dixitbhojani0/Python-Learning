@@ -1,5 +1,83 @@
 # Daily autonomous engineering run — changelog
 
+## 2026-10-07
+
+**Orientation:** read 2026-10-06's entry + `REDESIGN_BUGS.md`. Open items: E5/E6 (PR lifecycle,
+comment edit/delete), E7 (edit/delete ticket + deassign), E10/E11 (regression suite + runner),
+E12 remainder (requested), B8 cause 3 (blocked). Well over 5 open — no backlog refill needed.
+E5/E6/E7 had all been deferred across several prior runs behind "needs a design decision for how
+a user references which entity in natural language" — re-reading the code showed that mechanism
+already exists generically (`ticket_agent`'s history-resolution from B10), so the real blocker
+was stale, not a missing decision. Picked E7: reading it end-to-end found it two-thirds already
+shipped and mis-tracked (edit done, delete deliberately unsupported per `permissions.py`'s own
+note) — the one real gap left was deassign, a well-scoped vertical slice across 5 layers.
+
+**Baseline gate (before any change):** backend 137 passed, MCP-server 8 passed, Angular 28 passed
++ `ng build` succeeds — matches 2026-10-06's recorded counts, no regression.
+
+### Items done
+
+1. **E7 — deassign a Jira ticket; corrected E7's stale tracking for edit/delete.**
+   `ticket_agent.run()`'s intent regex `\b(assign|reassign)\b` correctly does NOT match the
+   embedded "assign" inside "deassign"/"unassign" (no word boundary before it) — so a query
+   like "deassign SDLC-5" fell through every intent branch (assign/edit/comment/list) straight
+   into the ticket **CREATE** flow, proposing a bogus new ticket instead of clearing the
+   assignee. Same bug class B10 already fixed for assign/edit/comment, just never ported to this
+   verb. Fixed end-to-end, reusing every existing layer rather than adding new ones:
+   - `sdlc-mcp-server/connectors/jira_connector.py`: `deassign_ticket(ticket_id)` — PUTs Jira's
+     documented null-`accountId` unassign contract to the same `/assignee` endpoint
+     `assign_ticket` already uses.
+   - `sdlc-mcp-server/tools/jira_tools.py`: new write tool `jira_deassign_ticket`, same
+     `_invalid_ticket_id` boundary guard as the other ticket write tools.
+   - `backend/agents/ticket_agent.py`: new `_run_deassignment` (no-op message if already
+     unassigned, HITL card otherwise) + a deassign intent branch checked before the assign
+     branch, reusing the same history-aware `resolved_ticket_id` (pronoun resolution) the
+     assign/edit/comment branches already use.
+   - `backend/api/routes/hitl.py` + `backend/auth/permissions.py`: new `deassign_ticket` HITL
+     action type + permission tier (developer/manager/technical_leader/admin — not stakeholder,
+     matching the capability matrix's existing "assign/reassign/deassign" row). Deliberately a
+     **new** action type rather than overloading `assign_ticket` with an empty `account_id` —
+     that empty string already means two other things in the existing code (named-target-not-
+     found in `_run_assignment`; not-executed in `_execute_assign_ticket`'s truthiness guard), so
+     a third meaning would make it ambiguous. No frontend changes — the HITL card renders
+     generically from the proposal text, and deassign isn't in E8's `APPROVE_ALL_ELIGIBLE` set
+     (a real Jira write, not the low-risk notify tier).
+   - **Corrected `REDESIGN_BUGS.md` E7**, which had tracked all of edit/delete/deassign as fully
+     open: edit was already shipped in a prior session and never credited (same stale-narrative
+     pattern as B1/B2/B4/B5/B7a/B7b/E3/E4/B9); delete is deliberately unsupported, matching
+     `permissions.py`'s own 2026-07 note (no MCP tool/connector/agent wiring ever existed for
+     it — a pure aspirational matrix entry). This also **answers open question C5** ("real
+     delete vs. close/cancel?"): decision is to not support ticket deletion at all — destructive/
+     audit-sensitive enough to stay in Jira's own UI, not this assistant's propose→approve model.
+   - Design doc: `auto-sdlc/designs/E7.md`.
+
+### Tests added
+- `sdlc-mcp-server/tests/test_jira_connector.py` (+2: null-accountId payload, non-204 failure)
+- `sdlc-mcp-server/tests/test_tools.py` (extended: `jira_deassign_ticket` in the write inventory/
+  classification assertions + an invalid-ticket-id boundary case)
+- `ai-sdlc-assistant/tests/unit/test_ticket_agent_deassign.py` (5 cases: proposes HITL,
+  "unassign" verb also matches, already-unassigned no-op, no-ticket-id asks rather than falls
+  through to CREATE, resolves ticket id from history)
+- `ai-sdlc-assistant/tests/unit/test_hitl_deassign_ticket.py` (5 cases: success text, MCP
+  failure, MCP exception, stakeholder forbidden, developer allowed)
+
+### Gate status (after all changes)
+- Backend: 147 passed (was 137)
+- MCP server: 10 passed (was 8)
+- Angular: 28 passed (unchanged — no frontend files touched today) + `ng build` succeeds
+
+### Left half-done / follow-ups (not blocked, just out of today's scope)
+- E5 (PR lifecycle: create PR, edit/delete comments), E6 (edit/delete Jira comment — add-comment
+  already shipped) remain open; same shape of fix as E7 (reuse history-resolution, add the one
+  missing verb/action), good candidates for a future slice.
+- E10/E11 (standing regression suite + automated runner), E12 remainder (GSAP+MotionService
+  deliberately deferred — nothing needs it yet; skeleton loaders/admin chart entry are polish,
+  not a reproducible gap, so not built speculatively today), B9 lack 2 (A2A, no reproducible
+  need), B8 cause 3 (blocked, needs live Confluence access) remain open.
+
+**Needs Dixit:** nothing new blocked this run. B8 cause 3 (live Confluence re-ingest to confirm
+the PDF-attachment chunking fix) remains blocked from 2026-10-04/05/06.
+
 ## 2026-10-06
 
 **Orientation:** read 2026-10-05's entry + `REDESIGN_BUGS.md`. Well over 5 items open (E5/E6/E7, E8,

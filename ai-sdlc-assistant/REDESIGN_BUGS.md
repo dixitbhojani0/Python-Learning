@@ -145,7 +145,32 @@ The assistant should behave per role. Target capability matrix:
   `_run_comment` intent detection ("add a comment to SDLC-5: …", excludes reads) + body extraction →
   routing keywords + `comment_ticket` permission. This is the WRITE side of B3 (dev logs effort). 
   **edit/delete comment** still TODO.
-- **E7 — Edit/delete ticket + deassign:** connector methods + HITL actions + permission gate. ☐
+- **E7 — Edit/delete ticket + deassign** ☑ **DONE (2026-10-07, delete deliberately unsupported)**
+  — was mis-tracked as fully open; re-reading the code found it two-thirds done already:
+  - **Edit** (title/description) — already shipped, just not credited here (`_run_edit_ticket`,
+    `edit_ticket` HITL action + permission row) — same stale-narrative pattern as
+    B1/B2/B4/B5/B7a/B7b/E3/E4/B9.
+  - **Delete** — deliberately **not** supported, matching `permissions.py`'s own 2026-07 note
+    (no MCP tool/connector/agent wiring ever existed, a pure aspirational entry) and answering
+    open question C5 below: Jira issue deletion is destructive and belongs in Jira's own
+    UI/workflow, not this assistant's propose→approve HITL model. Not building speculatively —
+    no request for it.
+  - **Deassign — the one real gap, shipped today.** `ticket_agent.run()`'s regex
+    `\b(assign|reassign)\b` correctly does NOT match the embedded "assign" inside
+    "deassign"/"unassign" (no word boundary) — so "deassign SDLC-5" fell through every intent
+    branch into the ticket **CREATE** flow, same bug class B10 fixed for assign/edit/comment,
+    just never ported to this verb. Added: connector `deassign_ticket` (Jira's documented
+    null-`accountId` unassign contract, same `/assignee` endpoint `assign_ticket` uses), MCP
+    write tool `jira_deassign_ticket`, `ticket_agent._run_deassignment` (no-op if already
+    unassigned, HITL card otherwise), new `deassign_ticket` HITL action type + permission tier
+    (same roles as `assign_ticket` — not stakeholder). A new action type rather than overloading
+    `assign_ticket` with an empty `account_id`: that empty string already means two different
+    things in the existing code ("named target not found" in `_run_assignment`, "not executed"
+    in `_execute_assign_ticket`'s truthiness guard) — a third meaning would make it lie.
+  - Design: `auto-sdlc/designs/E7.md`. Tests:
+    `sdlc-mcp-server/tests/test_jira_connector.py` (+2), `sdlc-mcp-server/tests/test_tools.py`
+    (extended), `ai-sdlc-assistant/tests/unit/test_ticket_agent_deassign.py` (5),
+    `ai-sdlc-assistant/tests/unit/test_hitl_deassign_ticket.py` (5).
 
 ---
 
@@ -156,7 +181,10 @@ The assistant should behave per role. Target capability matrix:
    mock-style SDLC-1043? (B2 investigation) ☐
 3. **Permission enforcement point** — gate in HITL approve (role check) vs. at agent routing? ☐
 4. **Stakeholder comment rights** — can they comment, or only create + view? ☐
-5. **Delete semantics** — real delete vs. close/cancel? (real Jira delete is destructive) ☐
+5. **Delete semantics** ☑ **ANSWERED (2026-10-07, see E7):** not supporting ticket delete at
+   all — it's destructive/audit-sensitive enough to stay in Jira's own UI/workflow rather than
+   this assistant's propose→approve HITL model. No close/cancel-via-status-transition feature
+   either — not building speculatively, no request for it.
 
 ---
 
