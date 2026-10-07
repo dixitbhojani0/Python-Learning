@@ -27,18 +27,30 @@ class _FakeResponse:
 class _FakeHTTPClient:
     is_closed = False
 
-    def __init__(self, payload: dict):
+    def __init__(self, payload: dict, put_status: int = 204):
         self._payload = payload
+        self._put_status = put_status
         self.last_json: dict | None = None
+        self.last_url: str | None = None
 
     async def post(self, url, json):
         self.last_json = json
         return _FakeResponse(self._payload)
 
+    async def put(self, url, json):
+        self.last_json = json
+        self.last_url = url
+        return _FakeStatusResponse(self._put_status)
 
-def _connector_with_fake_http(payload: dict) -> tuple[JiraConnector, _FakeHTTPClient]:
+
+class _FakeStatusResponse:
+    def __init__(self, status_code: int):
+        self.status_code = status_code
+
+
+def _connector_with_fake_http(payload: dict, put_status: int = 204) -> tuple[JiraConnector, _FakeHTTPClient]:
     connector = JiraConnector(name="jira", connector_config={})
-    fake = _FakeHTTPClient(payload)
+    fake = _FakeHTTPClient(payload, put_status=put_status)
     connector._http = fake
     return connector, fake
 
@@ -75,3 +87,24 @@ def test_get_blocked_tickets_normalizes_returned_issues():
     # production; here we just confirm normalization doesn't silently drop
     # the status field a caller would use to double-check.
     assert result[0]["status"] == "DONE"
+
+
+def test_deassign_ticket_sends_null_account_id():
+    """
+    E7: deassign must use Jira's documented null-unassign contract — {"accountId": null} —
+    on the same /assignee endpoint assign_ticket uses, not a different/omitted field.
+    """
+    connector, fake = _connector_with_fake_http({})
+    result = asyncio.run(connector.deassign_ticket("SDLC-5"))
+
+    assert fake.last_json == {"accountId": None}
+    assert fake.last_url.endswith("/issue/SDLC-5/assignee")
+    assert result == {"success": True, "ticket_id": "SDLC-5"}
+
+
+def test_deassign_ticket_reports_failure_on_non_204():
+    connector, _ = _connector_with_fake_http({}, put_status=404)
+    result = asyncio.run(connector.deassign_ticket("SDLC-5"))
+
+    assert result["success"] is False
+    assert "404" in result["error"]

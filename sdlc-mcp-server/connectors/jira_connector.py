@@ -407,6 +407,20 @@ class JiraConnector(BaseMCPConnector):
             logger.exception("JiraConnector.assign_ticket: failed for %s", ticket_id)
             return {"success": False, "error": "request failed"}
 
+    async def deassign_ticket(self, ticket_id: str) -> dict:
+        """Clear a ticket's assignee. Jira's documented unassign contract: PUT the
+        /assignee endpoint with accountId: null (same endpoint as assign_ticket)."""
+        url = f"{self._base_url}/rest/api/3/issue/{ticket_id}/assignee"
+        try:
+            r = await self.http.put(url, json={"accountId": None})
+            if r.status_code == 204:
+                logger.info("JiraConnector.deassign_ticket: %s unassigned", ticket_id)
+                return {"success": True, "ticket_id": ticket_id}
+            return {"success": False, "error": f"HTTP {r.status_code}"}
+        except Exception:
+            logger.exception("JiraConnector.deassign_ticket: failed for %s", ticket_id)
+            return {"success": False, "error": "request failed"}
+
     async def add_comment(self, ticket_id: str, body: str) -> dict:
         payload = {
             "body": {

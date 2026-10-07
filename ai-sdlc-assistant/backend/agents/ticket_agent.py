@@ -372,6 +372,59 @@ class TicketAgent(BaseAgent):
             },
         )
 
+    async def _run_deassignment(self, state: SDLCState, ticket_id: str) -> AgentPayload:
+        """Propose clearing an existing Jira ticket's assignee (E7) — HITL gated."""
+        project = state["project_id"]
+        ticket  = await call_mcp_tool("jira_get_ticket", {"ticket_id": ticket_id})
+
+        if not isinstance(ticket, dict) or not ticket.get("title"):
+            msg = f"Ticket **{ticket_id}** does not exist in Jira project `{project}`. Please check the ticket ID and try again."
+            return AgentPayload(
+                agent_name="ticket_agent", confidence=1.0,
+                summary=f"Ticket {ticket_id} not found",
+                structured={"final_response": msg, "skip_persona": True},
+                sources=["jira_live"],
+                hitl_required=False, hitl_proposal={}, response=msg,
+            )
+
+        current_assignee = ticket.get("assignee", "unassigned")
+        ticket_title      = ticket.get("title", ticket_id)
+
+        if current_assignee.lower() in ("unassigned", ""):
+            msg = f"Ticket **{ticket_id}** is already unassigned. No action needed."
+            return AgentPayload(
+                agent_name="ticket_agent", confidence=1.0,
+                summary=f"{ticket_id} already unassigned",
+                structured={"final_response": msg, "skip_persona": True},
+                sources=["jira_live"],
+                hitl_required=False, hitl_proposal={}, response=msg,
+            )
+
+        card = "\n".join([
+            f"## Deassign Ticket {ticket_id}",
+            "",
+            "| Field | Value |",
+            "|-------|-------|",
+            f"| Ticket | **{ticket_id}** — {ticket_title} |",
+            f"| Current Assignee | {current_assignee} |",
+            f"| New Assignee | _(unassigned)_ |",
+            "",
+            f"_Click **Approve** to remove the assignee from {ticket_id}, or **Reject** to cancel._",
+        ])
+        return AgentPayload(
+            agent_name="ticket_agent", confidence=0.9,
+            summary=f"Deassign proposal: {ticket_id}",
+            structured={"final_response": card},
+            sources=["jira_live"],
+            hitl_required=True,
+            hitl_proposal={
+                "action":    "deassign_ticket",
+                "ticket_id": ticket_id,
+                "assignee":  current_assignee,
+                "project":   project,
+            },
+        )
+
     async def _run_comment(self, state: SDLCState, ticket_id: str) -> AgentPayload:
         """Propose adding a developer comment to a ticket (E6) — HITL gated."""
         query   = state["query"]
@@ -526,6 +579,21 @@ class TicketAgent(BaseAgent):
             f"{ticket_id_match.group(1).upper()}-{ticket_id_match.group(2)}" if ticket_id_match
             else _last_ticket_id_from_history(recent_messages)
         )
+
+        # ── Deassign intent: "deassign SDLC-5", "unassign SDLC-5", "remove the assignee from SDLC-5" ──
+        # Checked BEFORE the assign branch below: "deassign"/"unassign" do NOT match
+        # \bassign\b (no word boundary before the embedded "assign"), so this used to fall
+        # through every branch into the ticket CREATE flow — same bug class B10 fixed for
+        # assign/edit/comment, just never ported to this verb.
+        deassign_match = re.search(r'\b(deassign|unassign)\b', query.lower()) or \
+            re.search(r'\bremove\b.*\bassignee\b', query.lower())
+        if deassign_match:
+            if resolved_ticket_id:
+                return await self._run_deassignment(state, resolved_ticket_id)
+            return _ask_for_ticket_id(
+                "Which ticket should I deassign? Please include the ticket ID, e.g.:\n\n"
+                "`deassign SDLC-<id>`"
+            )
 
         # ── Assignment intent: "assign SDLC-4" / "reassign SDLC-2 to alice" ──
         # Also handles common variations: "sdlc 5" (space), "sdlc5" (no separator), lowercase

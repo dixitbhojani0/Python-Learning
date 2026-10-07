@@ -46,7 +46,8 @@ EXPECTED_READS = {
 }
 
 EXPECTED_WRITES = {
-    "jira_create_ticket", "jira_assign_ticket", "jira_update_ticket", "jira_add_comment",
+    "jira_create_ticket", "jira_assign_ticket", "jira_deassign_ticket", "jira_update_ticket",
+    "jira_add_comment",
     "github_assign_reviewer", "github_approve_pr", "github_request_changes_pr",
     "slack_send_message",
 }
@@ -89,6 +90,7 @@ def test_invalid_ticket_id_rejected_at_boundary():
     for tool_name, args in (
         ("jira_get_ticket",    {"ticket_id": "not a key"}),
         ("jira_assign_ticket", {"ticket_id": "12345", "account_id": "abc"}),
+        ("jira_deassign_ticket", {"ticket_id": "12345"}),
         ("jira_update_ticket", {"ticket_id": "drop table", "summary": "x"}),
         ("jira_add_comment",   {"ticket_id": "", "comment": "hi"}),
     ):
